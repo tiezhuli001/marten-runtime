@@ -1,0 +1,50 @@
+# Local secrets and machine-specific runtime config
+.env
+.env.*
+!.env.example
+mcps.json
+config/platform.toml
+config/models.toml
+config/channels.toml
+config/mcp.toml
+config/ops.toml
+config/skills.toml
+!config/*.example.toml
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Local runtime data
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

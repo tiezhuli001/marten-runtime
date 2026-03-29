@@ -1,0 +1,7 @@
+fastapi
+httpx
+lark-oapi
+mcp
+python-socks
+python-dotenv
+uvicorn

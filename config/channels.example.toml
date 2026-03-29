@@ -1,0 +1,25 @@
+[http]
+enabled = true
+
+[cli]
+enabled = true
+
+[feishu]
+enabled = false
+connection_mode = "websocket"
+auto_start = false
+allowed_chat_types = []
+allowed_chat_ids = []
+
+[feishu.websocket]
+auto_reconnect = true
+reconnect_count = -1
+reconnect_interval_s = 5
+ping_interval_s = 120
+
+[feishu.retry]
+progress_max_retries = 2
+final_max_retries = 5
+error_max_retries = 5
+base_backoff_seconds = 0.25
+max_backoff_seconds = 2.0

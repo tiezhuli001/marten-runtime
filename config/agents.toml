@@ -1,0 +1,13 @@
+[agents.assistant]
+enabled = true
+role = "general_assistant"
+app_id = "example_assistant"
+allowed_tools = ["time", "mcp:*"]
+prompt_mode = "full"
+
+[agents.coding]
+enabled = true
+role = "coding_agent"
+app_id = "example_assistant"
+allowed_tools = []
+prompt_mode = "child"

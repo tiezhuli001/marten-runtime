@@ -1,0 +1,58 @@
+# STATUS
+
+- Current goal:
+  - prepare `marten-runtime` for public GitHub release without changing the project direction
+- Current state:
+  - Milestone A of the private-agent harness is implemented and verified
+  - public docs have been aligned to the implemented runtime instead of local operator history
+  - local secrets remain template-first through `.env.example` and `mcps.example.json`
+  - published runtime config now uses `config/*.example.toml` templates plus ignored local `config/*.toml` overrides
+- Completed work:
+  - implemented binding-based routing, runtime context assembly, skill runtime integration, and provider retry resilience
+  - preserved MCP tool-loop behavior and Feishu delivery hardening
+  - rewrote public entry docs to remove local absolute paths and operator-specific validation notes
+  - added `README_CN.md` and an open-source-ready English `README.md`
+  - updated public docs to reflect Milestone A as complete and Milestone B as intentionally pending
+  - reduced the public config surface by removing unused `ops.toml` and `skills.toml`
+  - converted `platform`, `models`, `channels`, and `mcp` config files to published `*.example.toml` templates
+  - added loader fallback so runtime prefers local `config/*.toml`, then `config/*.example.toml`, then safe built-in defaults
+  - changed the published Feishu channel template to safe defaults with Feishu disabled and `auto_start = false`
+  - removed local path assumptions from tests
+  - added MIT `LICENSE`
+  - verified `.env` and `mcps.json` are ignored while `.env.example` and `mcps.example.json` remain publishable
+  - re-verified the real Feishu conversation path after the open-source cleanup; websocket ingress, single final reply, and visible chat response behaved as expected
+- In progress:
+  - none
+- Next actions:
+  - optional: run a real credential-backed Feishu end-to-end proof in a live chat before announcing the first public release
+- Blockers:
+  - none in-repo
+  - real Feishu end-to-end proof still depends on local credentials and a real chat environment
+- Verification commands:
+  - `PYTHONWARNINGS=default PYTHONPATH=src python -m unittest -v`
+  - `PYTHONPATH=src python -m unittest tests.test_bindings tests.test_router tests.test_runtime_context tests.test_skills tests.test_runtime_loop tests.test_provider_retry tests.test_feishu -v`
+  - `PYTHONPATH=src python -m unittest tests.test_platform tests.test_models tests.test_mcp tests.test_acceptance tests.test_gateway tests.test_contract_compatibility -v`
+  - `PYTHONPATH=src python -m uvicorn marten_runtime.interfaces.http.app:create_app --factory --host 127.0.0.1 --port 8020`
+  - `curl -sS http://127.0.0.1:8020/healthz`
+  - `curl -sS http://127.0.0.1:8020/diagnostics/runtime`
+  - `curl -sS -X POST http://127.0.0.1:8020/messages -H 'Content-Type: application/json' -d '{"channel_id":"http","conversation_id":"oss-smoke-1","user_id":"codex","message_id":"msg-oss-smoke-1","body":"search release notes"}'`
+- Latest verification results:
+  - `PYTHONWARNINGS=default PYTHONPATH=src python -m unittest -v`
+    - pass, `115` tests green
+    - no in-repo `ResourceWarning` reproduced
+    - remaining warnings come from third-party `lark_oapi` / `websockets` deprecations rather than project code
+  - `PYTHONPATH=src python -m unittest tests.test_bindings tests.test_router tests.test_runtime_context tests.test_skills tests.test_runtime_loop tests.test_provider_retry tests.test_feishu -v`
+    - pass, `47` tests green
+  - `PYTHONPATH=src python -m unittest -v`
+    - pass, `115` tests green
+  - `PYTHONPATH=src python -m unittest tests.test_platform tests.test_models tests.test_mcp tests.test_acceptance tests.test_gateway tests.test_contract_compatibility -v`
+    - pass, `31` tests green covering config fallback, template-safe defaults, and runtime diagnostics
+  - runtime smoke on `127.0.0.1:8020`
+    - pass, `/healthz` returned `{"status":"ok"}`
+    - pass, `/diagnostics/runtime` showed template-backed config loading and Feishu disabled by default
+    - pass, `/messages` returned progress + final events on the HTTP main chain
+  - real Feishu validation on `127.0.0.1:8016`
+    - pass, `/diagnostics/runtime` showed `feishu.websocket.connected = true` and `lock_acquired = true`
+    - pass, user-side live chat verification confirmed visible replies were delivered correctly after the open-source cleanup
+  - `git check-ignore -v .env mcps.json config/platform.toml config/models.toml config/channels.toml config/mcp.toml .env.example mcps.example.json config/platform.example.toml config/models.example.toml config/channels.example.toml config/mcp.example.toml`
+    - pass, real local config files are ignored and published template files remain commit-visible

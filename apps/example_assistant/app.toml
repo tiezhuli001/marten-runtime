@@ -1,0 +1,19 @@
+app_id = "example_assistant"
+app_version = "0.1.0"
+default_agent = "assistant"
+prompt_mode = "full"
+delegation_policy = "isolated_session_only"
+
+[bootstrap]
+root = "apps/example_assistant"
+agents = "AGENTS.md"
+identity = "SOUL.md"
+tools = "TOOLS.md"
+bootstrap = "BOOTSTRAP.md"
+
+[skills]
+app_dir = "skills"
+required = []
+
+[mcp]
+required_servers = []
