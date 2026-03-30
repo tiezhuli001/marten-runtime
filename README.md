@@ -4,7 +4,7 @@
 
 Simplified openclaw-style private agent runtime for `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel`.
 
-[中文文档](./README_CN.md) · [Docs Index](./docs/README.md) · [Harness Design](./docs/2026-03-29-private-agent-harness-design.md) · [Config Surfaces](./docs/CONFIG_SURFACES.md)
+[中文文档](./README_CN.md) · [Docs Index](./docs/README.md) · [Harness Design](./docs/2026-03-29-private-agent-harness-design.md) · [Conversation Lanes Design](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md) · [Config Surfaces](./docs/CONFIG_SURFACES.md)
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
@@ -64,6 +64,19 @@ flowchart LR
 - Feishu delivery keeps hidden progress, single final delivery, dedupe, and self-message ignore semantics
 - Provider retry/backoff reduces random upstream timeout breakage on the main chain
 
+## Upgrade Notes
+
+Latest MVP-facing changes:
+
+- added a narrow GitHub hot-repos automation path driven by `register_automation`, a due-window scheduler, isolated automation turns, and final-channel delivery
+- added builtin automation management tools: `list_automations`, `update_automation`, `delete_automation`, `pause_automation`, and `resume_automation`
+- added the shared `Automation Management` skill so CRUD intent stays in `LLM + skill`, while store mutation stays in builtin tools
+- broadened the GitHub skill into `GitHub Assistant`, with aliases and concise GitHub MCP-first guidance for trending digests, repository inspection, issue / PR work, and release/account queries
+- added in-memory conversation lanes so same `channel_id + conversation_id` turns queue in FIFO order for HTTP `/messages` and Feishu interactive ingress
+- strengthened provider resilience with retryable `429` / `502` / `503` / `504` normalization and stable provider-specific runtime error codes
+- strengthened Feishu live-chain observability with run-level `tool_calls`, `llm_request_count`, and websocket diagnostics exposing the latest inbound `session_id` and `run_id`
+- hardened Feishu ingress by suppressing semantic duplicate replays, isolating runtime-handler failures to a single message, ignoring blank-text inbound events, and keeping duplicate websocket replays from clobbering the last accepted status
+
 ## Architecture
 
 `marten-runtime` is optimized around one stable path:
@@ -76,6 +89,9 @@ Key references:
 
 - [Private Agent Harness Design](./docs/2026-03-29-private-agent-harness-design.md)
 - [Private Agent Harness Plan](./docs/plans/2026-03-29-private-agent-harness-plan.md)
+- [Conversation Lanes And Provider Resilience Design](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md)
+- [Conversation Lanes And Provider Resilience Plan](./docs/plans/2026-03-30-conversation-lanes-provider-resilience-plan.md)
+- [GitHub Hot Repos Digest MVP Plan](./docs/plans/2026-03-30-github-hot-repos-mvp-plan.md)
 - [Architecture Audit](./docs/ARCHITECTURE_AUDIT.md)
 - [Config Surfaces](./docs/CONFIG_SURFACES.md)
 - [Live Verification Checklist](./docs/LIVE_VERIFICATION_CHECKLIST.md)
@@ -91,7 +107,6 @@ Milestone A from the private harness plan is implemented:
 
 Milestone B is intentionally not implemented yet:
 
-- per-conversation serialization
 - durable session persistence
 
 Also out of scope for now:
@@ -101,6 +116,15 @@ Also out of scope for now:
 - heartbeat / cron / proactive jobs
 - hybrid memory promotion
 - planner / swarm orchestration
+
+Planned MVP exception under active development:
+
+- a narrow chat-registered recurring digest path for GitHub hot repos
+- requires a configured GitHub MCP server with repo-discovery capability such as `search_repositories`
+- uses a dedicated skill plus a thin automation bridge
+- keeps recurring-job inspection narrow through `list_automations` and `GET /automations`
+- supports narrow recurring-job CRUD through builtin tools instead of a local automation MCP
+- does not imply a generic workflow or proactive-jobs platform
 
 ## Repository Layout
 
@@ -184,10 +208,13 @@ Useful endpoints:
 - `GET /metrics`
 - `POST /sessions`
 - `POST /messages`
+- `GET /automations`
 - `GET /diagnostics/runtime`
 - `GET /diagnostics/session/{session_id}`
 - `GET /diagnostics/run/{run_id}`
 - `GET /diagnostics/trace/{trace_id}`
+
+Run diagnostics include `llm_request_count` and `tool_calls`, so operator checks can verify whether a turn stayed on the intended `LLM -> tool -> LLM` path.
 
 ## Testing
 
@@ -203,13 +230,15 @@ Full suite:
 PYTHONPATH=src python -m unittest -v
 ```
 
+Latest local result: `164` tests green.
+
 ## Documentation
 
 Recommended reading order:
 
 1. [docs/README.md](./docs/README.md)
 2. [docs/2026-03-29-private-agent-harness-design.md](./docs/2026-03-29-private-agent-harness-design.md)
-3. [docs/plans/2026-03-29-private-agent-harness-plan.md](./docs/plans/2026-03-29-private-agent-harness-plan.md)
-4. [docs/CONFIG_SURFACES.md](./docs/CONFIG_SURFACES.md)
-5. [docs/ARCHITECTURE_AUDIT.md](./docs/ARCHITECTURE_AUDIT.md)
-6. [docs/LIVE_VERIFICATION_CHECKLIST.md](./docs/LIVE_VERIFICATION_CHECKLIST.md)
+3. [docs/2026-03-30-conversation-lanes-provider-resilience-design.md](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md)
+4. [docs/plans/2026-03-30-github-hot-repos-mvp-plan.md](./docs/plans/2026-03-30-github-hot-repos-mvp-plan.md)
+5. [docs/plans/2026-03-30-conversation-lanes-provider-resilience-plan.md](./docs/plans/2026-03-30-conversation-lanes-provider-resilience-plan.md)
+6. [docs/CONFIG_SURFACES.md](./docs/CONFIG_SURFACES.md)

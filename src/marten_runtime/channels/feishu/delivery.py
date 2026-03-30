@@ -23,6 +23,7 @@ class FeishuDeliveryPayload(BaseModel):
     sequence: int
     visibility: str = "channel"
     text: str
+    dedupe_key: str | None = None
 
 
 Transport = Callable[[str, dict[str, str], dict], dict]
@@ -73,6 +74,7 @@ class FeishuDeliveryClient:
         self.sleeper = sleeper or time.sleep
         self._tenant_access_token: str | None = None
         self._tenant_access_token_expire_at: float = 0.0
+        self._delivered_keys: set[str] = set()
 
     def send(self, payload: FeishuDeliveryPayload) -> dict:
         tenant_access_token = self._get_tenant_access_token()
@@ -150,6 +152,22 @@ class FeishuDeliveryClient:
                 "message_id": None,
                 "retry_count": 0,
             }
+        if payload.event_type == "final" and payload.dedupe_key:
+            if payload.dedupe_key in self._delivered_keys:
+                self._log_delivery_event("skip", payload, None, reason="duplicate_window")
+                return {
+                    "ok": True,
+                    "action": "skip",
+                    "reason": "duplicate_window",
+                    "event_type": payload.event_type,
+                    "event_id": payload.event_id,
+                    "run_id": payload.run_id,
+                    "trace_id": payload.trace_id,
+                    "sequence": payload.sequence,
+                    "chat_id": payload.chat_id,
+                    "message_id": None,
+                    "retry_count": 0,
+                }
         session = self.session_store.start_or_get(
             channel_id="feishu",
             conversation_id=payload.chat_id,
@@ -181,6 +199,8 @@ class FeishuDeliveryClient:
             )
             return result
         if payload.event_type == "final":
+            if payload.dedupe_key:
+                self._delivered_keys.add(payload.dedupe_key)
             self.session_store.finalize_success(
                 channel_id="feishu",
                 conversation_id=payload.chat_id,

@@ -7,6 +7,7 @@ def build_skill_heads(items: list[SkillSpec]) -> list[SkillHead]:
             skill_id=item.meta.skill_id,
             name=item.meta.name,
             description=item.meta.description,
+            aliases=item.meta.aliases,
             source_path=item.source_path,
         )
         for item in items

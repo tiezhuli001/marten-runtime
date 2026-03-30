@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import json
+import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from uuid import uuid4
 
 import httpx
 import websockets
@@ -34,10 +36,12 @@ from marten_runtime.channels.feishu.models import (
 )
 from marten_runtime.channels.receipts import InMemoryReceiptStore
 from marten_runtime.gateway.models import InboundEnvelope
+from marten_runtime.runtime.lanes import ConversationLaneManager
 
 
 RuntimeHandler = Callable[[InboundEnvelope], dict[str, object]]
 EndpointTransport = Callable[[str, dict[str, str], dict[str, str]], dict[str, object]]
+logger = logging.getLogger(__name__)
 
 
 class FeishuWebsocketService:
@@ -53,6 +57,7 @@ class FeishuWebsocketService:
         endpoint_transport: EndpointTransport | None = None,
         connector: Callable[[str], Any] | None = None,
         client_config: FeishuWebsocketClientConfig | None = None,
+        lane_manager: ConversationLaneManager | None = None,
     ) -> None:
         self.env = dict(env or {})
         self.receipt_store = receipt_store
@@ -63,12 +68,17 @@ class FeishuWebsocketService:
         self.endpoint_transport = endpoint_transport or _default_endpoint_transport
         self.connector = connector or websockets.connect
         self.client_config = client_config or FeishuWebsocketClientConfig()
+        self.lane_manager = lane_manager
         self.state = FeishuWebsocketState()
         self._fragments: dict[str, list[bytes]] = {}
         self._task: asyncio.Task[None] | None = None
         self._stop_event: asyncio.Event | None = None
         self._lock_handle: object | None = None
         self._lock_path = self._resolve_lock_path()
+        self._semantic_recent: dict[str, datetime] = {}
+        self._semantic_duplicate_total = 0
+        self._last_semantic_duplicate: dict[str, object] | None = None
+        self._last_enqueued_lane: dict[str, object] | None = None
 
     def fetch_endpoint(self) -> FeishuWebsocketEndpoint:
         app_id = self.env.get("FEISHU_APP_ID")
@@ -86,7 +96,9 @@ class FeishuWebsocketService:
         )
         if int(response.get("code", 0)) != 0:
             raise RuntimeError(f"FEISHU_WS_ENDPOINT_FAILED:{response.get('code')}:{response.get('msg', '')}")
-        data = response.get("data", {})
+        data = response.get("data")
+        if not isinstance(data, Mapping) or not data.get("URL"):
+            raise RuntimeError("FEISHU_WS_ENDPOINT_INVALID")
         endpoint = FeishuWebsocketEndpoint(
             url=str(data["URL"]),
             client_config=_to_client_config(data.get("ClientConfig", {})),
@@ -129,7 +141,7 @@ class FeishuWebsocketService:
             self._stop_event = stop_event
         while not stop_event.is_set():
             try:
-                endpoint = self.fetch_endpoint()
+                endpoint = await asyncio.to_thread(self.fetch_endpoint)
                 self._update_endpoint_state(endpoint.url)
                 async with self.connector(endpoint.url) as websocket:
                     self.state.connected = True
@@ -151,7 +163,8 @@ class FeishuWebsocketService:
                 raise
             except Exception as exc:
                 self.state.connected = False
-                self.state.last_error = str(exc)
+                self.state.last_error = f"{type(exc).__name__}:{exc}"
+                logger.exception("feishu websocket loop failed")
                 attempts += 1
                 self.state.reconnect_attempts = attempts
                 if not self.client_config.auto_reconnect:
@@ -177,10 +190,11 @@ class FeishuWebsocketService:
         message_type = headers.get(HEADER_TYPE)
         if message_type != MessageType.EVENT.value:
             return self._build_ack_frame(frame, {"code": 200})
-        result = self.handle_event_payload(payload)
+        result = await asyncio.to_thread(self.handle_event_payload, payload)
         self.state.last_message_id = headers.get(HEADER_MESSAGE_ID)
         self.state.last_trace_id = headers.get(HEADER_TRACE_ID)
-        self.state.last_status = result.status
+        if self._should_promote_result_state(result):
+            self.state.last_status = result.status
         return self._build_ack_frame(frame, {"code": 200})
 
     def handle_event_payload(self, payload: dict[str, object] | bytes | str) -> FeishuDispatchResult:
@@ -203,6 +217,20 @@ class FeishuWebsocketService:
                     "event_id": event.event_id,
                     "message_id": event.message_id,
                     "sender_type": event.sender_type,
+                },
+                event=event,
+            )
+        if not event.text.strip():
+            self.state.last_event_id = event.message_id or event.event_id
+            self.state.last_event_at = datetime.now(timezone.utc)
+            return FeishuDispatchResult(
+                status="ignored",
+                body={
+                    "status": "ignored",
+                    "reason": "blank_message",
+                    "event_id": event.event_id,
+                    "message_id": event.message_id,
+                    "chat_id": event.chat_id,
                 },
                 event=event,
             )
@@ -243,7 +271,55 @@ class FeishuWebsocketService:
                 envelope=envelope,
                 event=event,
             )
-        body = self.runtime_handler(envelope)
+        semantic_duplicate = self._claim_semantic_replay(event)
+        if semantic_duplicate is not None:
+            self.state.last_event_id = event.message_id or event.event_id
+            self.state.last_event_at = datetime.now(timezone.utc)
+            return semantic_duplicate
+        lane_lease = None
+        if self.lane_manager is not None:
+            lane_lease = self.lane_manager.acquire(
+                channel_id=envelope.channel_id,
+                conversation_id=envelope.conversation_id,
+                run_id=f"run_{uuid4().hex[:8]}",
+                trace_id=envelope.trace_id,
+            )
+            current_stats = self.lane_manager.stats()
+            self._last_enqueued_lane = current_stats.get("last_enqueued_lane")
+        try:
+            body = self.runtime_handler(envelope)
+        except Exception as exc:
+            logger.exception("feishu runtime handler failed")
+            self.state.last_event_id = event.message_id or event.event_id
+            self.state.last_event_at = datetime.now(timezone.utc)
+            self.state.last_error = f"{exc.__class__.__name__}:{exc}"
+            return FeishuDispatchResult(
+                status="error",
+                body={
+                    "status": "error",
+                    "error_code": "RUNTIME_HANDLER_FAILED",
+                    "message": str(exc),
+                    "message_id": event.message_id,
+                    "event_id": event.event_id,
+                    "chat_id": event.chat_id,
+                },
+                envelope=envelope,
+                event=event,
+            )
+        finally:
+            if lane_lease is not None:
+                self.lane_manager.release(
+                    channel_id=envelope.channel_id,
+                    conversation_id=envelope.conversation_id,
+                    run_id=lane_lease.run_id,
+                )
+        self.state.last_session_id = str(body.get("session_id", "")).strip() or None
+        last_run_id = None
+        for event_payload in body.get("events", []):
+            if isinstance(event_payload, Mapping):
+                candidate = str(event_payload.get("run_id", "")).strip()
+                if candidate:
+                    last_run_id = candidate
         delivery_results: list[dict[str, object]] = []
         for event_payload in body.get("events", []):
             delivery_results.append(
@@ -256,9 +332,15 @@ class FeishuWebsocketService:
                         trace_id=str(event_payload["trace_id"]),
                         sequence=int(event_payload["sequence"]),
                         text=str(event_payload["payload"]["text"]),
+                        dedupe_key=(
+                            envelope.dedupe_key
+                            if str(event_payload["event_type"]) in {"final", "error"}
+                            else None
+                        ),
                     )
                 )
             )
+        self.state.last_run_id = last_run_id
         self.state.last_event_id = event.message_id or event.event_id
         self.state.last_event_at = datetime.now(timezone.utc)
         return FeishuDispatchResult(
@@ -281,12 +363,19 @@ class FeishuWebsocketService:
             "last_error": self.state.last_error,
             "last_message_id": self.state.last_message_id,
             "last_trace_id": self.state.last_trace_id,
+            "last_session_id": self.state.last_session_id,
+            "last_run_id": self.state.last_run_id,
             "last_event_id": self.state.last_event_id,
             "last_status": self.state.last_status,
             "last_event_at": self.state.last_event_at.isoformat() if self.state.last_event_at else None,
             "allowed_chat_types": sorted(self.allowed_chat_types),
             "allowed_chat_ids": sorted(self.allowed_chat_ids),
             "client_config": self.client_config.model_dump(),
+            "semantic_duplicate_total": self._semantic_duplicate_total,
+            "last_semantic_duplicate": self._last_semantic_duplicate,
+            "queued_lane_count": self.lane_manager.stats().get("queued_lane_count", 0) if self.lane_manager else 0,
+            "queued_items_total": self.lane_manager.stats().get("queued_items_total", 0) if self.lane_manager else 0,
+            "last_enqueued_lane": self._last_enqueued_lane,
         }
 
     def _resolve_lock_path(self) -> str:
@@ -389,6 +478,52 @@ class FeishuWebsocketService:
             return False
         return True
 
+    def _should_promote_result_state(self, result: FeishuDispatchResult) -> bool:
+        if result.status != "ignored":
+            return True
+        reason = None
+        if isinstance(result.body, Mapping):
+            candidate = result.body.get("reason")
+            if candidate is not None:
+                reason = str(candidate)
+        return reason not in {"duplicate", "duplicate_semantic"}
+
+    def _claim_semantic_replay(self, event: FeishuInboundEvent) -> FeishuDispatchResult | None:
+        normalized_text = _normalize_message_text(event.text)
+        if not normalized_text:
+            return None
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=5)
+        self._semantic_recent = {
+            key: seen_at for key, seen_at in self._semantic_recent.items() if seen_at >= cutoff
+        }
+        semantic_key = f"{event.chat_id}:{event.user_id}:{normalized_text}"
+        seen_at = self._semantic_recent.get(semantic_key)
+        if seen_at is not None:
+            self._semantic_duplicate_total += 1
+            self._last_semantic_duplicate = {
+                "chat_id": event.chat_id,
+                "user_id": event.user_id,
+                "message_id": event.message_id,
+                "event_id": event.event_id,
+                "text": event.text,
+                "first_seen_at": seen_at.isoformat(),
+                "duplicate_seen_at": now.isoformat(),
+            }
+            return FeishuDispatchResult(
+                status="ignored",
+                body={
+                    "status": "ignored",
+                    "reason": "duplicate_semantic",
+                    "chat_id": event.chat_id,
+                    "message_id": event.message_id,
+                    "event_id": event.event_id,
+                },
+                event=event,
+            )
+        self._semantic_recent[semantic_key] = now
+        return None
+
 
 def _default_endpoint_transport(url: str, headers: dict[str, str], body: dict[str, str]) -> dict[str, object]:
     response = httpx.post(url, headers=headers, json=body, timeout=30)
@@ -437,3 +572,7 @@ def _first_value(values: list[str] | None) -> str | None:
     if not values:
         return None
     return values[0]
+
+
+def _normalize_message_text(text: str) -> str:
+    return " ".join(text.strip().lower().split())

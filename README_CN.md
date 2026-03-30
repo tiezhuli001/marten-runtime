@@ -4,7 +4,7 @@
 
 面向私有 agent 场景的 simplified openclaw-style runtime，聚焦 `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel` 主链。
 
-[English](./README.md) · [文档索引](./docs/README.md) · [Harness 设计](./docs/2026-03-29-private-agent-harness-design.md) · [配置面说明](./docs/CONFIG_SURFACES.md)
+[English](./README.md) · [文档索引](./docs/README.md) · [Harness 设计](./docs/2026-03-29-private-agent-harness-design.md) · [Conversation Lanes 设计](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md) · [配置面说明](./docs/CONFIG_SURFACES.md)
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
@@ -68,7 +68,6 @@ flowchart LR
 
 当前明确没有进入 Milestone B：
 
-- per-conversation serialization
 - durable session persistence
 
 同样明确暂不做：
@@ -78,6 +77,28 @@ flowchart LR
 - heartbeat / cron / proactive jobs
 - hybrid memory promotion
 - planner / swarm 编排
+
+当前正在收敛实现的 MVP 例外：
+
+- 一个通过聊天注册的 GitHub 热门仓库日报路径
+- 该路径要求已经配置 GitHub MCP，且 MCP 至少提供 `search_repositories` 这类 repo discovery 能力
+- 业务逻辑仍放在 skill 中，平台只补一层很薄的 automation bridge
+- 自动任务查询能力保持收敛，只提供 `list_automations` 和 `GET /automations`
+- 自动任务增删改停恢复同样保持收敛，只通过 builtin tools 完成，不额外引入本地 automation MCP
+- 这不代表仓库正在扩成通用 proactive jobs / workflow 平台
+
+## 升级日志
+
+最近一轮 MVP 收敛更新：
+
+- 补齐了 GitHub 热门仓库自动化主链：`register_automation -> store -> due-window scheduler -> isolated automation turn -> final delivery`
+- 增加自动任务 builtin tools：`list_automations`、`update_automation`、`delete_automation`、`pause_automation`、`resume_automation`
+- 增加共享 `Automation Management` skill，让自动任务 CRUD 的语义判断继续交给 `LLM + skill`
+- 将 GitHub skill 收敛成更通用的 `GitHub Assistant`，同时保留热榜 digest、仓库检查、issue / PR、release / account 等高频路径
+- 增加会话级 conversation lanes，同一 `channel_id + conversation_id` 的 HTTP `/messages` 和 Feishu interactive turn 会按 FIFO 串行处理
+- 增强 provider resilience，对 `429`、`502`、`503`、`504` 做 retryable 归一化，并输出稳定的 provider-specific error code
+- 增强 Feishu 诊断面，能直接看到最近一次入站对应的 `session_id`、`run_id`、`llm_request_count` 和 `tool_calls`
+- 修复 Feishu 实链不稳定因素：重复语义重放、单次 runtime 异常打断 websocket、空白消息触发错误可见回复，以及重复 websocket 事件覆盖最近 accepted 状态
 
 ## Repository Layout
 
@@ -160,10 +181,13 @@ PYTHONPATH=src python -m marten_runtime.interfaces.http.serve
 - `GET /metrics`
 - `POST /sessions`
 - `POST /messages`
+- `GET /automations`
 - `GET /diagnostics/runtime`
 - `GET /diagnostics/session/{session_id}`
 - `GET /diagnostics/run/{run_id}`
 - `GET /diagnostics/trace/{trace_id}`
+
+其中 `GET /diagnostics/run/{run_id}` 会暴露 `llm_request_count` 和 `tool_calls`，便于确认一次 turn 是否真的走了预期的 `LLM -> tool -> LLM` 主链。
 
 ## Testing
 
@@ -179,13 +203,15 @@ PYTHONPATH=src python -m unittest tests.test_bindings tests.test_router tests.te
 PYTHONPATH=src python -m unittest -v
 ```
 
+当前本地最新结果：`164` 个测试全绿。
+
 ## Documentation
 
 建议阅读顺序：
 
 1. [docs/README.md](./docs/README.md)
 2. [docs/2026-03-29-private-agent-harness-design.md](./docs/2026-03-29-private-agent-harness-design.md)
-3. [docs/plans/2026-03-29-private-agent-harness-plan.md](./docs/plans/2026-03-29-private-agent-harness-plan.md)
-4. [docs/CONFIG_SURFACES.md](./docs/CONFIG_SURFACES.md)
-5. [docs/ARCHITECTURE_AUDIT.md](./docs/ARCHITECTURE_AUDIT.md)
-6. [docs/LIVE_VERIFICATION_CHECKLIST.md](./docs/LIVE_VERIFICATION_CHECKLIST.md)
+3. [docs/2026-03-30-conversation-lanes-provider-resilience-design.md](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md)
+4. [docs/plans/2026-03-30-github-hot-repos-mvp-plan.md](./docs/plans/2026-03-30-github-hot-repos-mvp-plan.md)
+5. [docs/plans/2026-03-30-conversation-lanes-provider-resilience-plan.md](./docs/plans/2026-03-30-conversation-lanes-provider-resilience-plan.md)
+6. [docs/CONFIG_SURFACES.md](./docs/CONFIG_SURFACES.md)

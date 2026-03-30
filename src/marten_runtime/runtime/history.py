@@ -21,6 +21,8 @@ class RunRecord(BaseModel):
     finished_at: datetime | None = None
     delivery_status: str = "none"
     error_code: str | None = None
+    llm_request_count: int = 0
+    tool_calls: list[dict[str, object]] = []
 
 
 class InMemoryRunHistory:
@@ -73,3 +75,23 @@ class InMemoryRunHistory:
 
     def list_runs(self) -> list[RunRecord]:
         return list(self._items.values())
+
+    def record_tool_call(
+        self,
+        run_id: str,
+        *,
+        tool_name: str,
+        tool_payload: dict,
+        tool_result: dict,
+    ) -> None:
+        record = self._items[run_id]
+        record.tool_calls.append(
+            {
+                "tool_name": tool_name,
+                "tool_payload": tool_payload,
+                "tool_result": tool_result,
+            }
+        )
+
+    def set_llm_request_count(self, run_id: str, count: int) -> None:
+        self._items[run_id].llm_request_count = count

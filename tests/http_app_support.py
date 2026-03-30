@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 
+from marten_runtime.automation.store import AutomationStore
 from marten_runtime.interfaces.http.app import create_app
 
 
@@ -15,6 +16,7 @@ def build_test_app():
         use_compat_json=False,
     )
     runtime = app.state.runtime
+    runtime.automation_store = AutomationStore()
     runtime.channels_config = runtime.channels_config.model_copy(
         update={
             "feishu": runtime.channels_config.feishu.model_copy(

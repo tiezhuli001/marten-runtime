@@ -26,6 +26,11 @@
 5. per-conversation serialization
 6. durable session persistence
 
+更新:
+
+- `per-conversation serialization` 已在 2026-03-30 的 conversation lanes hardening 中以单进程 FIFO 形式落地
+- `durable session persistence` 仍然是后续阶段能力
+
 不建议当前先做的能力:
 
 - durable delivery queue
@@ -384,6 +389,11 @@ SQLite-first 即可，不需要现在做多节点。
 
 1. per-conversation serialization
 2. durable session store
+
+更新:
+
+- `per-conversation serialization` 已通过 conversation lanes Phase 1 落地
+- 当前剩余未完成的 Milestone B 核心项是 durable session store
 
 说明:
 

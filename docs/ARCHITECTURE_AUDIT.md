@@ -15,10 +15,11 @@ Milestone A from the private harness design is implemented and test-covered:
 3. skills first-class runtime integration
 4. provider transport resilience
 
-Milestone B is intentionally still pending:
+Milestone B is intentionally still pending in part:
 
-1. per-conversation serialization
-2. durable session persistence
+1. durable session persistence
+
+Interactive conversation serialization is already implemented as single-process FIFO conversation lanes for HTTP `/messages` and Feishu interactive ingress.
 
 That means the repository is correctly shaped as a simplified openclaw-style private agent runtime, but it is still an MVP harness rather than a fully hardened multi-session runtime.
 

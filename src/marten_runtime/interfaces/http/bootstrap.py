@@ -3,8 +3,13 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
+from marten_runtime.automation.dispatch import AutomationDispatch, build_dispatch
+from marten_runtime.automation.sqlite_store import SQLiteAutomationStore
+from marten_runtime.automation.store import AutomationStore
 from marten_runtime.apps.bootstrap_prompt import load_bootstrap_prompt
 from marten_runtime.agents.bindings import AgentBindingRegistry
 from marten_runtime.apps.manifest import AppManifest, load_app_manifest
@@ -12,10 +17,11 @@ from marten_runtime.agents.registry import AgentRegistry
 from marten_runtime.agents.router import AgentRouter
 from marten_runtime.agents.specs import AgentSpec
 from marten_runtime.channels.delivery_retry import DeliveryRetryPolicy
-from marten_runtime.channels.feishu.delivery import FeishuDeliveryClient
+from marten_runtime.channels.feishu.delivery import FeishuDeliveryClient, FeishuDeliveryPayload
 from marten_runtime.channels.feishu.service import FeishuWebsocketService
 from marten_runtime.channels.receipts import InMemoryReceiptStore
 from marten_runtime.config.agents_loader import load_agent_specs
+from marten_runtime.config.automations_loader import load_automations
 from marten_runtime.config.bindings_loader import load_agent_bindings
 from marten_runtime.config.channels_loader import ChannelsConfig, load_channels_config
 from marten_runtime.config.env_loader import EnvLoadResult, load_repo_env
@@ -28,12 +34,23 @@ from marten_runtime.mcp.discovery import discover_mcp_tools
 from marten_runtime.mcp.loader import load_mcp_servers
 from marten_runtime.mcp.models import MCPServerSpec
 from marten_runtime.runtime.history import InMemoryRunHistory
+from marten_runtime.runtime.lanes import ConversationLaneManager
 from marten_runtime.runtime.llm_client import build_llm_client
 from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.session.store import SessionStore
 from marten_runtime.skills.selector import select_activated_skills
 from marten_runtime.skills.service import SkillService
 from marten_runtime.tools.builtins.time_tool import run_time_tool
+from marten_runtime.tools.builtins.list_automations_tool import run_list_automations_tool
+from marten_runtime.tools.builtins.delete_automation_tool import run_delete_automation_tool
+from marten_runtime.tools.builtins.pause_automation_tool import run_pause_automation_tool
+from marten_runtime.tools.builtins.register_automation_tool import (
+    pop_registration_context,
+    push_registration_context,
+    run_register_automation_tool,
+)
+from marten_runtime.tools.builtins.resume_automation_tool import run_resume_automation_tool
+from marten_runtime.tools.builtins.update_automation_tool import run_update_automation_tool
 from marten_runtime.tools.registry import ToolRegistry
 
 
@@ -51,6 +68,7 @@ class HTTPRuntimeState:
     channels_config: ChannelsConfig
     mcp_servers: list[MCPServerSpec]
     config_snapshot: ConfigSnapshot
+    automation_store: AutomationStore
     session_store: SessionStore
     run_history: InMemoryRunHistory
     tool_registry: ToolRegistry
@@ -66,6 +84,7 @@ class HTTPRuntimeState:
     feishu_delivery: FeishuDeliveryClient
     feishu_receipts: InMemoryReceiptStore
     feishu_socket_service: FeishuWebsocketService
+    lane_manager: ConversationLaneManager
     trace_index: TraceIndex = field(default_factory=dict)
 
 
@@ -94,6 +113,14 @@ def build_http_runtime(
     platform_config = load_platform_config(str(resolved_repo_root / "config/platform.toml"), env=resolved_env)
     models_config = load_models_config(str(resolved_repo_root / "config/models.toml"))
     channels_config = load_channels_config(str(resolved_repo_root / "config/channels.toml"))
+    if not _has_feishu_credentials(resolved_env):
+        channels_config = channels_config.model_copy(
+            update={
+                "feishu": channels_config.feishu.model_copy(
+                    update={"enabled": False, "auto_start": False}
+                )
+            }
+        )
     mcp_servers = load_mcp_servers(str(resolved_repo_root / "config/mcp.toml"), compat_json_path)
 
     tool_registry = ToolRegistry()
@@ -134,6 +161,9 @@ def build_http_runtime(
             str(resolved_repo_root / app_manifest.bootstrap.root / app_manifest.skills.app_dir),
         ]
     )
+    automation_store = SQLiteAutomationStore(resolved_repo_root / "data" / "automations.sqlite3")
+    for job in load_automations(str(resolved_repo_root / "config" / "automations.toml")):
+        automation_store.save(job)
     model_profile_name, model_profile = resolve_model_profile(models_config, default_agent.model_profile)
     runtime_loop = RuntimeLoop(
         build_llm_client(profile_name=model_profile_name, profile=model_profile, env=resolved_env),
@@ -161,6 +191,7 @@ def build_http_runtime(
         channels_config=channels_config,
         mcp_servers=mcp_servers,
         config_snapshot=ConfigSnapshot(),
+        automation_store=automation_store,
         session_store=SessionStore(),
         run_history=runtime_loop.history,
         tool_registry=tool_registry,
@@ -176,6 +207,61 @@ def build_http_runtime(
         feishu_delivery=feishu_delivery,
         feishu_receipts=feishu_receipts,
         feishu_socket_service=None,  # type: ignore[arg-type]
+        lane_manager=ConversationLaneManager(),
+    )
+    tool_registry.register(
+        "register_automation",
+        lambda payload, runtime_state=state: run_register_automation_tool(payload, runtime_state.automation_store),
+        description=(
+            "Register a recurring automation job for a configured delivery target. "
+            "Use this when the user asks to schedule recurring digests or reports. "
+            "For Feishu inbound chats, if the user wants delivery back to the current chat/session, "
+            "set delivery_channel='feishu' and delivery_target='current_channel'. "
+            "The runtime will resolve current_channel to the active Feishu conversation. "
+            "Daily schedules should use schedule_kind='daily' with schedule_expr='HH:MM' in the user's timezone."
+        ),
+    )
+    tool_registry.register(
+        "list_automations",
+        lambda payload, runtime_state=state: run_list_automations_tool(payload, runtime_state.automation_store),
+        description=(
+            "List currently registered automation jobs, including enabled status. "
+            "Use this when the user asks what recurring automations already exist. "
+            "Optionally filter by delivery_channel or delivery_target. "
+            "Set include_disabled=true when paused jobs should also be returned."
+        ),
+    )
+    tool_registry.register(
+        "update_automation",
+        lambda payload, runtime_state=state: run_update_automation_tool(payload, runtime_state.automation_store),
+        description=(
+            "Update one existing automation job by automation_id. "
+            "Use this when the user wants to change the task name, schedule, timezone, delivery target, or skill."
+        ),
+    )
+    tool_registry.register(
+        "delete_automation",
+        lambda payload, runtime_state=state: run_delete_automation_tool(payload, runtime_state.automation_store),
+        description=(
+            "Delete one existing automation job by automation_id. "
+            "Use this when the user explicitly asks to remove a recurring task."
+        ),
+    )
+    tool_registry.register(
+        "pause_automation",
+        lambda payload, runtime_state=state: run_pause_automation_tool(payload, runtime_state.automation_store),
+        description=(
+            "Pause one existing automation job by automation_id without deleting it. "
+            "Use this when the user asks to stop a recurring task temporarily."
+        ),
+    )
+    tool_registry.register(
+        "resume_automation",
+        lambda payload, runtime_state=state: run_resume_automation_tool(payload, runtime_state.automation_store),
+        description=(
+            "Resume one paused automation job by automation_id. "
+            "Use this when the user asks to restart a previously paused recurring task."
+        ),
     )
     state.feishu_socket_service = FeishuWebsocketService(
         env=resolved_env,
@@ -187,6 +273,7 @@ def build_http_runtime(
         client_config=channels_config.feishu.websocket.model_copy(
             update={"auto_reconnect": channels_config.feishu.websocket.auto_reconnect}
         ),
+        lane_manager=state.lane_manager,
     )
     return state
 
@@ -203,6 +290,10 @@ def render_metrics(state: HTTPRuntimeState) -> str:
         "context_compaction_total": 0,
     }
     return "\n".join(f"{key} {value}" for key, value in lines.items())
+
+
+def _has_feishu_credentials(env: Mapping[str, str]) -> bool:
+    return bool(env.get("FEISHU_APP_ID") and env.get("FEISHU_APP_SECRET"))
 
 
 def _process_inbound_envelope(state: HTTPRuntimeState, envelope: InboundEnvelope) -> dict[str, object]:
@@ -223,22 +314,33 @@ def _process_inbound_envelope(state: HTTPRuntimeState, envelope: InboundEnvelope
         config={},
     )
     activated_skills = select_activated_skills(skill_runtime.visible_skills, envelope.body)
-    events = state.runtime_loop.run(
-        session.session_id,
-        envelope.body,
-        trace_id=envelope.trace_id,
-        system_prompt=state.system_prompt,
-        agent=routed_agent,
-        config_snapshot_id=state.config_snapshot.config_snapshot_id,
-        bootstrap_manifest_id=session.bootstrap_manifest_id,
-        skill_snapshot_id=skill_runtime.snapshot.skill_snapshot_id,
-        session_messages=session.history,
-        skill_snapshot=skill_runtime.snapshot,
-        skill_heads_text=skill_runtime.skill_heads_text,
-        always_on_skill_text=skill_runtime.always_on_text,
-        activated_skill_ids=[item.meta.skill_id for item in activated_skills],
-        activated_skill_bodies=[item.body for item in activated_skills],
+    token = push_registration_context(
+        {
+            "channel_id": envelope.channel_id,
+            "conversation_id": envelope.conversation_id,
+            "app_id": routed_agent.app_id,
+            "agent_id": routed_agent.agent_id,
+        }
     )
+    try:
+        events = state.runtime_loop.run(
+            session.session_id,
+            envelope.body,
+            trace_id=envelope.trace_id,
+            system_prompt=state.system_prompt,
+            agent=routed_agent,
+            config_snapshot_id=state.config_snapshot.config_snapshot_id,
+            bootstrap_manifest_id=session.bootstrap_manifest_id,
+            skill_snapshot_id=skill_runtime.snapshot.skill_snapshot_id,
+            session_messages=session.history,
+            skill_snapshot=skill_runtime.snapshot,
+            skill_heads_text=skill_runtime.skill_heads_text,
+            always_on_skill_text=skill_runtime.always_on_text,
+            activated_skill_ids=[item.meta.skill_id for item in activated_skills],
+            activated_skill_bodies=[item.body for item in activated_skills],
+        )
+    finally:
+        pop_registration_context(token)
     state.session_store.append_message(session.session_id, SessionMessage.assistant(events[-1].payload["text"]))
     state.session_store.mark_run(session.session_id, events[-1].run_id, events[-1].created_at)
     state.trace_index[envelope.trace_id] = {
@@ -253,3 +355,97 @@ def _process_inbound_envelope(state: HTTPRuntimeState, envelope: InboundEnvelope
         "trace_id": envelope.trace_id,
         "events": [event.model_dump(mode="json") for event in events],
     }
+
+
+def _process_automation_dispatch(
+    state: HTTPRuntimeState,
+    dispatch: AutomationDispatch,
+) -> dict[str, object]:
+    session = state.session_store.get_or_create_for_conversation(
+        conversation_id=dispatch.session_id,
+        config_snapshot_id=state.config_snapshot.config_snapshot_id,
+        bootstrap_manifest_id=state.app_manifest.bootstrap_manifest_id,
+    )
+    routed_agent = state.agent_registry.get(dispatch.agent_id)
+    state.session_store.set_active_agent(session.session_id, routed_agent.agent_id)
+    from marten_runtime.session.models import SessionMessage
+
+    state.session_store.append_message(session.session_id, SessionMessage.user(dispatch.prompt_template))
+    skill_runtime = state.skill_service.build_runtime(
+        agent_id=routed_agent.agent_id,
+        channel_id=dispatch.delivery_channel,
+        env=state.env,
+        config={},
+    )
+    activated_skill = select_activated_skills(
+        skill_runtime.visible_skills,
+        dispatch.prompt_template,
+        explicit_skill_ids=[dispatch.skill_id],
+    )
+    events = state.runtime_loop.run(
+        session.session_id,
+        dispatch.prompt_template,
+        trace_id=dispatch.trace_id,
+        system_prompt=state.system_prompt,
+        agent=routed_agent,
+        config_snapshot_id=state.config_snapshot.config_snapshot_id,
+        bootstrap_manifest_id=session.bootstrap_manifest_id,
+        skill_snapshot_id=skill_runtime.snapshot.skill_snapshot_id,
+        session_messages=session.history,
+        skill_snapshot=skill_runtime.snapshot,
+        skill_heads_text=skill_runtime.skill_heads_text,
+        always_on_skill_text=skill_runtime.always_on_text,
+        activated_skill_ids=[item.meta.skill_id for item in activated_skill],
+        activated_skill_bodies=[item.body for item in activated_skill],
+    )
+    state.session_store.append_message(session.session_id, SessionMessage.assistant(events[-1].payload["text"]))
+    state.session_store.mark_run(session.session_id, events[-1].run_id, events[-1].created_at)
+    state.trace_index[dispatch.trace_id] = {
+        "run_ids": [events[-1].run_id],
+        "job_ids": [dispatch.automation_id],
+        "event_ids": [event.event_id for event in events],
+        "external_refs": {"langfuse": None, "langsmith": None},
+    }
+    _deliver_automation_events(state, dispatch, events)
+    return {
+        "status": "accepted",
+        "automation_id": dispatch.automation_id,
+        "scheduled_for": dispatch.scheduled_for,
+        "delivery_channel": dispatch.delivery_channel,
+        "delivery_target": dispatch.delivery_target,
+        "session_id": session.session_id,
+        "trace_id": dispatch.trace_id,
+        "events": [event.model_dump(mode="json") for event in events],
+    }
+
+
+def build_manual_automation_dispatch(state: HTTPRuntimeState, automation_id: str) -> AutomationDispatch:
+    job = state.automation_store.get(automation_id)
+    scheduled_for = datetime.now().astimezone().date().isoformat()
+    return build_dispatch(job, scheduled_for=scheduled_for, trace_id=f"trace_auto_{uuid4().hex[:8]}")
+
+
+def _deliver_automation_events(
+    state: HTTPRuntimeState,
+    dispatch: AutomationDispatch,
+    events: list,
+) -> None:
+    if dispatch.delivery_channel != "feishu":
+        return
+    for event in events:
+        state.feishu_delivery.deliver(
+            FeishuDeliveryPayload(
+                chat_id=dispatch.delivery_target,
+                event_type=event.event_type,
+                event_id=event.event_id,
+                run_id=event.run_id,
+                trace_id=event.trace_id,
+                sequence=event.sequence,
+                text=str(event.payload.get("text", "")),
+                dedupe_key=(
+                    f"feishu:{dispatch.delivery_target}:{dispatch.scheduled_for}"
+                    if event.event_type == "final"
+                    else None
+                ),
+            )
+        )

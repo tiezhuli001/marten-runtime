@@ -1,6 +1,8 @@
+import threading
 import asyncio
 import json
 import tempfile
+import time
 import unittest
 from collections.abc import Mapping
 
@@ -25,7 +27,10 @@ from marten_runtime.channels.feishu.delivery_session import InMemoryFeishuDelive
 from marten_runtime.channels.feishu.delivery import FeishuDeliveryClient, FeishuDeliveryPayload
 from marten_runtime.channels.feishu.inbound import parse_feishu_callback, to_inbound_envelope
 from marten_runtime.channels.feishu.models import FeishuInboundEvent
+from marten_runtime.channels.feishu.models import FeishuWebsocketClientConfig, FeishuWebsocketEndpoint
 from marten_runtime.channels.feishu.service import FeishuWebsocketService
+from marten_runtime.gateway.dedupe import build_dedupe_key
+from marten_runtime.runtime.lanes import ConversationLaneManager
 
 
 class _FakeDeliveryClient:
@@ -108,6 +113,305 @@ class _FlakyDeliveryTransport:
 
 
 class FeishuTests(unittest.TestCase):
+    def test_feishu_same_chat_overlap_is_queued_without_busy_reply(self) -> None:
+        delivery = _FakeDeliveryClient()
+        calls: list[str] = []
+        lane_manager = ConversationLaneManager()
+        first_started = threading.Event()
+        release_first = threading.Event()
+
+        def runtime_handler(envelope: object) -> dict[str, object]:
+            calls.append(envelope.message_id)
+            if len(calls) == 1:
+                first_started.set()
+                release_first.wait(timeout=2)
+            return {
+                "status": "accepted",
+                "session_id": "sess_busy",
+                "trace_id": envelope.trace_id,
+                "events": [
+                    {
+                        "event_type": "final",
+                        "event_id": "evt_final_busy",
+                        "run_id": "run_busy",
+                        "trace_id": envelope.trace_id,
+                        "sequence": 1,
+                        "payload": {"text": "done"},
+                    }
+                ],
+            }
+
+        service = FeishuWebsocketService(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            receipt_store=InMemoryReceiptStore(),
+            runtime_handler=runtime_handler,
+            delivery_client=delivery,
+            lane_manager=lane_manager,
+        )
+        results: dict[str, object] = {}
+
+        def handle(name: str, payload: dict[str, object]) -> None:
+            results[name] = service.handle_event_payload(payload)
+
+        first_payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_busy_1",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {"user_id": "user_busy"},
+                },
+                "message": {
+                    "message_id": "msg_busy_1",
+                    "chat_id": "chat_busy",
+                    "content": json.dumps({"text": "hello busy 1"}),
+                },
+            },
+        }
+        second_payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_busy_2",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {"user_id": "user_busy"},
+                },
+                "message": {
+                    "message_id": "msg_busy_2",
+                    "chat_id": "chat_busy",
+                    "content": json.dumps({"text": "hello busy 2"}),
+                },
+            },
+        }
+        first_thread = threading.Thread(target=handle, args=("first", first_payload))
+        second_thread = threading.Thread(target=handle, args=("second", second_payload))
+        first_thread.start()
+        self.assertTrue(first_started.wait(timeout=2))
+        second_thread.start()
+
+        deadline = time.time() + 2
+        stats = service.stats()
+        while stats["queued_lane_count"] != 1 and time.time() < deadline:
+            time.sleep(0.01)
+            stats = service.stats()
+        self.assertEqual(stats["queued_lane_count"], 1)
+        self.assertEqual(stats["queued_items_total"], 1)
+
+        release_first.set()
+        first_thread.join(timeout=2)
+        second_thread.join(timeout=2)
+
+        self.assertEqual(results["first"].status, "accepted")
+        self.assertEqual(results["second"].status, "accepted")
+        self.assertEqual(calls, ["msg_busy_1", "msg_busy_2"])
+        self.assertEqual(len(delivery.payloads), 2)
+
+    def test_feishu_different_chat_still_runs_when_another_lane_is_busy(self) -> None:
+        delivery = _FakeDeliveryClient()
+        calls: list[str] = []
+        lane_manager = ConversationLaneManager()
+        release_both = threading.Event()
+        first_started = threading.Event()
+        second_started = threading.Event()
+
+        def runtime_handler(envelope: object) -> dict[str, object]:
+            calls.append(envelope.conversation_id)
+            if envelope.conversation_id == "chat_busy":
+                first_started.set()
+                release_both.wait(timeout=2)
+            if envelope.conversation_id == "chat_open":
+                second_started.set()
+                release_both.wait(timeout=2)
+            return {
+                "status": "accepted",
+                "session_id": "sess_open",
+                "trace_id": envelope.trace_id,
+                "events": [
+                    {
+                        "event_type": "final",
+                        "event_id": "evt_final_open",
+                        "run_id": "run_open",
+                        "trace_id": envelope.trace_id,
+                        "sequence": 1,
+                        "payload": {"text": "done"},
+                    }
+                ],
+            }
+
+        service = FeishuWebsocketService(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            receipt_store=InMemoryReceiptStore(),
+            runtime_handler=runtime_handler,
+            delivery_client=delivery,
+            lane_manager=lane_manager,
+        )
+        results: dict[str, object] = {}
+
+        def handle(name: str, chat_id: str) -> None:
+            results[name] = service.handle_event_payload(
+                {
+                    "schema": "2.0",
+                    "header": {
+                        "event_id": f"evt_{name}_1",
+                        "event_type": "im.message.receive_v1",
+                    },
+                    "event": {
+                        "sender": {
+                            "sender_type": "user",
+                            "sender_id": {"user_id": f"user_{name}"},
+                        },
+                        "message": {
+                            "message_id": f"msg_{name}_1",
+                            "chat_id": chat_id,
+                            "content": json.dumps({"text": f"hello {name}"}),
+                        },
+                    },
+                }
+            )
+
+        busy_thread = threading.Thread(target=handle, args=("busy", "chat_busy"))
+        open_thread = threading.Thread(target=handle, args=("open", "chat_open"))
+        busy_thread.start()
+        self.assertTrue(first_started.wait(timeout=2))
+        open_thread.start()
+        self.assertTrue(second_started.wait(timeout=2))
+        release_both.set()
+        busy_thread.join(timeout=2)
+        open_thread.join(timeout=2)
+
+        self.assertEqual(results["busy"].status, "accepted")
+        self.assertEqual(results["open"].status, "accepted")
+        self.assertEqual(set(calls), {"chat_busy", "chat_open"})
+        self.assertEqual(len(delivery.payloads), 2)
+
+    def test_websocket_service_offloads_blocking_runtime_handler_from_event_loop(self) -> None:
+        async def exercise() -> None:
+            delivery = _FakeDeliveryClient()
+
+            def runtime_handler(envelope: object) -> dict[str, object]:
+                time.sleep(0.2)
+                return {
+                    "status": "accepted",
+                    "trace_id": envelope.trace_id,
+                    "session_id": "sess_async",
+                    "events": [
+                        {
+                            "event_type": "final",
+                            "event_id": "evt_final_async",
+                            "run_id": "run_async",
+                            "trace_id": envelope.trace_id,
+                            "sequence": 1,
+                            "payload": {"text": "done"},
+                        }
+                    ],
+                }
+
+            service = FeishuWebsocketService(
+                env={
+                    "FEISHU_APP_ID": "app-id",
+                    "FEISHU_APP_SECRET": "app-secret",
+                },
+                receipt_store=InMemoryReceiptStore(),
+                runtime_handler=runtime_handler,
+                delivery_client=delivery,
+            )
+            frame = Frame()
+            header = frame.headers.add()
+            header.key = HEADER_TYPE
+            header.value = MessageType.EVENT.value
+            message_id = frame.headers.add()
+            message_id.key = HEADER_MESSAGE_ID
+            message_id.value = "msg_async_1"
+            trace_id = frame.headers.add()
+            trace_id.key = HEADER_TRACE_ID
+            trace_id.value = "trace_async_1"
+            frame.method = FrameType.DATA.value
+            frame.SeqID = 0
+            frame.LogID = 0
+            frame.service = 1
+            frame.payload = json.dumps(
+                {
+                    "schema": "2.0",
+                    "header": {
+                        "event_id": "evt_async_1",
+                        "event_type": "im.message.receive_v1",
+                    },
+                    "event": {
+                        "sender": {
+                            "sender_type": "user",
+                            "sender_id": {"user_id": "user_async_1"},
+                        },
+                        "message": {
+                            "message_id": "msg_async_1",
+                            "chat_id": "chat_async_1",
+                            "content": json.dumps({"text": "hello async"}),
+                        },
+                    },
+                }
+            ).encode("utf-8")
+
+            ticks = 0
+
+            async def ticker() -> None:
+                nonlocal ticks
+                start = time.perf_counter()
+                while time.perf_counter() - start < 0.15:
+                    ticks += 1
+                    await asyncio.sleep(0.01)
+
+            await asyncio.gather(service.handle_frame_bytes(frame.SerializeToString()), ticker())
+
+            self.assertGreaterEqual(ticks, 5)
+
+        asyncio.run(exercise())
+
+    def test_websocket_service_offloads_blocking_endpoint_fetch_from_event_loop(self) -> None:
+        async def exercise() -> None:
+            service = FeishuWebsocketService(
+                env={
+                    "FEISHU_APP_ID": "app-id",
+                    "FEISHU_APP_SECRET": "app-secret",
+                },
+                receipt_store=InMemoryReceiptStore(),
+                runtime_handler=lambda envelope: {"status": "accepted", "events": []},
+                delivery_client=_FakeDeliveryClient(),
+                client_config=FeishuWebsocketClientConfig(auto_reconnect=False),
+            )
+
+            def slow_fetch() -> FeishuWebsocketEndpoint:
+                time.sleep(0.2)
+                raise RuntimeError("boom")
+
+            service.fetch_endpoint = slow_fetch  # type: ignore[method-assign]
+            service._stop_event = asyncio.Event()
+
+            ticks = 0
+
+            async def ticker() -> None:
+                nonlocal ticks
+                start = time.perf_counter()
+                while time.perf_counter() - start < 0.15:
+                    ticks += 1
+                    await asyncio.sleep(0.01)
+
+            await asyncio.gather(service.run_forever(), ticker())
+
+            self.assertGreaterEqual(ticks, 5)
+
+        asyncio.run(exercise())
+
     def test_receipt_store_claims_feishu_dedupe_key_once(self) -> None:
         store = InMemoryReceiptStore()
 
@@ -436,6 +740,63 @@ class FeishuTests(unittest.TestCase):
         self.assertEqual(handled_traces, [first.body["trace_id"]])
         self.assertEqual(len(delivery.payloads), 2)
 
+    def test_websocket_duplicate_frame_does_not_clobber_last_accepted_status(self) -> None:
+        delivery = _FakeDeliveryClient()
+        service = FeishuWebsocketService(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            receipt_store=InMemoryReceiptStore(),
+            runtime_handler=lambda envelope: {
+                "status": "accepted",
+                "trace_id": envelope.trace_id,
+                "session_id": "sess_frame_dup",
+                "events": [
+                    {
+                        "event_type": "final",
+                        "event_id": "evt_final_frame_dup",
+                        "run_id": "run_frame_dup",
+                        "trace_id": envelope.trace_id,
+                        "sequence": 1,
+                        "payload": {"text": "done"},
+                    }
+                ],
+            },
+            delivery_client=delivery,
+        )
+        payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_frame_dup_1",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {"user_id": "user_frame_dup"},
+                },
+                "message": {
+                    "message_id": "msg_frame_dup_1",
+                    "chat_id": "chat_frame_dup_1",
+                    "content": json.dumps({"text": "hello frame dup"}),
+                },
+            },
+        }
+        frame_bytes = self._build_event_frame(payload)
+
+        asyncio.run(service.handle_frame_bytes(frame_bytes))
+        self.assertEqual(service.state.last_status, "accepted")
+        self.assertEqual(service.state.last_run_id, "run_frame_dup")
+        self.assertEqual(service.state.last_session_id, "sess_frame_dup")
+
+        asyncio.run(service.handle_frame_bytes(frame_bytes))
+
+        self.assertEqual(service.state.last_status, "accepted")
+        self.assertEqual(service.state.last_run_id, "run_frame_dup")
+        self.assertEqual(service.state.last_session_id, "sess_frame_dup")
+        self.assertEqual(len(delivery.payloads), 1)
+
     def test_websocket_service_suppresses_duplicate_message_id_across_event_replays(self) -> None:
         delivery = _FakeDeliveryClient()
         store = InMemoryReceiptStore()
@@ -517,6 +878,293 @@ class FeishuTests(unittest.TestCase):
         self.assertEqual(second.body["reason"], "duplicate")
         self.assertEqual(handled_message_ids, ["msg_replay_1"])
         self.assertEqual(len(delivery.payloads), 1)
+
+    def test_websocket_service_suppresses_same_text_replay_in_short_window(self) -> None:
+        delivery = _FakeDeliveryClient()
+        store = InMemoryReceiptStore()
+        handled_message_ids: list[str] = []
+
+        def runtime_handler(envelope: object) -> dict[str, object]:
+            handled_message_ids.append(envelope.message_id)
+            return {
+                "status": "accepted",
+                "trace_id": envelope.trace_id,
+                "session_id": "sess_semantic",
+                "events": [
+                    {
+                        "event_type": "final",
+                        "event_id": "evt_final_semantic",
+                        "run_id": "run_semantic",
+                        "trace_id": envelope.trace_id,
+                        "sequence": 1,
+                        "payload": {"text": "done"},
+                    }
+                ],
+            }
+
+        service = FeishuWebsocketService(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            receipt_store=store,
+            runtime_handler=runtime_handler,
+            delivery_client=delivery,
+        )
+        first_payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_semantic_1",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {
+                        "user_id": "user_semantic_1",
+                    }
+                },
+                "message": {
+                    "message_id": "msg_semantic_1",
+                    "chat_id": "chat_semantic_1",
+                    "content": json.dumps({"text": "我现在有哪些自动任务？"}),
+                },
+            },
+        }
+        second_payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_semantic_2",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {
+                        "user_id": "user_semantic_1",
+                    }
+                },
+                "message": {
+                    "message_id": "msg_semantic_2",
+                    "chat_id": "chat_semantic_1",
+                    "content": json.dumps({"text": "我现在有哪些自动任务？"}),
+                },
+            },
+        }
+
+        first = service.handle_event_payload(first_payload)
+        second = service.handle_event_payload(second_payload)
+
+        self.assertEqual(first.status, "accepted")
+        self.assertEqual(second.status, "ignored")
+        self.assertEqual(second.body["reason"], "duplicate_semantic")
+        self.assertEqual(handled_message_ids, ["msg_semantic_1"])
+        self.assertEqual(len(delivery.payloads), 1)
+
+    def test_websocket_service_stats_expose_last_runtime_session_and_run(self) -> None:
+        delivery = _FakeDeliveryClient()
+        store = InMemoryReceiptStore()
+
+        service = FeishuWebsocketService(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            receipt_store=store,
+            runtime_handler=lambda envelope: {
+                "status": "accepted",
+                "trace_id": envelope.trace_id,
+                "session_id": "sess_last_runtime",
+                "events": [
+                    {
+                        "event_type": "final",
+                        "event_id": "evt_last_runtime",
+                        "run_id": "run_last_runtime",
+                        "trace_id": envelope.trace_id,
+                        "sequence": 1,
+                        "payload": {"text": "done"},
+                    }
+                ],
+            },
+            delivery_client=delivery,
+        )
+        payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_runtime_1",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {
+                        "user_id": "user_runtime_1",
+                    }
+                },
+                "message": {
+                    "message_id": "msg_runtime_1",
+                    "chat_id": "chat_runtime_1",
+                    "content": json.dumps({"text": "删掉 23:31 的那个任务"}),
+                },
+            },
+        }
+
+        result = service.handle_event_payload(payload)
+
+        self.assertEqual(result.status, "accepted")
+        stats = service.stats()
+        self.assertEqual(stats["last_session_id"], "sess_last_runtime")
+        self.assertEqual(stats["last_run_id"], "run_last_runtime")
+
+    def test_websocket_service_converts_runtime_handler_exception_into_error_result(self) -> None:
+        delivery = _FakeDeliveryClient()
+        store = InMemoryReceiptStore()
+
+        def broken_runtime_handler(envelope: object) -> dict[str, object]:
+            raise RuntimeError("boom")
+
+        service = FeishuWebsocketService(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            receipt_store=store,
+            runtime_handler=broken_runtime_handler,
+            delivery_client=delivery,
+        )
+        payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_runtime_error_1",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {
+                        "user_id": "user_runtime_error_1",
+                    }
+                },
+                "message": {
+                    "message_id": "msg_runtime_error_1",
+                    "chat_id": "chat_runtime_error_1",
+                    "content": json.dumps({"text": "查看现在有哪些自动任务"}),
+                },
+            },
+        }
+
+        result = service.handle_event_payload(payload)
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.body["error_code"], "RUNTIME_HANDLER_FAILED")
+        self.assertEqual(result.body["message_id"], "msg_runtime_error_1")
+
+    def test_websocket_service_ignores_blank_text_message(self) -> None:
+        delivery = _FakeDeliveryClient()
+        store = InMemoryReceiptStore()
+        handled = False
+
+        def runtime_handler(envelope: object) -> dict[str, object]:
+            nonlocal handled
+            handled = True
+            return {"status": "accepted", "events": []}
+
+        service = FeishuWebsocketService(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            receipt_store=store,
+            runtime_handler=runtime_handler,
+            delivery_client=delivery,
+        )
+        payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_blank_1",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {
+                        "user_id": "user_blank_1",
+                    }
+                },
+                "message": {
+                    "message_id": "msg_blank_1",
+                    "chat_id": "chat_blank_1",
+                    "content": json.dumps({"text": "   "}),
+                },
+            },
+        }
+
+        result = service.handle_event_payload(payload)
+
+        self.assertEqual(result.status, "ignored")
+        self.assertEqual(result.body["reason"], "blank_message")
+        self.assertFalse(handled)
+
+    def test_websocket_service_attaches_inbound_dedupe_key_to_final_delivery(self) -> None:
+        delivery = _FakeDeliveryClient()
+        store = InMemoryReceiptStore()
+
+        service = FeishuWebsocketService(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            receipt_store=store,
+            runtime_handler=lambda envelope: {
+                "status": "accepted",
+                "trace_id": envelope.trace_id,
+                "session_id": "sess_replay",
+                "events": [
+                    {
+                        "event_type": "final",
+                        "event_id": "evt_final_replay",
+                        "run_id": "run_replay",
+                        "trace_id": envelope.trace_id,
+                        "sequence": 1,
+                        "payload": {"text": "done"},
+                    }
+                ],
+            },
+            delivery_client=delivery,
+        )
+        payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_replay_1",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {
+                        "user_id": "user_replay_1",
+                    }
+                },
+                "message": {
+                    "message_id": "msg_replay_1",
+                    "chat_id": "chat_replay_1",
+                    "content": json.dumps({"text": "hello replay"}),
+                },
+            },
+        }
+
+        service.handle_event_payload(payload)
+
+        self.assertEqual(len(delivery.payloads), 1)
+        self.assertEqual(
+            delivery.payloads[0].dedupe_key,
+            build_dedupe_key(
+                channel_id="feishu",
+                conversation_id="chat_replay_1",
+                user_id="user_replay_1",
+                message_id="msg_replay_1",
+            ),
+        )
 
     def test_websocket_service_ignores_app_originated_messages(self) -> None:
         delivery = _FakeDeliveryClient()
@@ -704,6 +1352,21 @@ class FeishuTests(unittest.TestCase):
         self.assertEqual(service.client_config.reconnect_interval_s, 7)
         self.assertEqual(service.client_config.ping_interval_s, 55)
 
+    def test_websocket_service_reports_controlled_error_when_endpoint_data_missing(self) -> None:
+        service = FeishuWebsocketService(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            receipt_store=InMemoryReceiptStore(),
+            runtime_handler=lambda envelope: {"status": "accepted", "events": []},
+            delivery_client=_FakeDeliveryClient(),
+            endpoint_transport=lambda url, headers, body: {"code": 0, "msg": "ok", "data": None},
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "FEISHU_WS_ENDPOINT_INVALID"):
+            service.fetch_endpoint()
+
     def test_progress_is_hidden_and_final_sends_one_card(self) -> None:
         transport = _RecordingDeliveryTransport()
         sessions = InMemoryFeishuDeliverySessionStore()
@@ -759,6 +1422,48 @@ class FeishuTests(unittest.TestCase):
         self.assertEqual(len(transport.updated), 0)
         self.assertEqual(transport.sent[0][2]["msg_type"], "interactive")
         self.assertEqual(sessions.active_count(), 0)
+
+    def test_automation_final_delivery_suppresses_duplicate_window(self) -> None:
+        transport = _RecordingDeliveryTransport()
+        client = FeishuDeliveryClient(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            transport=transport.post,
+            session_store=InMemoryFeishuDeliverySessionStore(),
+            enable_message_update=False,
+        )
+
+        first = client.deliver(
+            FeishuDeliveryPayload(
+                chat_id="chat_auto_1",
+                event_type="final",
+                event_id="evt_auto_1",
+                run_id="run_auto_1",
+                trace_id="trace_auto_1",
+                sequence=1,
+                text="digest",
+                dedupe_key="feishu:chat_auto_1:2026-03-30",
+            )
+        )
+        second = client.deliver(
+            FeishuDeliveryPayload(
+                chat_id="chat_auto_1",
+                event_type="final",
+                event_id="evt_auto_2",
+                run_id="run_auto_2",
+                trace_id="trace_auto_2",
+                sequence=1,
+                text="digest",
+                dedupe_key="feishu:chat_auto_1:2026-03-30",
+            )
+        )
+
+        self.assertEqual(first["action"], "send")
+        self.assertEqual(second["action"], "skip")
+        self.assertEqual(second["reason"], "duplicate_window")
+        self.assertEqual(len(transport.sent), 1)
 
     def test_hidden_progress_does_not_block_error_send_when_update_unavailable(self) -> None:
         transport = _RecordingDeliveryTransport()
