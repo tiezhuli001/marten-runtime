@@ -199,6 +199,171 @@ class SkillTests(unittest.TestCase):
 
             self.assertEqual([item.meta.skill_id for item in activated], ["repo_helper"])
 
+    def test_selector_explicitly_activates_skill_by_id_for_automation_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            shared = base / "shared"
+            write_skill(
+                shared,
+                "github_hot_repos_digest",
+                """
+                ---
+                skill_id: github_hot_repos_digest
+                name: GitHub Hot Repos Digest
+                description: daily hot repositories digest
+                enabled: true
+                agents: [assistant]
+                channels: [feishu, http]
+                tags: [github, trending]
+                ---
+                Digest body
+                """,
+            )
+            loader = SkillLoader([str(shared)])
+            visible = filter_skills(
+                agent_id="assistant",
+                channel_id="feishu",
+                items=loader.load_all(),
+                env={},
+                config={},
+            )
+
+            activated = select_activated_skills(
+                visible,
+                "Run the scheduled digest.",
+                explicit_skill_ids=["github_hot_repos_digest"],
+            )
+
+            self.assertEqual([item.meta.skill_id for item in activated], ["github_hot_repos_digest"])
+
+    def test_selector_activates_skill_by_alias_for_natural_github_digest_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            shared = base / "shared"
+            write_skill(
+                shared,
+                "github_hot_repos_digest",
+                """
+                ---
+                skill_id: github_hot_repos_digest
+                name: GitHub Hot Repos Digest
+                description: build a concise daily digest for fast-moving GitHub repositories
+                enabled: true
+                agents: [assistant]
+                channels: [feishu, http]
+                tags: [github, trending, digest]
+                aliases: ["GitHub 热门项目摘要", "GitHub 热门仓库", "GitHub trending", "今日开源热榜"]
+                ---
+                Digest body
+                """,
+            )
+            loader = SkillLoader([str(shared)])
+            visible = filter_skills(
+                agent_id="assistant",
+                channel_id="feishu",
+                items=loader.load_all(),
+                env={},
+                config={},
+            )
+
+            activated = select_activated_skills(
+                visible,
+                "请给我一份今日开源热榜，关注今天讨论度高的仓库。",
+            )
+
+            self.assertEqual([item.meta.skill_id for item in activated], ["github_hot_repos_digest"])
+
+    def test_selector_activates_automation_management_skill_for_task_crud_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            shared = base / "shared"
+            write_skill(
+                shared,
+                "automation_management",
+                """
+                ---
+                skill_id: automation_management
+                name: Automation Management
+                description: help manage recurring automations and existing 自动任务 or 定时任务
+                aliases: ["自动任务管理", "定时任务管理", "自动任务", "定时任务"]
+                enabled: true
+                agents: [assistant]
+                channels: [feishu, http]
+                tags: [automation, tasks, schedule]
+                ---
+                Management body
+                """,
+            )
+            loader = SkillLoader([str(shared)])
+            visible = filter_skills(
+                agent_id="assistant",
+                channel_id="feishu",
+                items=loader.load_all(),
+                env={},
+                config={},
+            )
+
+            activated = select_activated_skills(
+                visible,
+                "把我那个 23:30 的自动任务暂停掉。",
+            )
+
+            self.assertEqual([item.meta.skill_id for item in activated], ["automation_management"])
+
+    def test_selector_prefers_automation_management_over_github_content_for_task_crud(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            shared = base / "shared"
+            write_skill(
+                shared,
+                "automation_management",
+                """
+                ---
+                skill_id: automation_management
+                name: Automation Management
+                description: help manage recurring automations and existing 自动任务 or 定时任务
+                aliases: ["自动任务管理", "定时任务管理", "自动任务", "定时任务"]
+                enabled: true
+                agents: [assistant]
+                channels: [feishu, http]
+                tags: [automation, tasks, schedule]
+                ---
+                Management body
+                """,
+            )
+            write_skill(
+                shared,
+                "github_hot_repos_digest",
+                """
+                ---
+                skill_id: github_hot_repos_digest
+                name: GitHub Assistant
+                description: use when the user wants GitHub trending repositories or digest content
+                aliases: ["GitHub 热门项目摘要", "GitHub 热门仓库", "GitHub trending", "今日开源热榜"]
+                enabled: true
+                agents: [assistant]
+                channels: [feishu, http]
+                tags: [github, trending, digest]
+                ---
+                Digest body
+                """,
+            )
+            loader = SkillLoader([str(shared)])
+            visible = filter_skills(
+                agent_id="assistant",
+                channel_id="feishu",
+                items=loader.load_all(),
+                env={},
+                config={},
+            )
+
+            activated = select_activated_skills(
+                visible,
+                "把 23:50 的那个 GitHub 热榜任务暂停掉。",
+            )
+
+            self.assertEqual([item.meta.skill_id for item in activated], ["automation_management"])
+
 
 if __name__ == "__main__":
     unittest.main()

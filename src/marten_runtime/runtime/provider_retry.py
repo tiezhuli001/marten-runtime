@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import random
 import time
 from typing import TypeVar
 
@@ -14,14 +15,27 @@ class RetryPolicy:
     max_attempts: int = 3
     base_backoff_seconds: float = 0.25
     max_backoff_seconds: float = 2.0
+    jitter_ratio: float = 0.2
 
 
 class ProviderTransportError(RuntimeError):
-    def __init__(self, error_code: str, detail: str, *, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        error_code: str,
+        detail: str,
+        *,
+        retryable: bool = False,
+        attempt_count: int = 1,
+        provider_name: str | None = None,
+        model_name: str | None = None,
+    ) -> None:
         super().__init__(detail)
         self.error_code = error_code
         self.detail = detail
         self.retryable = retryable
+        self.attempt_count = attempt_count
+        self.provider_name = provider_name
+        self.model_name = model_name
 
 
 def with_retry(operation: Callable[[], T], *, policy: RetryPolicy | None = None) -> T:
@@ -32,6 +46,7 @@ def with_retry(operation: Callable[[], T], *, policy: RetryPolicy | None = None)
             return operation()
         except Exception as exc:  # noqa: BLE001
             normalized = normalize_provider_error(exc)
+            normalized.attempt_count = attempt  # type: ignore[misc]
             if not normalized.retryable or attempt >= retry_policy.max_attempts:
                 raise normalized
             last_error = normalized
@@ -39,6 +54,9 @@ def with_retry(operation: Callable[[], T], *, policy: RetryPolicy | None = None)
                 retry_policy.max_backoff_seconds,
                 retry_policy.base_backoff_seconds * max(1, 2 ** (attempt - 1)),
             )
+            if delay > 0 and retry_policy.jitter_ratio > 0:
+                delay += random.uniform(0, delay * retry_policy.jitter_ratio)
+                delay = min(delay, retry_policy.max_backoff_seconds)
             if delay > 0:
                 time.sleep(delay)
     assert last_error is not None
@@ -59,8 +77,18 @@ def normalize_provider_error(exc: Exception) -> ProviderTransportError:
     message = str(exc)
     if message.startswith("provider_http_error:401") or message.startswith("provider_http_error:403"):
         return ProviderTransportError("PROVIDER_AUTH_ERROR", message)
+    if message.startswith("provider_http_error:429"):
+        return ProviderTransportError("PROVIDER_RATE_LIMITED", message, retryable=True)
+    if (
+        message.startswith("provider_http_error:502")
+        or message.startswith("provider_http_error:503")
+        or message.startswith("provider_http_error:504")
+    ):
+        return ProviderTransportError("PROVIDER_UPSTREAM_UNAVAILABLE", message, retryable=True)
     if message.startswith("provider_http_error:"):
         return ProviderTransportError("PROVIDER_HTTP_ERROR", message)
     if message.startswith("provider_transport_error:"):
         return ProviderTransportError("PROVIDER_TRANSPORT_ERROR", message, retryable=True)
+    if message.startswith("provider_response_invalid:"):
+        return ProviderTransportError("PROVIDER_RESPONSE_INVALID", message)
     return ProviderTransportError("PROVIDER_TRANSPORT_ERROR", message or exc.__class__.__name__)

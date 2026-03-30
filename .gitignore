@@ -48,3 +48,4 @@ data/
 .vscode/
 *.swp
 *.swo
+.tmp/

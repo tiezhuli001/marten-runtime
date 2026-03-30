@@ -6,6 +6,7 @@ from marten_runtime.runtime.context import assemble_runtime_context
 from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.llm_client import ConversationMessage, LLMClient, LLMRequest, ToolExchange
+from marten_runtime.runtime.provider_retry import ProviderTransportError, normalize_provider_error
 from marten_runtime.runtime.tool_calls import ToolCallRejected, resolve_tool_call
 from marten_runtime.session.models import SessionMessage
 from marten_runtime.skills.snapshot import SkillSnapshot
@@ -110,12 +111,49 @@ class RuntimeLoop:
         tool_history: list[ToolExchange] = []
         current_request = first_request
         for _ in range(self.max_tool_rounds + 1):
-            self.request_count += 1
-            self.last_request_count += 1
-            reply = self.llm.complete(current_request)
             try:
-                tool_result = resolve_tool_call(reply, self.tools, tool_snapshot)
-            except ToolCallRejected as exc:
+                self.request_count += 1
+                self.last_request_count += 1
+                reply = self.llm.complete(current_request)
+                try:
+                    tool_result = resolve_tool_call(reply, self.tools, tool_snapshot)
+                except ToolCallRejected as exc:
+                    events.append(
+                        OutboundEvent(
+                            session_id=session_id,
+                            run_id=run.run_id,
+                            event_id=f"evt_{uuid4().hex[:8]}",
+                            event_type="error",
+                            sequence=2,
+                            trace_id=trace_id,
+                            payload={"code": exc.error_code, "text": exc.error_code.lower()},
+                            created_at=datetime.now(timezone.utc),
+                        )
+                    )
+                    self.history.fail(run.run_id, error_code=exc.error_code)
+                    self.history.set_llm_request_count(run.run_id, self.last_request_count)
+                    return events
+            except Exception as exc:
+                if _is_provider_failure(exc):
+                    normalized = normalize_provider_error(exc)
+                    events.append(
+                        OutboundEvent(
+                            session_id=session_id,
+                            run_id=run.run_id,
+                            event_id=f"evt_{uuid4().hex[:8]}",
+                            event_type="error",
+                            sequence=2,
+                            trace_id=trace_id,
+                            payload={
+                                "code": normalized.error_code,
+                                "text": "暂时没有生成可见回复，请重试。",
+                            },
+                            created_at=datetime.now(timezone.utc),
+                        )
+                    )
+                    self.history.fail(run.run_id, error_code=normalized.error_code)
+                    self.history.set_llm_request_count(run.run_id, self.last_request_count)
+                    return events
                 events.append(
                     OutboundEvent(
                         session_id=session_id,
@@ -124,11 +162,15 @@ class RuntimeLoop:
                         event_type="error",
                         sequence=2,
                         trace_id=trace_id,
-                        payload={"code": exc.error_code, "text": exc.error_code.lower()},
+                        payload={
+                            "code": "RUNTIME_LOOP_FAILED",
+                            "text": "暂时没有生成可见回复，请重试。",
+                        },
                         created_at=datetime.now(timezone.utc),
                     )
                 )
-                self.history.fail(run.run_id, error_code=exc.error_code)
+                self.history.fail(run.run_id, error_code="RUNTIME_LOOP_FAILED")
+                self.history.set_llm_request_count(run.run_id, self.last_request_count)
                 return events
             if tool_result is None:
                 final_text = (reply.final_text or "").strip()
@@ -149,6 +191,7 @@ class RuntimeLoop:
                         )
                     )
                     self.history.fail(run.run_id, error_code="EMPTY_FINAL_RESPONSE")
+                    self.history.set_llm_request_count(run.run_id, self.last_request_count)
                     return events
                 events.append(
                     OutboundEvent(
@@ -163,6 +206,7 @@ class RuntimeLoop:
                     )
                 )
                 self.history.finish(run.run_id, delivery_status="final")
+                self.history.set_llm_request_count(run.run_id, self.last_request_count)
                 return events
             tool_history.append(
                 ToolExchange(
@@ -170,6 +214,12 @@ class RuntimeLoop:
                     tool_payload=reply.tool_payload,
                     tool_result=tool_result,
                 )
+            )
+            self.history.record_tool_call(
+                run.run_id,
+                tool_name=reply.tool_name or "",
+                tool_payload=reply.tool_payload,
+                tool_result=tool_result,
             )
             current_request = first_request.model_copy(
                 update={
@@ -192,4 +242,11 @@ class RuntimeLoop:
             )
         )
         self.history.fail(run.run_id, error_code="TOOL_LOOP_LIMIT_EXCEEDED")
+        self.history.set_llm_request_count(run.run_id, self.last_request_count)
         return events
+
+
+def _is_provider_failure(exc: Exception) -> bool:
+    if isinstance(exc, (ProviderTransportError, TimeoutError, OSError)):
+        return True
+    return str(exc).startswith("provider_")

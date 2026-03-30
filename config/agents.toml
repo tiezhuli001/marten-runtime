@@ -2,7 +2,7 @@
 enabled = true
 role = "general_assistant"
 app_id = "example_assistant"
-allowed_tools = ["time", "mcp:*"]
+allowed_tools = ["time", "register_automation", "list_automations", "update_automation", "delete_automation", "pause_automation", "resume_automation", "mcp:*"]
 prompt_mode = "full"
 
 [agents.coding]

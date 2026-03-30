@@ -56,5 +56,6 @@ def _render_skill_heads(snapshot: SkillSnapshot) -> str | None:
         return None
     lines = ["Visible skills:"]
     for head in snapshot.heads:
-        lines.append(f"- {head.skill_id}: {head.description}")
+        alias_text = f" Aliases: {', '.join(head.aliases)}." if head.aliases else ""
+        lines.append(f"- {head.skill_id}: {head.description}{alias_text}")
     return "\n".join(lines)

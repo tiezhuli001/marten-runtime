@@ -14,6 +14,7 @@ class SkillMeta(BaseModel):
     skill_id: str
     name: str
     description: str
+    aliases: list[str] = Field(default_factory=list)
     enabled: bool = True
     agents: list[str] = Field(default_factory=list)
     channels: list[str] = Field(default_factory=list)
@@ -35,6 +36,7 @@ class SkillMeta(BaseModel):
             skill_id=str(data.get("skill_id", skill_id)),
             name=str(data.get("name", skill_id)),
             description=str(data.get("description", "loaded from skill file")),
+            aliases=_as_list(data.get("aliases")),
             enabled=bool(data.get("enabled", True)),
             agents=_as_list(data.get("agents")),
             channels=_as_list(data.get("channels")),
@@ -56,6 +58,7 @@ class SkillHead(BaseModel):
     skill_id: str
     name: str
     description: str
+    aliases: list[str] = Field(default_factory=list)
     source_path: str
 
 

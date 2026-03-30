@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+from dataclasses import asdict, is_dataclass
+from uuid import uuid4
 
 from pydantic import BaseModel
 
@@ -9,6 +11,8 @@ from marten_runtime.gateway.ingress import ingest_message
 from marten_runtime.interfaces.http.bootstrap import (
     HTTPRuntimeState,
     _process_inbound_envelope,
+    _process_automation_dispatch,
+    build_manual_automation_dispatch,
     build_http_runtime,
     render_metrics,
 )
@@ -77,7 +81,46 @@ def create_app(
     @app.post("/messages")
     def post_message(request: MessageRequest) -> dict[str, object]:
         envelope = ingest_message(request.model_dump())
-        return _process_inbound_envelope(runtime, envelope)
+        lease = runtime.lane_manager.acquire(
+            channel_id=envelope.channel_id,
+            conversation_id=envelope.conversation_id,
+            run_id=f"run_{uuid4().hex[:8]}",
+            trace_id=envelope.trace_id,
+        )
+        try:
+            return _process_inbound_envelope(runtime, envelope)
+        finally:
+            runtime.lane_manager.release(
+                channel_id=envelope.channel_id,
+                conversation_id=envelope.conversation_id,
+                run_id=lease.run_id,
+            )
+
+    @app.post("/automations/{automation_id}/trigger")
+    def trigger_automation(automation_id: str) -> dict[str, object]:
+        try:
+            dispatch = build_manual_automation_dispatch(runtime, automation_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="AUTOMATION_NOT_FOUND") from exc
+        return _process_automation_dispatch(runtime, dispatch)
+
+    @app.get("/automations")
+    def list_automations() -> dict[str, object]:
+        items = [
+            {
+                "automation_id": job.automation_id,
+                "name": job.name,
+                "schedule_kind": job.schedule_kind,
+                "schedule_expr": job.schedule_expr,
+                "timezone": job.timezone,
+                "delivery_channel": job.delivery_channel,
+                "delivery_target": job.delivery_target,
+                "skill_id": job.skill_id,
+                "enabled": job.enabled,
+            }
+            for job in runtime.automation_store.list_all()
+        ]
+        return {"items": items, "count": len(items)}
 
     @app.get("/diagnostics/trace/{trace_id}")
     def get_trace(trace_id: str) -> dict[str, object]:
@@ -103,14 +146,11 @@ def create_app(
 
     @app.get("/diagnostics/queue")
     def get_queue() -> dict[str, object]:
-        return {
-            "queue_depth": 0,
-            "queued_job_ids": [],
-            "running_job_ids": [],
-        }
+        return runtime.lane_manager.stats()
 
     @app.get("/diagnostics/runtime")
     def get_runtime() -> dict[str, object]:
+        retry_policy = getattr(runtime.runtime_loop.llm, "retry_policy", None)
         return {
             "config_snapshot_id": runtime.config_snapshot.config_snapshot_id,
             "app_id": runtime.app_manifest.app_id,
@@ -140,6 +180,10 @@ def create_app(
                 "port": runtime.platform_config.server.port,
                 "public_base_url": runtime.platform_config.server.public_base_url,
             },
+            "provider_retry_policy": (
+                asdict(retry_policy) if retry_policy is not None and is_dataclass(retry_policy) else None
+            ),
+            "lanes": runtime.lane_manager.stats(),
             "channels": {
                 "http": {"enabled": runtime.channels_config.http.enabled},
                 "cli": {"enabled": runtime.channels_config.cli.enabled},

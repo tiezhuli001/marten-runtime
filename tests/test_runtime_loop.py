@@ -1,13 +1,31 @@
 import unittest
 
+from marten_runtime.automation.store import AutomationStore
 from marten_runtime.agents.specs import AgentSpec
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.session.models import SessionMessage
 from marten_runtime.skills.snapshot import SkillSnapshot
+from marten_runtime.tools.builtins.register_automation_tool import run_register_automation_tool
 from marten_runtime.tools.builtins.time_tool import run_time_tool
 from marten_runtime.tools.registry import ToolRegistry
+
+
+class FailingLLMClient:
+    provider_name = "failing"
+    model_name = "failing-local"
+
+    def complete(self, request):  # noqa: ANN001
+        raise RuntimeError("provider_transport_error:connection reset")
+
+
+class BrokenInternalLLMClient:
+    provider_name = "broken"
+    model_name = "broken-local"
+
+    def complete(self, request):  # noqa: ANN001
+        raise ValueError("boom")
 
 
 class RuntimeLoopTests(unittest.TestCase):
@@ -206,6 +224,87 @@ class RuntimeLoopTests(unittest.TestCase):
         run = history.get(events[0].run_id)
         self.assertEqual(run.status, "failed")
         self.assertEqual(run.error_code, "EMPTY_FINAL_RESPONSE")
+
+    def test_runtime_exposes_provider_specific_error_codes_for_provider_failures(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        runtime = RuntimeLoop(FailingLLMClient(), tools, history)
+
+        events = runtime.run(session_id="sess_fail", message="hello", trace_id="trace_fail")
+
+        self.assertEqual([event.event_type for event in events], ["progress", "error"])
+        self.assertEqual(events[-1].payload["code"], "PROVIDER_TRANSPORT_ERROR")
+        self.assertEqual(events[-1].payload["text"], "暂时没有生成可见回复，请重试。")
+        run = history.get(events[0].run_id)
+        self.assertEqual(run.status, "failed")
+        self.assertEqual(run.error_code, "PROVIDER_TRANSPORT_ERROR")
+
+    def test_runtime_keeps_runtime_loop_failed_for_unknown_internal_exceptions(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        runtime = RuntimeLoop(BrokenInternalLLMClient(), tools, history)
+
+        events = runtime.run(session_id="sess_fail_internal", message="hello", trace_id="trace_fail_internal")
+
+        self.assertEqual([event.event_type for event in events], ["progress", "error"])
+        self.assertEqual(events[-1].payload["code"], "RUNTIME_LOOP_FAILED")
+        self.assertEqual(events[-1].payload["text"], "暂时没有生成可见回复，请重试。")
+        run = history.get(events[0].run_id)
+        self.assertEqual(run.status, "failed")
+        self.assertEqual(run.error_code, "RUNTIME_LOOP_FAILED")
+
+    def test_runtime_allows_main_agent_to_register_automation_via_builtin_tool(self) -> None:
+        store = AutomationStore()
+        tools = ToolRegistry()
+        tools.register(
+            "register_automation",
+            lambda payload: run_register_automation_tool(payload, store),
+        )
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="register_automation",
+                    tool_payload={
+                        "automation_id": "daily_hot",
+                        "name": "Daily GitHub Hot Repos",
+                        "app_id": "example_assistant",
+                        "agent_id": "assistant",
+                        "prompt_template": "Summarize today's hot repositories.",
+                        "schedule_kind": "daily",
+                        "schedule_expr": "09:30",
+                        "timezone": "Asia/Shanghai",
+                        "session_target": "isolated",
+                        "delivery_channel": "feishu",
+                        "delivery_target": "oc_test_chat",
+                        "skill_id": "github_hot_repos_digest",
+                    },
+                ),
+                LLMReply(final_text="已为你创建每日 GitHub 热门项目推送。"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="assistant",
+            role="general_assistant",
+            app_id="example_assistant",
+            allowed_tools=["register_automation"],
+        )
+
+        events = runtime.run(
+            session_id="sess_register",
+            message="请每天 09:30 给我推送 GitHub 热门项目。",
+            trace_id="trace_register",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        enabled = store.list_enabled()
+        self.assertEqual(len(enabled), 1)
+        self.assertEqual(enabled[0].automation_id, "daily_hot")
+        self.assertEqual(enabled[0].schedule_expr, "09:30")
+        self.assertEqual(enabled[0].delivery_target, "oc_test_chat")
+        self.assertEqual(llm.requests[0].available_tools, ["register_automation"])
 
 
 if __name__ == "__main__":

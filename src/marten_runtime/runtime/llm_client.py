@@ -10,7 +10,7 @@ from urllib import error, request as urllib_request
 from pydantic import BaseModel, Field
 
 from marten_runtime.config.models_loader import ModelProfile
-from marten_runtime.runtime.provider_retry import RetryPolicy, with_retry
+from marten_runtime.runtime.provider_retry import ProviderTransportError, RetryPolicy, with_retry
 from marten_runtime.tools.registry import ToolSnapshot
 
 
@@ -152,7 +152,15 @@ class OpenAIChatLLMClient:
             ),
             policy=self.retry_policy,
         )
-        return self._parse_reply(payload)
+        try:
+            return self._parse_reply(payload)
+        except ProviderTransportError:
+            raise
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ProviderTransportError(
+                "PROVIDER_RESPONSE_INVALID",
+                f"provider_response_invalid:{exc}",
+            ) from exc
 
     def _build_payload(self, request: LLMRequest) -> dict:
         body: dict[str, object] = {

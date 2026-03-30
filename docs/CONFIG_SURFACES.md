@@ -33,6 +33,30 @@ This page answers one question: which value belongs in which file.
 | App binding / manifest | `apps/<app_id>/app.toml` | app-local fields |
 | Model bootstrap instructions | `apps/<app_id>/*.md` | `AGENTS.md`, `TOOLS.md`, `SOUL.md`, `BOOTSTRAP.md` |
 
+## Planned GitHub Hot Repos Digest MVP
+
+This planned MVP is intentionally narrow:
+
+- the user asks the main agent in chat to register a recurring digest
+- the runtime stores a recurring automation record
+- a thin scheduler dispatches an isolated automation turn
+- a dedicated skill uses GitHub MCP repo-discovery capability to gather repository candidates
+- the runtime sends one final digest to the configured target
+- the operator surface can inspect current recurring jobs through `GET /automations`
+- the main agent can inspect current recurring jobs through the narrow builtin `list_automations`
+- recurring-job CRUD stays on builtin tools such as `update_automation`, `delete_automation`, `pause_automation`, and `resume_automation`
+
+Hard prerequisites:
+
+- a configured GitHub MCP server must be discoverable by the runtime
+- the GitHub MCP server must expose at least one repo-discovery tool suitable for ranking and summarization
+- `search_repositories` is the preferred minimum capability
+
+Semantic boundary:
+
+- MVP targets "today's hot repos at the user-configured time"
+- MVP does not promise exact parity with `github.com/trending` unless the configured MCP surface can actually provide that data
+
 ## Feishu
 
 Feishu MVP uses the official long-connection websocket path. No public callback URL is required for that mode.
@@ -131,3 +155,15 @@ Look for:
 - `channels.feishu.websocket.endpoint_url`
   - this field is intended only as a connection diagnostic and is redacted for sensitive query params such as `access_key` and `ticket`
 - `mcp_servers[*].source_layers`
+
+Run-level operator diagnostics:
+
+- `GET /diagnostics/run/{run_id}` returns `llm_request_count`
+- `GET /diagnostics/run/{run_id}` returns `tool_calls`
+- use these fields to confirm whether a real turn invoked `register_automation`, `list_automations`, or other allowed tools
+
+Feishu live diagnostics:
+
+- `GET /diagnostics/runtime` returns `channels.feishu.websocket.last_session_id`
+- `GET /diagnostics/runtime` returns `channels.feishu.websocket.last_run_id`
+- use these fields to jump from a real Feishu inbound message to `GET /diagnostics/run/{run_id}`
