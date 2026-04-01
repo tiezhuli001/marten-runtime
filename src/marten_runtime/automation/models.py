@@ -20,6 +20,7 @@ class AutomationJob(BaseModel):
     delivery_mode: str = "final_only"
     payload_kind: str = "digest"
     enabled: bool = True
+    internal: bool = False
     semantic_fingerprint: str = ""
 
     prompt: str = Field(default="", exclude=True)

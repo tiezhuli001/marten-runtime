@@ -21,8 +21,8 @@ class SQLiteAutomationStore(AutomationStore):
                 INSERT INTO automations (
                     automation_id, name, app_id, agent_id, prompt_template,
                     schedule_kind, schedule_expr, timezone, session_target,
-                    delivery_channel, delivery_target, skill_id, enabled, semantic_fingerprint
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    delivery_channel, delivery_target, skill_id, enabled, internal, semantic_fingerprint
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(automation_id) DO UPDATE SET
                     name=excluded.name,
                     app_id=excluded.app_id,
@@ -36,6 +36,7 @@ class SQLiteAutomationStore(AutomationStore):
                     delivery_target=excluded.delivery_target,
                     skill_id=excluded.skill_id,
                     enabled=excluded.enabled,
+                    internal=excluded.internal,
                     semantic_fingerprint=excluded.semantic_fingerprint
                 """,
                 (
@@ -52,6 +53,7 @@ class SQLiteAutomationStore(AutomationStore):
                     job.delivery_target,
                     job.skill_id,
                     int(job.enabled),
+                    int(job.internal),
                     job.semantic_fingerprint,
                 ),
             )
@@ -65,7 +67,7 @@ class SQLiteAutomationStore(AutomationStore):
                 """
                 SELECT automation_id, name, app_id, agent_id, prompt_template,
                        schedule_kind, schedule_expr, timezone, session_target,
-                       delivery_channel, delivery_target, skill_id, enabled, semantic_fingerprint
+                       delivery_channel, delivery_target, skill_id, enabled, internal, semantic_fingerprint
                 FROM automations
                 ORDER BY automation_id
                 """
@@ -78,7 +80,7 @@ class SQLiteAutomationStore(AutomationStore):
                 """
                 SELECT automation_id, name, app_id, agent_id, prompt_template,
                        schedule_kind, schedule_expr, timezone, session_target,
-                       delivery_channel, delivery_target, skill_id, enabled, semantic_fingerprint
+                       delivery_channel, delivery_target, skill_id, enabled, internal, semantic_fingerprint
                 FROM automations
                 WHERE automation_id = ?
                 LIMIT 1
@@ -171,6 +173,7 @@ class SQLiteAutomationStore(AutomationStore):
                     delivery_target TEXT NOT NULL,
                     skill_id TEXT NOT NULL,
                     enabled INTEGER NOT NULL,
+                    internal INTEGER NOT NULL DEFAULT 0,
                     semantic_fingerprint TEXT NOT NULL DEFAULT ''
                 )
                 """
@@ -184,6 +187,13 @@ class SQLiteAutomationStore(AutomationStore):
                     """
                     ALTER TABLE automations
                     ADD COLUMN semantic_fingerprint TEXT NOT NULL DEFAULT ''
+                    """
+                )
+            if "internal" not in columns:
+                conn.execute(
+                    """
+                    ALTER TABLE automations
+                    ADD COLUMN internal INTEGER NOT NULL DEFAULT 0
                     """
                 )
             conn.execute(
@@ -213,5 +223,6 @@ class SQLiteAutomationStore(AutomationStore):
             delivery_target=str(row[10]),
             skill_id=str(row[11]),
             enabled=bool(row[12]),
-            semantic_fingerprint=str(row[13] or ""),
+            internal=bool(row[13]),
+            semantic_fingerprint=str(row[14] or ""),
         )

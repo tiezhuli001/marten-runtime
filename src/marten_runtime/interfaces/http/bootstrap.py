@@ -3,11 +3,13 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from marten_runtime.automation.dispatch import AutomationDispatch, build_dispatch
+from marten_runtime.automation.models import AutomationJob
 from marten_runtime.automation.sqlite_store import SQLiteAutomationStore
 from marten_runtime.automation.store import AutomationStore
 from marten_runtime.apps.bootstrap_prompt import load_bootstrap_prompt
@@ -33,24 +35,32 @@ from marten_runtime.mcp.client import MCPClient
 from marten_runtime.mcp.discovery import discover_mcp_tools
 from marten_runtime.mcp.loader import load_mcp_servers
 from marten_runtime.mcp.models import MCPServerSpec
+from marten_runtime.data_access.adapter import DomainDataAdapter
+from marten_runtime.runtime.capabilities import (
+    get_capability_declarations,
+    render_capability_catalog,
+    render_tool_description,
+)
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.lanes import ConversationLaneManager
 from marten_runtime.runtime.llm_client import build_llm_client
 from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.session.store import SessionStore
+from marten_runtime.self_improve.recorder import SelfImproveRecorder
+from marten_runtime.self_improve.service import SelfImproveService, make_default_judge
+from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
 from marten_runtime.skills.selector import select_activated_skills
+from marten_runtime.skills.models import SkillSpec
 from marten_runtime.skills.service import SkillService
 from marten_runtime.tools.builtins.time_tool import run_time_tool
-from marten_runtime.tools.builtins.list_automations_tool import run_list_automations_tool
-from marten_runtime.tools.builtins.delete_automation_tool import run_delete_automation_tool
-from marten_runtime.tools.builtins.pause_automation_tool import run_pause_automation_tool
+from marten_runtime.tools.builtins.automation_tool import run_automation_tool
+from marten_runtime.tools.builtins.self_improve_tool import run_self_improve_tool
 from marten_runtime.tools.builtins.register_automation_tool import (
     pop_registration_context,
     push_registration_context,
-    run_register_automation_tool,
 )
-from marten_runtime.tools.builtins.resume_automation_tool import run_resume_automation_tool
-from marten_runtime.tools.builtins.update_automation_tool import run_update_automation_tool
+from marten_runtime.tools.builtins.mcp_tool import build_mcp_capability_catalog, run_mcp_tool
+from marten_runtime.tools.builtins.skill_tool import run_skill_tool
 from marten_runtime.tools.registry import ToolRegistry
 
 
@@ -69,6 +79,8 @@ class HTTPRuntimeState:
     mcp_servers: list[MCPServerSpec]
     config_snapshot: ConfigSnapshot
     automation_store: AutomationStore
+    self_improve_store: SQLiteSelfImproveStore
+    self_improve_service: SelfImproveService
     session_store: SessionStore
     run_history: InMemoryRunHistory
     tool_registry: ToolRegistry
@@ -79,6 +91,7 @@ class HTTPRuntimeState:
     agent_router: AgentRouter
     default_agent: AgentSpec
     skill_service: SkillService
+    capability_catalog_text: str | None
     system_prompt: str
     runtime_loop: RuntimeLoop
     feishu_delivery: FeishuDeliveryClient
@@ -124,23 +137,18 @@ def build_http_runtime(
     mcp_servers = load_mcp_servers(str(resolved_repo_root / "config/mcp.toml"), compat_json_path)
 
     tool_registry = ToolRegistry()
-    tool_registry.register("time", run_time_tool)
+    capability_declarations = get_capability_declarations()
+    tool_registry.register(
+        "time",
+        run_time_tool,
+        description=render_tool_description(capability_declarations["time"]),
+    )
     mcp_client = MCPClient(mcp_servers, env=resolved_env)
     mcp_discovery = discover_mcp_tools(mcp_servers, mcp_client)
-    for server in mcp_servers:
-        for tool in server.tools:
-            tool_registry.register(
-                tool.name,
-                lambda payload, server_id=server.server_id, tool_name=tool.name: mcp_client.call_tool(
-                    server_id,
-                    tool_name,
-                    payload,
-                ),
-                source_kind="mcp",
-                server_id=server.server_id,
-                backend_id=server.backend_id,
-                description=tool.description,
-            )
+    capability_catalog_text = render_capability_catalog(
+        capability_declarations,
+        mcp_catalog_text=build_mcp_capability_catalog(mcp_servers, mcp_discovery),
+    )
 
     agent_registry = AgentRegistry()
     for spec in load_agent_specs(str(resolved_repo_root / "config/agents.toml")):
@@ -154,21 +162,35 @@ def build_http_runtime(
         bindings=binding_registry,
     )
     default_agent = agent_registry.get(app_manifest.default_agent)
+    default_agent = default_agent.model_copy(
+        update={
+            "allowed_tools": ["automation", "mcp", "self_improve", "skill", "time"]
+        }
+    )
+    agent_registry.register(default_agent)
     skill_service = SkillService(
-        [
-            str(resolved_repo_root / "skills/system"),
-            str(resolved_repo_root / "skills/shared"),
-            str(resolved_repo_root / app_manifest.bootstrap.root / app_manifest.skills.app_dir),
-        ]
+        [str(resolved_repo_root / "skills")]
     )
     automation_store = SQLiteAutomationStore(resolved_repo_root / "data" / "automations.sqlite3")
+    self_improve_store = SQLiteSelfImproveStore(resolved_repo_root / "data" / "self_improve.sqlite3")
     for job in load_automations(str(resolved_repo_root / "config" / "automations.toml")):
         automation_store.save(job)
+    _ensure_self_improve_automation(automation_store)
     model_profile_name, model_profile = resolve_model_profile(models_config, default_agent.model_profile)
     runtime_loop = RuntimeLoop(
         build_llm_client(profile_name=model_profile_name, profile=model_profile, env=resolved_env),
         tool_registry,
         InMemoryRunHistory(),
+        self_improve_recorder=SelfImproveRecorder(self_improve_store),
+    )
+    self_improve_service = SelfImproveService(
+        self_improve_store,
+        lessons_path=resolved_repo_root / "apps/example_assistant/SYSTEM_LESSONS.md",
+        judge=make_default_judge(
+            runtime_loop.llm,
+            app_id=app_manifest.app_id,
+            agent_id=default_agent.agent_id,
+        ),
     )
     feishu_delivery = FeishuDeliveryClient(
         env=resolved_env,
@@ -192,6 +214,8 @@ def build_http_runtime(
         mcp_servers=mcp_servers,
         config_snapshot=ConfigSnapshot(),
         automation_store=automation_store,
+        self_improve_store=self_improve_store,
+        self_improve_service=self_improve_service,
         session_store=SessionStore(),
         run_history=runtime_loop.history,
         tool_registry=tool_registry,
@@ -202,6 +226,7 @@ def build_http_runtime(
         agent_router=agent_router,
         default_agent=default_agent,
         skill_service=skill_service,
+        capability_catalog_text=capability_catalog_text,
         system_prompt=system_prompt,
         runtime_loop=runtime_loop,
         feishu_delivery=feishu_delivery,
@@ -210,58 +235,43 @@ def build_http_runtime(
         lane_manager=ConversationLaneManager(),
     )
     tool_registry.register(
-        "register_automation",
-        lambda payload, runtime_state=state: run_register_automation_tool(payload, runtime_state.automation_store),
-        description=(
-            "Register a recurring automation job for a configured delivery target. "
-            "Use this when the user asks to schedule recurring digests or reports. "
-            "For Feishu inbound chats, if the user wants delivery back to the current chat/session, "
-            "set delivery_channel='feishu' and delivery_target='current_channel'. "
-            "The runtime will resolve current_channel to the active Feishu conversation. "
-            "Daily schedules should use schedule_kind='daily' with schedule_expr='HH:MM' in the user's timezone."
-        ),
+        "skill",
+        lambda payload, runtime_state=state: run_skill_tool(payload, runtime_state.skill_service),
+        description=render_tool_description(capability_declarations["skill"]),
     )
     tool_registry.register(
-        "list_automations",
-        lambda payload, runtime_state=state: run_list_automations_tool(payload, runtime_state.automation_store),
-        description=(
-            "List currently registered automation jobs, including enabled status. "
-            "Use this when the user asks what recurring automations already exist. "
-            "Optionally filter by delivery_channel or delivery_target. "
-            "Set include_disabled=true when paused jobs should also be returned."
+        "mcp",
+        lambda payload, runtime_state=state: run_mcp_tool(
+            payload,
+            runtime_state.mcp_servers,
+            runtime_state.mcp_client,
+            runtime_state.mcp_discovery,
         ),
+        description=render_tool_description(capability_declarations["mcp"]),
     )
     tool_registry.register(
-        "update_automation",
-        lambda payload, runtime_state=state: run_update_automation_tool(payload, runtime_state.automation_store),
-        description=(
-            "Update one existing automation job by automation_id. "
-            "Use this when the user wants to change the task name, schedule, timezone, delivery target, or skill."
+        "automation",
+        lambda payload, runtime_state=state: run_automation_tool(
+            payload,
+            runtime_state.automation_store,
+            DomainDataAdapter(
+                self_improve_store=runtime_state.self_improve_store,
+                automation_store=runtime_state.automation_store,
+            ),
         ),
+        description=render_tool_description(capability_declarations["automation"]),
     )
     tool_registry.register(
-        "delete_automation",
-        lambda payload, runtime_state=state: run_delete_automation_tool(payload, runtime_state.automation_store),
-        description=(
-            "Delete one existing automation job by automation_id. "
-            "Use this when the user explicitly asks to remove a recurring task."
+        "self_improve",
+        lambda payload, runtime_state=state: run_self_improve_tool(
+            payload,
+            DomainDataAdapter(
+                self_improve_store=runtime_state.self_improve_store,
+                automation_store=runtime_state.automation_store,
+            ),
+            runtime_state.self_improve_store,
         ),
-    )
-    tool_registry.register(
-        "pause_automation",
-        lambda payload, runtime_state=state: run_pause_automation_tool(payload, runtime_state.automation_store),
-        description=(
-            "Pause one existing automation job by automation_id without deleting it. "
-            "Use this when the user asks to stop a recurring task temporarily."
-        ),
-    )
-    tool_registry.register(
-        "resume_automation",
-        lambda payload, runtime_state=state: run_resume_automation_tool(payload, runtime_state.automation_store),
-        description=(
-            "Resume one paused automation job by automation_id. "
-            "Use this when the user asks to restart a previously paused recurring task."
-        ),
+        description=render_tool_description(capability_declarations["self_improve"]),
     )
     state.feishu_socket_service = FeishuWebsocketService(
         env=resolved_env,
@@ -296,6 +306,33 @@ def _has_feishu_credentials(env: Mapping[str, str]) -> bool:
     return bool(env.get("FEISHU_APP_ID") and env.get("FEISHU_APP_SECRET"))
 
 
+def _ensure_self_improve_automation(store: AutomationStore) -> None:
+    automation_id = "self_improve_internal"
+    try:
+        store.get(automation_id)
+        return
+    except KeyError:
+        pass
+    store.save(
+        AutomationJob(
+            automation_id=automation_id,
+            name="Internal Self Improve",
+            app_id="example_assistant",
+            agent_id="assistant",
+            prompt_template="Summarize repeated failures and later recoveries into lesson candidates.",
+            schedule_kind="daily",
+            schedule_expr="03:00",
+            timezone="UTC",
+            session_target="isolated",
+            delivery_channel="http",
+            delivery_target="internal",
+            skill_id="self_improve",
+            enabled=True,
+            internal=True,
+        )
+    )
+
+
 def _process_inbound_envelope(state: HTTPRuntimeState, envelope: InboundEnvelope) -> dict[str, object]:
     session = state.session_store.get_or_create_for_conversation(
         conversation_id=envelope.conversation_id,
@@ -313,7 +350,8 @@ def _process_inbound_envelope(state: HTTPRuntimeState, envelope: InboundEnvelope
         env=state.env,
         config={},
     )
-    activated_skills = select_activated_skills(skill_runtime.visible_skills, envelope.body)
+    activated_skills: list[SkillSpec] = []
+    turn_agent = routed_agent
     token = push_registration_context(
         {
             "channel_id": envelope.channel_id,
@@ -328,13 +366,14 @@ def _process_inbound_envelope(state: HTTPRuntimeState, envelope: InboundEnvelope
             envelope.body,
             trace_id=envelope.trace_id,
             system_prompt=state.system_prompt,
-            agent=routed_agent,
+            agent=turn_agent,
             config_snapshot_id=state.config_snapshot.config_snapshot_id,
             bootstrap_manifest_id=session.bootstrap_manifest_id,
             skill_snapshot_id=skill_runtime.snapshot.skill_snapshot_id,
             session_messages=session.history,
             skill_snapshot=skill_runtime.snapshot,
             skill_heads_text=skill_runtime.skill_heads_text,
+            capability_catalog_text=state.capability_catalog_text,
             always_on_skill_text=skill_runtime.always_on_text,
             activated_skill_ids=[item.meta.skill_id for item in activated_skills],
             activated_skill_bodies=[item.body for item in activated_skills],
@@ -377,11 +416,15 @@ def _process_automation_dispatch(
         env=state.env,
         config={},
     )
-    activated_skill = select_activated_skills(
-        skill_runtime.visible_skills,
-        dispatch.prompt_template,
-        explicit_skill_ids=[dispatch.skill_id],
-    )
+    activated_skill: list[SkillSpec] = []
+    if dispatch.skill_id:
+        activated_skill = select_activated_skills(
+            skill_runtime.visible_skills,
+            dispatch.prompt_template,
+            explicit_skill_ids=[dispatch.skill_id],
+        )
+        if not activated_skill:
+            activated_skill = [state.skill_service.load_skill(dispatch.skill_id)]
     events = state.runtime_loop.run(
         session.session_id,
         dispatch.prompt_template,
@@ -394,9 +437,10 @@ def _process_automation_dispatch(
         session_messages=session.history,
         skill_snapshot=skill_runtime.snapshot,
         skill_heads_text=skill_runtime.skill_heads_text,
+        capability_catalog_text=state.capability_catalog_text,
         always_on_skill_text=skill_runtime.always_on_text,
         activated_skill_ids=[item.meta.skill_id for item in activated_skill],
-        activated_skill_bodies=[item.body for item in activated_skill],
+        activated_skill_bodies=[item.body for item in activated_skill if item.body],
     )
     state.session_store.append_message(session.session_id, SessionMessage.assistant(events[-1].payload["text"]))
     state.session_store.mark_run(session.session_id, events[-1].run_id, events[-1].created_at)
@@ -406,6 +450,8 @@ def _process_automation_dispatch(
         "event_ids": [event.event_id for event in events],
         "external_refs": {"langfuse": None, "langsmith": None},
     }
+    if dispatch.skill_id == "self_improve":
+        state.self_improve_service.process_pending_candidates(agent_id=routed_agent.agent_id)
     _deliver_automation_events(state, dispatch, events)
     return {
         "status": "accepted",
@@ -418,10 +464,9 @@ def _process_automation_dispatch(
         "events": [event.model_dump(mode="json") for event in events],
     }
 
-
 def build_manual_automation_dispatch(state: HTTPRuntimeState, automation_id: str) -> AutomationDispatch:
     job = state.automation_store.get(automation_id)
-    scheduled_for = datetime.now().astimezone().date().isoformat()
+    scheduled_for = datetime.now(timezone.utc).astimezone(ZoneInfo(job.timezone)).date().isoformat()
     return build_dispatch(job, scheduled_for=scheduled_for, trace_id=f"trace_auto_{uuid4().hex[:8]}")
 
 

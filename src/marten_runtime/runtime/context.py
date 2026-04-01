@@ -25,6 +25,7 @@ class RuntimeContext(BaseModel):
     )
     activated_skill_ids: list[str] = Field(default_factory=list)
     skill_heads_text: str | None = None
+    capability_catalog_text: str | None = None
     always_on_skill_text: str | None = None
     activated_skill_bodies: list[str] = Field(default_factory=list)
     context_snapshot_id: str | None = None
@@ -43,6 +44,7 @@ def assemble_runtime_context(
     skill_snapshot: SkillSnapshot | None = None,
     activated_skill_ids: list[str] | None = None,
     skill_heads_text: str | None = None,
+    capability_catalog_text: str | None = None,
     always_on_skill_text: str | None = None,
     activated_skill_bodies: list[str] | None = None,
     replay_limit: int = 6,
@@ -74,6 +76,7 @@ def assemble_runtime_context(
         skill_snapshot=skill_snapshot or SkillSnapshot(skill_snapshot_id="skill_default"),
         activated_skill_ids=list(activated_skill_ids or []),
         skill_heads_text=skill_heads_text,
+        capability_catalog_text=capability_catalog_text,
         always_on_skill_text=always_on_skill_text,
         activated_skill_bodies=list(activated_skill_bodies or []),
         context_snapshot_id=snapshot.snapshot_id,

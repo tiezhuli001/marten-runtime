@@ -49,3 +49,10 @@ data/
 *.swp
 *.swo
 .tmp/
+
+# Local verification logs
+.logs/
+
+# Local continuity only
+STATUS.md
+apps/example_assistant/SYSTEM_LESSONS.md

@@ -4,6 +4,10 @@ This page is the operator-facing checklist for the real chain:
 
 `Feishu -> LLM -> GitHub MCP -> LLM -> Feishu`
 
+It also applies to live self-improve inspection turns on the same runtime path:
+
+`Feishu -> LLM -> builtin self-improve tool -> LLM -> Feishu`
+
 It separates three things clearly:
 
 - what is already verified in code and tests
@@ -34,6 +38,13 @@ Not yet proven from a real external conversation:
 - [ ] the live run calls GitHub MCP from that Feishu-triggered turn
 - [ ] the final answer is delivered back into the same Feishu chat
 - [ ] only one final reply is delivered for that one human message
+
+Already proven from a real external conversation on the self-improve slice:
+
+- [x] a real Feishu user can query current lesson candidates through the live runtime
+- [x] a real Feishu user can delete rejected lesson candidates through the live runtime
+- [x] a follow-up Feishu query reflects the updated candidate state
+- [x] the resulting live session can be correlated through `last_run_id -> /diagnostics/run/{run_id} -> trace_id -> /diagnostics/trace/{trace_id}`
 
 ## Required Configuration
 
@@ -137,6 +148,27 @@ Evidence to capture:
 - [ ] `/diagnostics/trace/{trace_id}` for the inbound event
 - [ ] `/diagnostics/run/{run_id}` for the final run
 
+Trace correlation note:
+
+- `channels.feishu.websocket.last_trace_id` is the raw Feishu websocket trace header, not the runtime trace
+- for runtime correlation, prefer `channels.feishu.websocket.last_run_id`
+- then open `/diagnostics/run/{run_id}` and use the returned runtime `trace_id`
+- `channels.feishu.websocket.last_runtime_trace_id` mirrors that runtime trace for convenience
+
+Recommended live self-improve prompts:
+
+```text
+现在都有哪些候选规则
+```
+
+```text
+删除2条已拒绝的候选规则
+```
+
+```text
+现在有哪些候选规则
+```
+
 ## Remaining Gaps
 
 Repository-level blockers currently not identified:
@@ -160,4 +192,10 @@ This checklist is complete when all of these are true:
 - [ ] that run uses GitHub MCP successfully
 - [ ] the final answer is delivered back to Feishu
 - [ ] the bot replies exactly once for that one human message
-- [ ] the result is recorded in `STATUS.md`
+- [ ] the result is recorded in `docs/ARCHITECTURE_CHANGELOG.md`
+
+For self-improve live inspection, completion additionally means:
+
+- [x] the live Feishu query path can read candidate rules through builtin self-improve tools
+- [x] the live Feishu delete path can remove rejected candidates without touching active lessons
+- [x] diagnostics clearly separate Feishu raw trace headers from runtime trace correlation

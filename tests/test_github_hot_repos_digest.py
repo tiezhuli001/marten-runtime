@@ -6,11 +6,10 @@ from marten_runtime.skills.loader import SkillLoader
 
 class GitHubHotReposDigestSkillTests(unittest.TestCase):
     def test_repo_skill_exists_with_broader_github_mcp_contract(self) -> None:
-        loader = SkillLoader(
-            [str(Path("/Users/litiezhu/workspace/github/marten-runtime/skills/shared"))]
-        )
+        repo_root = Path(__file__).resolve().parents[1]
+        loader = SkillLoader([str(repo_root / "skills")])
 
-        skills = loader.load_all()
+        skills = loader.load_all(include_bodies=True)
         skill = next(item for item in skills if item.meta.skill_id == "github_hot_repos_digest")
 
         self.assertEqual(skill.meta.name, "GitHub Assistant")
@@ -29,11 +28,10 @@ class GitHubHotReposDigestSkillTests(unittest.TestCase):
         self.assertIn("not an official github trending feed", skill.body.lower())
 
     def test_automation_management_skill_stays_narrow_and_clarifying(self) -> None:
-        loader = SkillLoader(
-            [str(Path("/Users/litiezhu/workspace/github/marten-runtime/skills/shared"))]
-        )
+        repo_root = Path(__file__).resolve().parents[1]
+        loader = SkillLoader([str(repo_root / "skills")])
 
-        skills = loader.load_all()
+        skills = loader.load_all(include_bodies=True)
         skill = next(item for item in skills if item.meta.skill_id == "automation_management")
 
         self.assertEqual(skill.meta.name, "Automation Management")

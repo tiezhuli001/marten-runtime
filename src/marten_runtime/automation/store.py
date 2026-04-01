@@ -9,11 +9,20 @@ class AutomationStore:
     def save(self, job: AutomationJob) -> None:
         self._items[job.automation_id] = job
 
+    def create_job(self, values: dict[str, object]) -> AutomationJob:
+        job = AutomationJob(**values)
+        self.save(job)
+        return job
+
     def list_enabled(self) -> list[AutomationJob]:
         return [item for item in self._items.values() if item.enabled]
 
     def list_all(self) -> list[AutomationJob]:
         return list(self._items.values())
+
+    def list_public(self, *, include_disabled: bool = False) -> list[AutomationJob]:
+        source = self.list_all() if include_disabled else self.list_enabled()
+        return [item for item in source if not item.internal]
 
     def get(self, automation_id: str) -> AutomationJob:
         return self._items[automation_id]
@@ -37,9 +46,7 @@ class AutomationStore:
         existing = self.find_equivalent_registration(payload)
         if existing is not None:
             return existing
-        job = AutomationJob(**payload)
-        self.save(job)
-        return job
+        return self.create_job(payload)
 
     def find_equivalent_registration(self, payload: dict[str, str]) -> AutomationJob | None:
         for item in self.list_enabled():

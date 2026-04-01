@@ -72,15 +72,57 @@ def to_inbound_envelope(event: FeishuInboundEvent) -> InboundEnvelope:
 
 def _extract_text(content: object) -> str:
     if isinstance(content, dict):
-        return str(content.get("text", ""))
+        direct_text = str(content.get("text", ""))
+        if direct_text:
+            return direct_text
+        rich_text = _extract_rich_text(content)
+        if rich_text:
+            return rich_text
+        return ""
     if isinstance(content, str):
         try:
             decoded = json.loads(content)
         except json.JSONDecodeError:
             return content
         if isinstance(decoded, dict):
-            return str(decoded.get("text", ""))
+            direct_text = str(decoded.get("text", ""))
+            if direct_text:
+                return direct_text
+            rich_text = _extract_rich_text(decoded)
+            if rich_text:
+                return rich_text
     return ""
+
+
+def _extract_rich_text(payload: dict) -> str:
+    fragments: list[str] = []
+    candidate_payloads: list[dict] = []
+    if isinstance(payload.get("content"), list):
+        candidate_payloads.append(payload)
+    for locale_payload in payload.values():
+        if isinstance(locale_payload, dict) and isinstance(locale_payload.get("content"), list):
+            candidate_payloads.append(locale_payload)
+    for candidate in candidate_payloads:
+        rows = candidate.get("content")
+        for row in rows:
+            if not isinstance(row, list):
+                continue
+            for block in row:
+                if not isinstance(block, dict):
+                    continue
+                tag = str(block.get("tag", "")).strip().lower()
+                if tag == "text":
+                    text = str(block.get("text", ""))
+                    if text:
+                        fragments.append(text)
+                    continue
+                if tag == "at":
+                    mention_name = (
+                        str(block.get("user_name") or block.get("name") or block.get("text") or "").strip()
+                    )
+                    if mention_name:
+                        fragments.append(f"@{mention_name}")
+    return "".join(fragments).strip()
 
 
 def _extract_mentions(mentions: object) -> list[str]:

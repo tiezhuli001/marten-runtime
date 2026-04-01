@@ -1,13 +1,25 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+from marten_runtime.automation.sqlite_store import SQLiteAutomationStore
 from marten_runtime.automation.store import AutomationStore
 from marten_runtime.agents.specs import AgentSpec
+from marten_runtime.data_access.adapter import DomainDataAdapter
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.session.models import SessionMessage
+from marten_runtime.self_improve.models import LessonCandidate, SystemLesson
+from marten_runtime.self_improve.recorder import SelfImproveRecorder
+from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
+from marten_runtime.skills.service import SkillService
 from marten_runtime.skills.snapshot import SkillSnapshot
-from marten_runtime.tools.builtins.register_automation_tool import run_register_automation_tool
+from marten_runtime.tools.builtins.automation_tool import run_automation_tool
+from marten_runtime.tools.builtins.delete_lesson_candidate_tool import run_delete_lesson_candidate_tool
+from marten_runtime.tools.builtins.list_lesson_candidates_tool import run_list_lesson_candidates_tool
+from marten_runtime.tools.builtins.self_improve_tool import run_self_improve_tool
+from marten_runtime.tools.builtins.skill_tool import run_skill_tool
 from marten_runtime.tools.builtins.time_tool import run_time_tool
 from marten_runtime.tools.registry import ToolRegistry
 
@@ -26,6 +38,14 @@ class BrokenInternalLLMClient:
 
     def complete(self, request):  # noqa: ANN001
         raise ValueError("boom")
+
+
+class BrokenToolLLMClient:
+    provider_name = "scripted"
+    model_name = "scripted-local"
+
+    def complete(self, request):  # noqa: ANN001
+        return LLMReply(tool_name="broken_tool", tool_payload={"value": "x"})
 
 
 class RuntimeLoopTests(unittest.TestCase):
@@ -194,9 +214,30 @@ class RuntimeLoopTests(unittest.TestCase):
 
         self.assertEqual([event.event_type for event in events], ["progress", "error"])
         self.assertEqual(events[-1].payload["code"], "TOOL_NOT_ALLOWED")
+        self.assertEqual(events[-1].payload["text"], "当前操作未被允许，请换个说法或缩小范围。")
         run = history.get(events[0].run_id)
         self.assertEqual(run.status, "failed")
         self.assertEqual(run.error_code, "TOOL_NOT_ALLOWED")
+
+    def test_runtime_distinguishes_tool_execution_failure_from_generic_runtime_failure(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        tools.register("broken_tool", lambda payload: (_ for _ in ()).throw(ValueError("tool blew up")))
+        runtime = RuntimeLoop(BrokenToolLLMClient(), tools, history)
+        agent = AgentSpec(
+            agent_id="assistant",
+            role="general_assistant",
+            app_id="example_assistant",
+            allowed_tools=["broken_tool"],
+        )
+
+        events = runtime.run(session_id="sess_tool_fail", message="run broken tool", trace_id="trace_tool_fail", agent=agent)
+
+        self.assertEqual([event.event_type for event in events], ["progress", "error"])
+        self.assertEqual(events[-1].payload["code"], "TOOL_EXECUTION_FAILED")
+        run = history.get(events[0].run_id)
+        self.assertEqual(run.status, "failed")
+        self.assertEqual(run.error_code, "TOOL_EXECUTION_FAILED")
 
     def test_runtime_returns_error_when_final_text_is_empty_after_tool_call(self) -> None:
         tools = ToolRegistry()
@@ -226,11 +267,19 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(run.error_code, "EMPTY_FINAL_RESPONSE")
 
     def test_runtime_exposes_provider_specific_error_codes_for_provider_failures(self) -> None:
-        tools = ToolRegistry()
-        history = InMemoryRunHistory()
-        runtime = RuntimeLoop(FailingLLMClient(), tools, history)
+        with TemporaryDirectory() as tmpdir:
+            tools = ToolRegistry()
+            history = InMemoryRunHistory()
+            store = SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3")
+            runtime = RuntimeLoop(
+                FailingLLMClient(),
+                tools,
+                history,
+                self_improve_recorder=SelfImproveRecorder(store),
+            )
 
-        events = runtime.run(session_id="sess_fail", message="hello", trace_id="trace_fail")
+            events = runtime.run(session_id="sess_fail", message="hello", trace_id="trace_fail")
+            failures = store.list_recent_failures(agent_id="assistant", limit=10)
 
         self.assertEqual([event.event_type for event in events], ["progress", "error"])
         self.assertEqual(events[-1].payload["code"], "PROVIDER_TRANSPORT_ERROR")
@@ -238,13 +287,23 @@ class RuntimeLoopTests(unittest.TestCase):
         run = history.get(events[0].run_id)
         self.assertEqual(run.status, "failed")
         self.assertEqual(run.error_code, "PROVIDER_TRANSPORT_ERROR")
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0].error_code, "PROVIDER_TRANSPORT_ERROR")
 
     def test_runtime_keeps_runtime_loop_failed_for_unknown_internal_exceptions(self) -> None:
-        tools = ToolRegistry()
-        history = InMemoryRunHistory()
-        runtime = RuntimeLoop(BrokenInternalLLMClient(), tools, history)
+        with TemporaryDirectory() as tmpdir:
+            tools = ToolRegistry()
+            history = InMemoryRunHistory()
+            store = SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3")
+            runtime = RuntimeLoop(
+                BrokenInternalLLMClient(),
+                tools,
+                history,
+                self_improve_recorder=SelfImproveRecorder(store),
+            )
 
-        events = runtime.run(session_id="sess_fail_internal", message="hello", trace_id="trace_fail_internal")
+            events = runtime.run(session_id="sess_fail_internal", message="hello", trace_id="trace_fail_internal")
+            failures = store.list_recent_failures(agent_id="assistant", limit=10)
 
         self.assertEqual([event.event_type for event in events], ["progress", "error"])
         self.assertEqual(events[-1].payload["code"], "RUNTIME_LOOP_FAILED")
@@ -252,59 +311,209 @@ class RuntimeLoopTests(unittest.TestCase):
         run = history.get(events[0].run_id)
         self.assertEqual(run.status, "failed")
         self.assertEqual(run.error_code, "RUNTIME_LOOP_FAILED")
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0].error_code, "RUNTIME_LOOP_FAILED")
 
-    def test_runtime_allows_main_agent_to_register_automation_via_builtin_tool(self) -> None:
-        store = AutomationStore()
-        tools = ToolRegistry()
-        tools.register(
-            "register_automation",
-            lambda payload: run_register_automation_tool(payload, store),
-        )
-        history = InMemoryRunHistory()
-        llm = ScriptedLLMClient(
-            [
-                LLMReply(
-                    tool_name="register_automation",
-                    tool_payload={
-                        "automation_id": "daily_hot",
-                        "name": "Daily GitHub Hot Repos",
-                        "app_id": "example_assistant",
-                        "agent_id": "assistant",
-                        "prompt_template": "Summarize today's hot repositories.",
-                        "schedule_kind": "daily",
-                        "schedule_expr": "09:30",
-                        "timezone": "Asia/Shanghai",
-                        "session_target": "isolated",
-                        "delivery_channel": "feishu",
-                        "delivery_target": "oc_test_chat",
-                        "skill_id": "github_hot_repos_digest",
-                    },
+    def test_runtime_records_recovery_after_later_success_on_compatible_message(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            tools = ToolRegistry()
+            history = InMemoryRunHistory()
+            store = SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3")
+            recorder = SelfImproveRecorder(store)
+            failing_runtime = RuntimeLoop(
+                FailingLLMClient(),
+                tools,
+                history,
+                self_improve_recorder=recorder,
+            )
+            success_runtime = RuntimeLoop(
+                ScriptedLLMClient([LLMReply(final_text="done")]),
+                tools,
+                history,
+                self_improve_recorder=recorder,
+            )
+
+            failing_runtime.run(session_id="sess_fail", message="hello", trace_id="trace_fail")
+            success_runtime.run(session_id="sess_success", message="hello", trace_id="trace_success")
+            recoveries = store.list_recent_recoveries(agent_id="assistant", limit=10)
+
+        self.assertEqual(len(recoveries), 1)
+        self.assertEqual(recoveries[0].recovery_kind, "same_fingerprint_success")
+
+    def test_runtime_allows_main_agent_to_register_automation_via_family_tool(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = SQLiteAutomationStore(Path(tmpdir) / "automations.sqlite3")
+            adapter = DomainDataAdapter(
+                self_improve_store=SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3"),
+                automation_store=store,
+            )
+            tools = ToolRegistry()
+            tools.register(
+                "automation",
+                lambda payload: run_automation_tool(payload, store, adapter),
+            )
+            history = InMemoryRunHistory()
+            llm = ScriptedLLMClient(
+                [
+                    LLMReply(
+                        tool_name="automation",
+                        tool_payload={
+                            "action": "register",
+                            "automation_id": "daily_hot",
+                            "name": "Daily GitHub Hot Repos",
+                            "app_id": "example_assistant",
+                            "agent_id": "assistant",
+                            "prompt_template": "Summarize today's hot repositories.",
+                            "schedule_kind": "daily",
+                            "schedule_expr": "09:30",
+                            "timezone": "Asia/Shanghai",
+                            "session_target": "isolated",
+                            "delivery_channel": "feishu",
+                            "delivery_target": "oc_test_chat",
+                            "skill_id": "github_hot_repos_digest",
+                        },
+                    ),
+                    LLMReply(final_text="已为你创建每日 GitHub 热门项目推送。"),
+                ]
+            )
+            runtime = RuntimeLoop(llm, tools, history)
+            agent = AgentSpec(
+                agent_id="assistant",
+                role="general_assistant",
+                app_id="example_assistant",
+                allowed_tools=["automation"],
+            )
+
+            events = runtime.run(
+                session_id="sess_register",
+                message="请每天 09:30 给我推送 GitHub 热门项目。",
+                trace_id="trace_register",
+                agent=agent,
+            )
+
+            self.assertEqual([event.event_type for event in events], ["progress", "final"])
+            enabled = store.list_enabled()
+            self.assertEqual(len(enabled), 1)
+            self.assertEqual(enabled[0].automation_id, "daily_hot")
+            self.assertEqual(enabled[0].schedule_expr, "09:30")
+            self.assertEqual(enabled[0].delivery_target, "oc_test_chat")
+            self.assertEqual(llm.requests[0].available_tools, ["automation"])
+
+    def test_runtime_can_load_skill_body_via_skill_tool(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            skills_root = Path(tmpdir) / "skills"
+            skill_dir = skills_root / "repo_helper"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                (
+                    "---\n"
+                    "skill_id: repo_helper\n"
+                    "name: Repo Helper\n"
+                    "description: inspect repositories\n"
+                    "enabled: true\n"
+                    "agents: [assistant]\n"
+                    "channels: [http]\n"
+                    "---\n"
+                    "Read repository files before proposing edits.\n"
                 ),
-                LLMReply(final_text="已为你创建每日 GitHub 热门项目推送。"),
-            ]
-        )
-        runtime = RuntimeLoop(llm, tools, history)
-        agent = AgentSpec(
-            agent_id="assistant",
-            role="general_assistant",
-            app_id="example_assistant",
-            allowed_tools=["register_automation"],
-        )
+                encoding="utf-8",
+            )
+            tools = ToolRegistry()
+            tools.register(
+                "skill",
+                lambda payload: run_skill_tool(payload, SkillService([str(skills_root)])),
+            )
+            history = InMemoryRunHistory()
+            llm = ScriptedLLMClient(
+                [
+                    LLMReply(tool_name="skill", tool_payload={"action": "load", "skill_id": "repo_helper"}),
+                    LLMReply(final_text="ok"),
+                ]
+            )
+            runtime = RuntimeLoop(llm, tools, history)
+            agent = AgentSpec(
+                agent_id="assistant",
+                role="general_assistant",
+                app_id="example_assistant",
+                allowed_tools=["skill"],
+            )
 
-        events = runtime.run(
-            session_id="sess_register",
-            message="请每天 09:30 给我推送 GitHub 热门项目。",
-            trace_id="trace_register",
-            agent=agent,
-        )
+            events = runtime.run(
+                session_id="sess_skill",
+                message="Need repo help",
+                trace_id="trace_skill",
+                agent=agent,
+            )
+
+            self.assertEqual([event.event_type for event in events], ["progress", "final"])
+            self.assertEqual(llm.requests[0].available_tools, ["skill"])
+            self.assertEqual(llm.requests[1].tool_history[0].tool_name, "skill")
+            self.assertEqual(llm.requests[1].tool_history[0].tool_result["skill_id"], "repo_helper")
+            self.assertIn("Read repository files before proposing edits.", llm.requests[1].tool_history[0].tool_result["body"])
+
+    def test_runtime_can_use_self_improve_candidate_tools_without_affecting_active_lessons(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3")
+            adapter = DomainDataAdapter(self_improve_store=store)
+            store.save_candidate(
+                LessonCandidate(
+                    candidate_id="cand_1",
+                    agent_id="assistant",
+                    source_fingerprints=["fp_one", "fp_one"],
+                    candidate_text="candidate lesson",
+                    rationale="candidate rationale",
+                    status="pending",
+                    score=0.9,
+                )
+            )
+            store.save_lesson(
+                SystemLesson(
+                    lesson_id="lesson_1",
+                    agent_id="assistant",
+                    topic_key="provider_timeout",
+                    lesson_text="keep this active lesson",
+                    source_fingerprints=["fp_timeout"],
+                    active=True,
+                )
+            )
+            tools = ToolRegistry()
+            tools.register("self_improve", lambda payload: run_self_improve_tool(payload, adapter, store))
+            history = InMemoryRunHistory()
+            llm = ScriptedLLMClient(
+                [
+                    LLMReply(
+                        tool_name="self_improve",
+                        tool_payload={"action": "list_candidates", "agent_id": "assistant"},
+                    ),
+                    LLMReply(
+                        tool_name="self_improve",
+                        tool_payload={"action": "delete_candidate", "candidate_id": "cand_1"},
+                    ),
+                    LLMReply(final_text="已删除这个候选规则。"),
+                ]
+            )
+            runtime = RuntimeLoop(llm, tools, history)
+            agent = AgentSpec(
+                agent_id="assistant",
+                role="general_assistant",
+                app_id="example_assistant",
+                allowed_tools=["self_improve"],
+            )
+
+            events = runtime.run(
+                session_id="sess_candidates",
+                message="删除这个候选规则",
+                trace_id="trace_candidates",
+                agent=agent,
+            )
+            remaining_candidates = store.list_candidates(agent_id="assistant", limit=10)
+            active_lessons = store.list_active_lessons(agent_id="assistant")
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
-        enabled = store.list_enabled()
-        self.assertEqual(len(enabled), 1)
-        self.assertEqual(enabled[0].automation_id, "daily_hot")
-        self.assertEqual(enabled[0].schedule_expr, "09:30")
-        self.assertEqual(enabled[0].delivery_target, "oc_test_chat")
-        self.assertEqual(llm.requests[0].available_tools, ["register_automation"])
+        self.assertEqual(events[-1].payload["text"], "已删除这个候选规则。")
+        self.assertEqual(remaining_candidates, [])
+        self.assertEqual(len(active_lessons), 1)
+        self.assertEqual(active_lessons[0].lesson_id, "lesson_1")
 
 
 if __name__ == "__main__":

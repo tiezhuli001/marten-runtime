@@ -7,17 +7,34 @@ from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.llm_client import ConversationMessage, LLMClient, LLMRequest, ToolExchange
 from marten_runtime.runtime.provider_retry import ProviderTransportError, normalize_provider_error
-from marten_runtime.runtime.tool_calls import ToolCallRejected, resolve_tool_call
+from marten_runtime.runtime.tool_calls import ToolCallRejected, ToolExecutionFailed, resolve_tool_call
 from marten_runtime.session.models import SessionMessage
+from marten_runtime.self_improve.recorder import SelfImproveRecorder
 from marten_runtime.skills.snapshot import SkillSnapshot
 from marten_runtime.tools.registry import ToolRegistry
 
 
+def _tool_rejection_text(error_code: str) -> str:
+    if error_code == "TOOL_NOT_ALLOWED":
+        return "当前操作未被允许，请换个说法或缩小范围。"
+    if error_code == "TOOL_NOT_FOUND":
+        return "当前所需工具不可用，请稍后重试。"
+    return error_code.lower()
+
+
 class RuntimeLoop:
-    def __init__(self, llm: LLMClient, tools: ToolRegistry, history: InMemoryRunHistory) -> None:
+    def __init__(
+        self,
+        llm: LLMClient,
+        tools: ToolRegistry,
+        history: InMemoryRunHistory,
+        *,
+        self_improve_recorder: SelfImproveRecorder | None = None,
+    ) -> None:
         self.llm = llm
         self.tools = tools
         self.history = history
+        self.self_improve_recorder = self_improve_recorder
         self.request_count = 0
         self.last_request_count = 0
         self.max_tool_rounds = 8
@@ -35,6 +52,7 @@ class RuntimeLoop:
         session_messages: list[SessionMessage] | None = None,
         skill_snapshot: SkillSnapshot | None = None,
         skill_heads_text: str | None = None,
+        capability_catalog_text: str | None = None,
         always_on_skill_text: str | None = None,
         activated_skill_ids: list[str] | None = None,
         activated_skill_bodies: list[str] | None = None,
@@ -57,6 +75,7 @@ class RuntimeLoop:
             skill_snapshot=skill_snapshot,
             activated_skill_ids=activated_skill_ids,
             skill_heads_text=skill_heads_text,
+            capability_catalog_text=capability_catalog_text,
             always_on_skill_text=always_on_skill_text,
             activated_skill_bodies=activated_skill_bodies,
         )
@@ -101,6 +120,7 @@ class RuntimeLoop:
             skill_snapshot_id=runtime_context.skill_snapshot.skill_snapshot_id,
             activated_skill_ids=runtime_context.activated_skill_ids,
             skill_heads_text=runtime_context.skill_heads_text,
+            capability_catalog_text=runtime_context.capability_catalog_text,
             always_on_skill_text=runtime_context.always_on_skill_text,
             activated_skill_bodies=runtime_context.activated_skill_bodies,
             prompt_mode=resolved_agent.prompt_mode,
@@ -126,7 +146,36 @@ class RuntimeLoop:
                             event_type="error",
                             sequence=2,
                             trace_id=trace_id,
-                            payload={"code": exc.error_code, "text": exc.error_code.lower()},
+                            payload={"code": exc.error_code, "text": _tool_rejection_text(exc.error_code)},
+                            created_at=datetime.now(timezone.utc),
+                        )
+                    )
+                    self.history.fail(run.run_id, error_code=exc.error_code)
+                    self.history.set_llm_request_count(run.run_id, self.last_request_count)
+                    return events
+                except ToolExecutionFailed as exc:
+                    self._record_failure(
+                        agent_id=resolved_agent.agent_id,
+                        run_id=run.run_id,
+                        trace_id=trace_id,
+                        session_id=session_id,
+                        error_code=exc.error_code,
+                        error_stage="tool",
+                        message=message,
+                        summary=str(exc),
+                    )
+                    events.append(
+                        OutboundEvent(
+                            session_id=session_id,
+                            run_id=run.run_id,
+                            event_id=f"evt_{uuid4().hex[:8]}",
+                            event_type="error",
+                            sequence=2,
+                            trace_id=trace_id,
+                            payload={
+                                "code": exc.error_code,
+                                "text": "工具执行失败，请重试。",
+                            },
                             created_at=datetime.now(timezone.utc),
                         )
                     )
@@ -136,6 +185,17 @@ class RuntimeLoop:
             except Exception as exc:
                 if _is_provider_failure(exc):
                     normalized = normalize_provider_error(exc)
+                    self._record_failure(
+                        agent_id=resolved_agent.agent_id,
+                        run_id=run.run_id,
+                        trace_id=trace_id,
+                        session_id=session_id,
+                        error_code=normalized.error_code,
+                        error_stage="llm",
+                        message=message,
+                        summary=str(exc),
+                        provider_name=getattr(self.llm, "provider_name", None),
+                    )
                     events.append(
                         OutboundEvent(
                             session_id=session_id,
@@ -154,6 +214,16 @@ class RuntimeLoop:
                     self.history.fail(run.run_id, error_code=normalized.error_code)
                     self.history.set_llm_request_count(run.run_id, self.last_request_count)
                     return events
+                self._record_failure(
+                    agent_id=resolved_agent.agent_id,
+                    run_id=run.run_id,
+                    trace_id=trace_id,
+                    session_id=session_id,
+                    error_code="RUNTIME_LOOP_FAILED",
+                    error_stage="runtime",
+                    message=message,
+                    summary=str(exc),
+                )
                 events.append(
                     OutboundEvent(
                         session_id=session_id,
@@ -207,6 +277,12 @@ class RuntimeLoop:
                 )
                 self.history.finish(run.run_id, delivery_status="final")
                 self.history.set_llm_request_count(run.run_id, self.last_request_count)
+                self._record_recovery(
+                    agent_id=resolved_agent.agent_id,
+                    run_id=run.run_id,
+                    trace_id=trace_id,
+                    message=message,
+                )
                 return events
             tool_history.append(
                 ToolExchange(
@@ -243,7 +319,65 @@ class RuntimeLoop:
         )
         self.history.fail(run.run_id, error_code="TOOL_LOOP_LIMIT_EXCEEDED")
         self.history.set_llm_request_count(run.run_id, self.last_request_count)
+        self._record_failure(
+            agent_id=resolved_agent.agent_id,
+            run_id=run.run_id,
+            trace_id=trace_id,
+            session_id=session_id,
+            error_code="TOOL_LOOP_LIMIT_EXCEEDED",
+            error_stage="tool_loop",
+            message=message,
+            summary="tool loop limit exceeded",
+        )
         return events
+
+    def _record_failure(
+        self,
+        *,
+        agent_id: str,
+        run_id: str,
+        trace_id: str,
+        session_id: str,
+        error_code: str,
+        error_stage: str,
+        message: str,
+        summary: str,
+        tool_name: str | None = None,
+        provider_name: str | None = None,
+    ) -> None:
+        if self.self_improve_recorder is None:
+            return
+        self.self_improve_recorder.record_failure(
+            agent_id=agent_id,
+            run_id=run_id,
+            trace_id=trace_id,
+            session_id=session_id,
+            error_code=error_code,
+            error_stage=error_stage,
+            tool_name=tool_name,
+            provider_name=provider_name,
+            summary=summary,
+            message=message,
+        )
+
+    def _record_recovery(
+        self,
+        *,
+        agent_id: str,
+        run_id: str,
+        trace_id: str,
+        message: str,
+    ) -> None:
+        if self.self_improve_recorder is None:
+            return
+        self.self_improve_recorder.record_recovery(
+            agent_id=agent_id,
+            run_id=run_id,
+            trace_id=trace_id,
+            message=message,
+            fix_summary="later successful completion on a compatible request",
+            success_evidence="final reply generated",
+        )
 
 
 def _is_provider_failure(exc: Exception) -> bool:

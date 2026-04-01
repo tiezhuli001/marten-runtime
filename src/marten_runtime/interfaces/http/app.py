@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from dataclasses import asdict, is_dataclass
+from datetime import datetime
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -118,7 +119,7 @@ def create_app(
                 "skill_id": job.skill_id,
                 "enabled": job.enabled,
             }
-            for job in runtime.automation_store.list_all()
+            for job in runtime.automation_store.list_public(include_disabled=True)
         ]
         return {"items": items, "count": len(items)}
 
@@ -144,6 +145,19 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="RUN_NOT_FOUND") from exc
 
+    @app.get("/diagnostics/runs")
+    def list_runs(limit: int = 20) -> dict[str, object]:
+        capped_limit = max(1, min(limit, 100))
+        items = sorted(
+            runtime.run_history.list_runs(),
+            key=lambda item: item.started_at or datetime.min,
+            reverse=True,
+        )[:capped_limit]
+        return {
+            "items": [item.model_dump(mode="json") for item in items],
+            "count": len(items),
+        }
+
     @app.get("/diagnostics/queue")
     def get_queue() -> dict[str, object]:
         return runtime.lane_manager.stats()
@@ -151,6 +165,14 @@ def create_app(
     @app.get("/diagnostics/runtime")
     def get_runtime() -> dict[str, object]:
         retry_policy = getattr(runtime.runtime_loop.llm, "retry_policy", None)
+        latest_candidate = runtime.self_improve_store.latest_candidate(agent_id=runtime.default_agent.agent_id)
+        latest_rejected_candidate = runtime.self_improve_store.latest_candidate(
+            agent_id=runtime.default_agent.agent_id,
+            status="rejected",
+        )
+        latest_active_lesson = runtime.self_improve_store.latest_active_lesson(
+            agent_id=runtime.default_agent.agent_id
+        )
         return {
             "config_snapshot_id": runtime.config_snapshot.config_snapshot_id,
             "app_id": runtime.app_manifest.app_id,
@@ -183,6 +205,26 @@ def create_app(
             "provider_retry_policy": (
                 asdict(retry_policy) if retry_policy is not None and is_dataclass(retry_policy) else None
             ),
+            "self_improve": {
+                "enabled": True,
+                "agent_id": runtime.default_agent.agent_id,
+                "active_lessons_count": len(
+                    runtime.self_improve_store.list_active_lessons(agent_id=runtime.default_agent.agent_id)
+                ),
+                "latest_candidate_status": latest_candidate.status if latest_candidate is not None else None,
+                "latest_candidate_created_at": (
+                    latest_candidate.created_at.isoformat() if latest_candidate is not None else None
+                ),
+                "latest_lesson_created_at": (
+                    latest_active_lesson.created_at.isoformat() if latest_active_lesson is not None else None
+                ),
+                "latest_accepted_lesson_summary": (
+                    latest_active_lesson.lesson_text if latest_active_lesson is not None else None
+                ),
+                "latest_rejected_lesson_summary": (
+                    latest_rejected_candidate.candidate_text if latest_rejected_candidate is not None else None
+                ),
+            },
             "lanes": runtime.lane_manager.stats(),
             "channels": {
                 "http": {"enabled": runtime.channels_config.http.enabled},

@@ -50,7 +50,7 @@ class SkillMeta(BaseModel):
 
 class SkillSpec(BaseModel):
     meta: SkillMeta
-    body: str
+    body: str | None = None
     source_path: str
 
 
@@ -63,23 +63,41 @@ class SkillHead(BaseModel):
 
 
 def parse_skill_markdown(body: str) -> tuple[dict[str, object], str]:
+    front_matter, content = _split_front_matter(body)
+    return _parse_front_matter_lines(front_matter), content
+
+
+def parse_skill_head_markdown(body: str) -> dict[str, object]:
+    front_matter, _ = _split_front_matter(body)
+    return _parse_front_matter_lines(front_matter)
+
+
+def parse_skill_body_markdown(body: str) -> tuple[dict[str, object], str]:
+    front_matter, content = _split_front_matter(body)
+    return _parse_front_matter_lines(front_matter), content
+
+
+def _split_front_matter(body: str) -> tuple[list[str], str]:
     lines = body.splitlines()
     if len(lines) >= 3 and lines[0].strip() == "---":
         try:
             end_idx = lines[1:].index("---") + 1
         except ValueError:
-            return {}, body.strip()
-        raw_meta = lines[1:end_idx]
+            return [], body.strip()
         content = "\n".join(lines[end_idx + 1 :]).strip()
-        meta: dict[str, object] = {}
-        for line in raw_meta:
-            line = line.strip()
-            if not line or ":" not in line:
-                continue
-            key, raw_value = line.split(":", 1)
-            meta[key.strip()] = _parse_scalar(raw_value.strip())
-        return meta, content
-    return {}, body.strip()
+        return lines[1:end_idx], content
+    return [], body.strip()
+
+
+def _parse_front_matter_lines(raw_meta: list[str]) -> dict[str, object]:
+    meta: dict[str, object] = {}
+    for line in raw_meta:
+        line = line.strip()
+        if not line or ":" not in line:
+            continue
+        key, raw_value = line.split(":", 1)
+        meta[key.strip()] = _parse_scalar(raw_value.strip())
+    return meta
 
 
 def _parse_scalar(value: str) -> object:

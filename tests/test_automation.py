@@ -97,6 +97,32 @@ enabled = true
         self.assertEqual(created[0].delivery_target, "oc_test_chat")
         self.assertEqual(created[0].skill_id, "github_hot_repos_digest")
 
+    def test_scheduler_includes_internal_self_improve_job(self) -> None:
+        store = AutomationStore()
+        store.save(
+            AutomationJob(
+                automation_id="self_improve_internal",
+                app_id="example_assistant",
+                agent_id="assistant",
+                prompt_template="Summarize repeated failures and later recoveries.",
+                schedule_kind="daily",
+                schedule_expr="03:00",
+                session_target="isolated",
+                delivery_channel="http",
+                delivery_target="internal",
+                skill_id="self_improve",
+                internal=True,
+            )
+        )
+        scheduler = Scheduler(store)
+
+        created = scheduler.tick(now=datetime(2026, 3, 30, 3, 0, tzinfo=timezone.utc))
+
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0].skill_id, "self_improve")
+        self.assertEqual(created[0].delivery_channel, "http")
+        self.assertEqual(created[0].delivery_target, "internal")
+
 
 if __name__ == "__main__":
     unittest.main()

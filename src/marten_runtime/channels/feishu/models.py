@@ -41,6 +41,7 @@ class FeishuWebsocketState(BaseModel):
     last_error: str | None = None
     last_message_id: str | None = None
     last_trace_id: str | None = None
+    last_runtime_trace_id: str | None = None
     last_session_id: str | None = None
     last_run_id: str | None = None
     last_event_id: str | None = None

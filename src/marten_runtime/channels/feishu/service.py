@@ -79,6 +79,7 @@ class FeishuWebsocketService:
         self._semantic_duplicate_total = 0
         self._last_semantic_duplicate: dict[str, object] | None = None
         self._last_enqueued_lane: dict[str, object] | None = None
+        self._dispatch_tasks: set[asyncio.Task[None]] = set()
 
     def fetch_endpoint(self) -> FeishuWebsocketEndpoint:
         app_id = self.env.get("FEISHU_APP_ID")
@@ -121,6 +122,7 @@ class FeishuWebsocketService:
     async def stop_background(self) -> None:
         if self._stop_event is not None:
             self._stop_event.set()
+        await self._cancel_dispatch_tasks()
         if self._task is not None:
             self._task.cancel()
             try:
@@ -190,9 +192,12 @@ class FeishuWebsocketService:
         message_type = headers.get(HEADER_TYPE)
         if message_type != MessageType.EVENT.value:
             return self._build_ack_frame(frame, {"code": 200})
-        result = await asyncio.to_thread(self.handle_event_payload, payload)
         self.state.last_message_id = headers.get(HEADER_MESSAGE_ID)
         self.state.last_trace_id = headers.get(HEADER_TRACE_ID)
+        if self.state.running:
+            self._schedule_dispatch(payload)
+            return self._build_ack_frame(frame, {"code": 200})
+        result = await asyncio.to_thread(self.handle_event_payload, payload)
         if self._should_promote_result_state(result):
             self.state.last_status = result.status
         return self._build_ack_frame(frame, {"code": 200})
@@ -248,6 +253,7 @@ class FeishuWebsocketService:
                 event=event,
             )
         envelope = to_inbound_envelope(event)
+        self.state.last_runtime_trace_id = envelope.trace_id
         claim = self.receipt_store.claim(
             channel_id=envelope.channel_id,
             dedupe_key=envelope.dedupe_key,
@@ -276,6 +282,7 @@ class FeishuWebsocketService:
             self.state.last_event_id = event.message_id or event.event_id
             self.state.last_event_at = datetime.now(timezone.utc)
             return semantic_duplicate
+        self._add_ack_reaction(event.message_id)
         lane_lease = None
         if self.lane_manager is not None:
             lane_lease = self.lane_manager.acquire(
@@ -341,6 +348,7 @@ class FeishuWebsocketService:
                 )
             )
         self.state.last_run_id = last_run_id
+        self.state.last_runtime_trace_id = envelope.trace_id
         self.state.last_event_id = event.message_id or event.event_id
         self.state.last_event_at = datetime.now(timezone.utc)
         return FeishuDispatchResult(
@@ -363,6 +371,7 @@ class FeishuWebsocketService:
             "last_error": self.state.last_error,
             "last_message_id": self.state.last_message_id,
             "last_trace_id": self.state.last_trace_id,
+            "last_runtime_trace_id": self.state.last_runtime_trace_id,
             "last_session_id": self.state.last_session_id,
             "last_run_id": self.state.last_run_id,
             "last_event_id": self.state.last_event_id,
@@ -376,7 +385,13 @@ class FeishuWebsocketService:
             "queued_lane_count": self.lane_manager.stats().get("queued_lane_count", 0) if self.lane_manager else 0,
             "queued_items_total": self.lane_manager.stats().get("queued_items_total", 0) if self.lane_manager else 0,
             "last_enqueued_lane": self._last_enqueued_lane,
+            "inflight_dispatch_count": len(self._dispatch_tasks),
         }
+
+    async def wait_for_idle(self) -> None:
+        while self._dispatch_tasks:
+            tasks = tuple(self._dispatch_tasks)
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def _resolve_lock_path(self) -> str:
         override = self.env.get("FEISHU_WEBSOCKET_LOCK_PATH")
@@ -432,6 +447,28 @@ class FeishuWebsocketService:
             frame.SeqID = 0
             frame.LogID = 0
             await websocket.send(frame.SerializeToString())
+
+    def _schedule_dispatch(self, payload: dict[str, object] | bytes | str) -> None:
+        task = asyncio.create_task(self._dispatch_event_payload(payload))
+        self._dispatch_tasks.add(task)
+        task.add_done_callback(self._dispatch_tasks.discard)
+
+    async def _dispatch_event_payload(self, payload: dict[str, object] | bytes | str) -> None:
+        try:
+            result = await asyncio.to_thread(self.handle_event_payload, payload)
+        except Exception:
+            logger.exception("feishu background dispatch failed")
+            return
+        if self._should_promote_result_state(result):
+            self.state.last_status = result.status
+
+    async def _cancel_dispatch_tasks(self) -> None:
+        if not self._dispatch_tasks:
+            return
+        tasks = tuple(self._dispatch_tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def _handle_control_frame(self, frame: Frame) -> None:
         headers = _headers_to_dict(frame)
@@ -523,6 +560,17 @@ class FeishuWebsocketService:
             )
         self._semantic_recent[semantic_key] = now
         return None
+
+    def _add_ack_reaction(self, message_id: str) -> None:
+        if not message_id:
+            return
+        add_reaction = getattr(self.delivery_client, "add_reaction", None)
+        if not callable(add_reaction):
+            return
+        try:
+            add_reaction(message_id, "OnIt")
+        except Exception:
+            logger.exception("feishu add reaction failed")
 
 
 def _default_endpoint_transport(url: str, headers: dict[str, str], body: dict[str, str]) -> dict[str, object]:

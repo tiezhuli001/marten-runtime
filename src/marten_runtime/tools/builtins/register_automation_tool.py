@@ -4,6 +4,7 @@ from contextvars import ContextVar, Token
 import re
 
 from marten_runtime.automation.store import AutomationStore
+from marten_runtime.data_access.adapter import DomainDataAdapter
 
 
 REQUIRED_FIELDS = (
@@ -32,7 +33,11 @@ def pop_registration_context(token: Token) -> None:
     _REGISTRATION_CONTEXT.reset(token)
 
 
-def run_register_automation_tool(payload: dict, store: AutomationStore) -> dict:
+def run_register_automation_tool(
+    payload: dict,
+    store: AutomationStore,
+    adapter: DomainDataAdapter | None = None,
+) -> dict:
     normalized = _normalize_payload(payload, _REGISTRATION_CONTEXT.get() or {})
     missing = [field for field in REQUIRED_FIELDS if not str(normalized.get(field, "")).strip()]
     if missing:
@@ -42,23 +47,29 @@ def run_register_automation_tool(payload: dict, store: AutomationStore) -> dict:
             "missing_fields": missing,
         }
 
-    job = store.create_from_registration(
-        {
-            "automation_id": str(normalized["automation_id"]),
-            "name": str(normalized.get("name", normalized["automation_id"])),
-            "app_id": str(normalized["app_id"]),
-            "agent_id": str(normalized["agent_id"]),
-            "prompt_template": str(normalized.get("prompt_template", "")),
-            "schedule_kind": str(normalized["schedule_kind"]),
-            "schedule_expr": str(normalized["schedule_expr"]),
-            "timezone": str(normalized["timezone"]),
-            "session_target": str(normalized.get("session_target", "isolated")),
-            "delivery_channel": str(normalized["delivery_channel"]),
-            "delivery_target": str(normalized["delivery_target"]),
-            "skill_id": str(normalized["skill_id"]),
-            "enabled": bool(normalized.get("enabled", True)),
-        }
-    )
+    values = {
+        "automation_id": str(normalized["automation_id"]),
+        "name": str(normalized.get("name", normalized["automation_id"])),
+        "app_id": str(normalized["app_id"]),
+        "agent_id": str(normalized["agent_id"]),
+        "prompt_template": str(normalized.get("prompt_template", "")),
+        "schedule_kind": str(normalized["schedule_kind"]),
+        "schedule_expr": str(normalized["schedule_expr"]),
+        "timezone": str(normalized["timezone"]),
+        "session_target": str(normalized.get("session_target", "isolated")),
+        "delivery_channel": str(normalized["delivery_channel"]),
+        "delivery_target": str(normalized["delivery_target"]),
+        "skill_id": str(normalized["skill_id"]),
+        "enabled": bool(normalized.get("enabled", True)),
+    }
+    existing = store.find_equivalent_registration(values)
+    if existing is not None:
+        job = existing
+    elif adapter is not None:
+        created = adapter.create_item("automation", values=values)
+        job = store.get(str(created["automation_id"]))
+    else:
+        job = store.create_from_registration(values)
     return {
         "ok": True,
         "automation_id": job.automation_id,
@@ -74,6 +85,8 @@ def run_register_automation_tool(payload: dict, store: AutomationStore) -> dict:
 
 def _normalize_payload(payload: dict, context: dict[str, str]) -> dict[str, object]:
     normalized = dict(payload)
+    if not str(normalized.get("skill_id", "")).strip():
+        normalized["skill_id"] = str(payload.get("skill", "")).strip()
     normalized["app_id"] = _resolve_alias(
         payload.get("app_id"),
         context.get("app_id", ""),
@@ -100,6 +113,8 @@ def _normalize_payload(payload: dict, context: dict[str, str]) -> dict[str, obje
     )
     normalized["schedule_kind"] = schedule_kind
     normalized["schedule_expr"] = schedule_expr
+    if not str(normalized.get("automation_id", "")).strip():
+        normalized["automation_id"] = _build_default_automation_id(normalized)
     return normalized
 
 
@@ -121,3 +136,17 @@ def _normalize_schedule(schedule_kind: str, schedule_expr: str) -> tuple[str, st
         hour = int(daily_cron.group(2))
         return "daily", f"{hour:02d}:{minute:02d}"
     return kind or "daily", expr
+
+
+def _build_default_automation_id(normalized: dict[str, object]) -> str:
+    skill_id = _slugify(str(normalized.get("skill_id", "")).strip() or "automation")
+    schedule_expr = str(normalized.get("schedule_expr", "")).strip()
+    hhmm = "".join(ch for ch in schedule_expr if ch.isdigit())[:4]
+    if hhmm:
+        return f"{skill_id}_{hhmm}"
+    return skill_id
+
+
+def _slugify(text: str) -> str:
+    collapsed = re.sub(r"[^a-zA-Z0-9]+", "_", text).strip("_").lower()
+    return collapsed or "automation"

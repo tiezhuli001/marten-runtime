@@ -28,6 +28,7 @@ class LLMRequest(BaseModel):
     skill_snapshot_id: str = "skill_default"
     activated_skill_ids: list[str] = Field(default_factory=list)
     skill_heads_text: str | None = None
+    capability_catalog_text: str | None = None
     always_on_skill_text: str | None = None
     activated_skill_bodies: list[str] = Field(default_factory=list)
     prompt_mode: str = "full"
@@ -92,10 +93,6 @@ class DemoLLMClient:
         self.profile_name = profile_name
 
     def complete(self, request: LLMRequest) -> LLMReply:
-        if request.tool_result is None and "time" in request.available_tools and "time" in request.message.lower():
-            return LLMReply(tool_name="time", tool_payload={"timezone": "UTC"})
-        if request.tool_result is None and "mock_search" in request.available_tools and "search" in request.message.lower():
-            return LLMReply(tool_name="mock_search", tool_payload={"query": request.message})
         if request.tool_result is not None:
             if "iso_time" in request.tool_result:
                 return LLMReply(final_text=f"time={request.tool_result['iso_time']}")
@@ -188,6 +185,8 @@ class OpenAIChatLLMClient:
             messages.append({"role": "system", "content": request.system_prompt})
         if request.skill_heads_text:
             messages.append({"role": "system", "content": request.skill_heads_text})
+        if request.capability_catalog_text:
+            messages.append({"role": "system", "content": request.capability_catalog_text})
         if request.always_on_skill_text:
             messages.append({"role": "system", "content": request.always_on_skill_text})
         if request.working_context_text:
@@ -238,7 +237,7 @@ class OpenAIChatLLMClient:
         if tool_calls:
             function = tool_calls[0]["function"]
             arguments = function.get("arguments", "{}")
-            parsed_arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
+            parsed_arguments = _parse_tool_arguments(arguments)
             return LLMReply(tool_name=function["name"], tool_payload=parsed_arguments)
         content = message.get("content", "")
         if isinstance(content, list):
@@ -254,6 +253,24 @@ class OpenAIChatLLMClient:
 def _strip_hidden_reasoning(text: str) -> str:
     cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
     return cleaned.strip()
+
+
+def _parse_tool_arguments(arguments: object) -> dict:
+    if arguments is None:
+        return {}
+    if isinstance(arguments, dict):
+        return arguments
+    if not isinstance(arguments, str):
+        raise ValueError("tool_arguments_invalid_type")
+    normalized = arguments.strip()
+    if not normalized:
+        return {}
+    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", normalized, flags=re.DOTALL | re.IGNORECASE)
+    if fenced is not None:
+        normalized = fenced.group(1).strip()
+    if not normalized:
+        return {}
+    return json.loads(normalized)
 
 
 def _resolve_base_url(*, profile: ModelProfile, env: Mapping[str, str]) -> str | None:

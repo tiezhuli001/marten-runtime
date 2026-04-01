@@ -4,7 +4,7 @@
 
 Simplified openclaw-style private agent runtime for `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel`.
 
-[中文文档](./README_CN.md) · [Docs Index](./docs/README.md) · [Harness Design](./docs/2026-03-29-private-agent-harness-design.md) · [Conversation Lanes Design](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md) · [Config Surfaces](./docs/CONFIG_SURFACES.md)
+[中文文档](./README_CN.md) · [Docs Index](./docs/README.md) · [Architecture Changelog](./docs/ARCHITECTURE_CHANGELOG.md) · [ADR Index](./docs/architecture/adr/README.md) · [Harness Design](./docs/2026-03-29-private-agent-harness-design.md) · [Conversation Lanes Design](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md) · [Self-Improve Design](./docs/2026-03-30-self-improve-design.md) · [Config Surfaces](./docs/CONFIG_SURFACES.md)
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
@@ -69,13 +69,16 @@ flowchart LR
 Latest MVP-facing changes:
 
 - added a narrow GitHub hot-repos automation path driven by `register_automation`, a due-window scheduler, isolated automation turns, and final-channel delivery
-- added builtin automation management tools: `list_automations`, `update_automation`, `delete_automation`, `pause_automation`, and `resume_automation`
+- moved the public automation resource layer onto the thin shared adapter core while keeping automation lifecycle logic outside the adapter
+- added builtin automation management tools: `list_automations`, `get_automation_detail`, `update_automation`, `delete_automation`, `pause_automation`, and `resume_automation`
 - added the shared `Automation Management` skill so CRUD intent stays in `LLM + skill`, while store mutation stays in builtin tools
 - broadened the GitHub skill into `GitHub Assistant`, with aliases and concise GitHub MCP-first guidance for trending digests, repository inspection, issue / PR work, and release/account queries
 - added in-memory conversation lanes so same `channel_id + conversation_id` turns queue in FIFO order for HTTP `/messages` and Feishu interactive ingress
 - strengthened provider resilience with retryable `429` / `502` / `503` / `504` normalization and stable provider-specific runtime error codes
-- strengthened Feishu live-chain observability with run-level `tool_calls`, `llm_request_count`, and websocket diagnostics exposing the latest inbound `session_id` and `run_id`
+- strengthened Feishu live-chain observability with run-level `tool_calls`, `llm_request_count`, and websocket diagnostics exposing the latest inbound `session_id`, `run_id`, and runtime trace correlation
 - hardened Feishu ingress by suppressing semantic duplicate replays, isolating runtime-handler failures to a single message, ignoring blank-text inbound events, and keeping duplicate websocket replays from clobbering the last accepted status
+- added a narrow self-improve loop that records repeated failures plus later recoveries, synthesizes lesson candidates through a dedicated skill, gates them through a structured LLM judgment plus deterministic checks, and injects accepted active lessons from runtime-managed `SYSTEM_LESSONS.md`
+- added a thin self-improve domain-query adapter so the assistant can inspect candidate lessons and delete bad candidates through natural-language turns without exposing raw SQL, table names, or generic CRUD
 
 ## Architecture
 
@@ -87,14 +90,16 @@ That path is the project center of gravity. If a change does not make this chain
 
 Key references:
 
+- [Architecture Changelog](./docs/ARCHITECTURE_CHANGELOG.md)
+- [ADR Index](./docs/architecture/adr/README.md)
 - [Private Agent Harness Design](./docs/2026-03-29-private-agent-harness-design.md)
-- [Private Agent Harness Plan](./docs/plans/2026-03-29-private-agent-harness-plan.md)
 - [Conversation Lanes And Provider Resilience Design](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md)
-- [Conversation Lanes And Provider Resilience Plan](./docs/plans/2026-03-30-conversation-lanes-provider-resilience-plan.md)
-- [GitHub Hot Repos Digest MVP Plan](./docs/plans/2026-03-30-github-hot-repos-mvp-plan.md)
-- [Architecture Audit](./docs/ARCHITECTURE_AUDIT.md)
+- [Self-Improve Design](./docs/2026-03-30-self-improve-design.md)
+- [Progressive Disclosure Capability Design](./docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md)
+- [Bootstrap Assembly Hygiene Plan](./docs/plans/2026-04-01-bootstrap-assembly-hygiene-plan.md)
 - [Config Surfaces](./docs/CONFIG_SURFACES.md)
 - [Live Verification Checklist](./docs/LIVE_VERIFICATION_CHECKLIST.md)
+- [Archive Index](./docs/archive/README.md)
 
 ## Current Scope
 
@@ -113,18 +118,16 @@ Also out of scope for now:
 
 - queue-first execution
 - durable delivery outbox
-- heartbeat / cron / proactive jobs
 - hybrid memory promotion
 - planner / swarm orchestration
 
-Planned MVP exception under active development:
+Implemented narrow extensions:
 
-- a narrow chat-registered recurring digest path for GitHub hot repos
-- requires a configured GitHub MCP server with repo-discovery capability such as `search_repositories`
-- uses a dedicated skill plus a thin automation bridge
-- keeps recurring-job inspection narrow through `list_automations` and `GET /automations`
-- supports narrow recurring-job CRUD through builtin tools instead of a local automation MCP
-- does not imply a generic workflow or proactive-jobs platform
+- chat-registered recurring digest path for GitHub hot repos
+- adapter-backed automation resource CRUD with domain tools kept stable for the LLM surface
+- internal self-improve automation that summarizes failure/recovery evidence into candidate lessons
+- assistant-facing self-improve candidate inspection and candidate-only deletion through skill-routed builtin tools backed by a thin adapter core
+- both paths reuse the thin automation bridge and builtin tools instead of introducing a worker-first platform
 
 ## Repository Layout
 
@@ -216,6 +219,14 @@ Useful endpoints:
 
 Run diagnostics include `llm_request_count` and `tool_calls`, so operator checks can verify whether a turn stayed on the intended `LLM -> tool -> LLM` path.
 
+For Feishu live debugging, use this correlation path:
+
+- `channels.feishu.websocket.last_run_id` from `GET /diagnostics/runtime`
+- `GET /diagnostics/run/{run_id}` to read tool calls and the runtime `trace_id`
+- `GET /diagnostics/trace/{trace_id}` using that runtime `trace_id`
+
+Do not treat `channels.feishu.websocket.last_trace_id` as the runtime trace. That field is the raw Feishu websocket trace header. Use `last_runtime_trace_id` or the `trace_id` from run diagnostics for runtime correlation.
+
 ## Testing
 
 Targeted Milestone A regression suite:
@@ -230,7 +241,7 @@ Full suite:
 PYTHONPATH=src python -m unittest -v
 ```
 
-Latest local result: `164` tests green.
+Latest local result: `198` tests green.
 
 ## Documentation
 
@@ -239,6 +250,6 @@ Recommended reading order:
 1. [docs/README.md](./docs/README.md)
 2. [docs/2026-03-29-private-agent-harness-design.md](./docs/2026-03-29-private-agent-harness-design.md)
 3. [docs/2026-03-30-conversation-lanes-provider-resilience-design.md](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md)
-4. [docs/plans/2026-03-30-github-hot-repos-mvp-plan.md](./docs/plans/2026-03-30-github-hot-repos-mvp-plan.md)
-5. [docs/plans/2026-03-30-conversation-lanes-provider-resilience-plan.md](./docs/plans/2026-03-30-conversation-lanes-provider-resilience-plan.md)
+4. [docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md](./docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md)
+5. [docs/plans/2026-04-01-bootstrap-assembly-hygiene-plan.md](./docs/plans/2026-04-01-bootstrap-assembly-hygiene-plan.md)
 6. [docs/CONFIG_SURFACES.md](./docs/CONFIG_SURFACES.md)

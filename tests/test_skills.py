@@ -2,10 +2,12 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from marten_runtime.skills.filter import filter_skills
+from marten_runtime.skills import loader as loader_module
 from marten_runtime.skills.loader import SkillLoader
-from marten_runtime.skills.render import build_skill_heads, render_always_on_skills
+from marten_runtime.skills.render import build_skill_heads, render_always_on_skills, render_skill_heads
 from marten_runtime.skills.selector import select_activated_skills
 from marten_runtime.skills.service import SkillService
 from marten_runtime.skills.snapshot import SkillSnapshot
@@ -19,51 +21,143 @@ def write_skill(root: Path, skill_id: str, body: str) -> None:
 
 
 class SkillTests(unittest.TestCase):
-    def test_loader_merges_with_system_shared_app_precedence(self) -> None:
+    def test_loader_reads_single_level_skills_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            system = base / "system"
-            shared = base / "shared"
-            app = base / "app"
+            skills = base / "skills"
             write_skill(
-                system,
-                "example_time",
+                skills,
+                "repo_helper",
                 """
                 ---
-                skill_id: example_time
-                name: Example Time
-                description: system version
+                skill_id: repo_helper
+                name: Repo Helper
+                description: repo version
                 enabled: true
                 agents: [assistant]
                 channels: [http]
-                tags: [time]
+                tags: [repo]
                 ---
-                System body
+                Repo body
                 """,
             )
-            write_skill(
-                app,
-                "example_time",
-                """
-                ---
-                skill_id: example_time
-                name: Example Time App
-                description: app version
-                enabled: true
-                agents: [assistant]
-                channels: [http]
-                tags: [time]
-                ---
-                App body
-                """,
+            nested = skills / "nested" / "ignored"
+            nested.mkdir(parents=True, exist_ok=True)
+            (nested / "SKILL.md").write_text(
+                textwrap.dedent(
+                    """
+                    ---
+                    skill_id: ignored_nested
+                    name: Ignored Nested
+                    description: should not be discovered
+                    enabled: true
+                    agents: [assistant]
+                    channels: [http]
+                    ---
+                    Ignored body
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
             )
-            loader = SkillLoader([str(system), str(shared), str(app)])
+            loader = SkillLoader([str(skills)])
 
             skills = loader.load_all()
 
-            self.assertEqual([skill.meta.skill_id for skill in skills], ["example_time"])
-            self.assertEqual(skills[0].meta.description, "app version")
-            self.assertEqual(skills[0].meta.source_scope, "app")
+            self.assertEqual([skill.meta.skill_id for skill in skills], ["repo_helper"])
+            self.assertIsNone(skills[0].body)
+            self.assertEqual(skills[0].meta.source_scope, "skills")
+
+    def test_loader_can_load_one_skill_body_on_demand(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            skills = base / "skills"
+            write_skill(
+                skills,
+                "repo_helper",
+                """
+                ---
+                skill_id: repo_helper
+                name: Repo Helper
+                description: repo version
+                enabled: true
+                agents: [assistant]
+                channels: [http]
+                tags: [repo]
+                ---
+                Repo body
+                """,
+            )
+            loader = SkillLoader([str(skills)])
+
+            skill = loader.load_skill("repo_helper")
+
+            self.assertEqual(skill.meta.skill_id, "repo_helper")
+            self.assertEqual(skill.body, "Repo body")
+
+    def test_loader_load_all_uses_head_only_parse_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            skills = base / "skills"
+            write_skill(
+                skills,
+                "repo_helper",
+                """
+                ---
+                skill_id: repo_helper
+                name: Repo Helper
+                description: repo version
+                enabled: true
+                agents: [assistant]
+                channels: [http]
+                tags: [repo]
+                ---
+                Repo body
+                """,
+            )
+            loader = SkillLoader([str(skills)])
+
+            with (
+                patch.object(loader_module, "parse_skill_head_markdown", wraps=loader_module.parse_skill_head_markdown) as parse_head,
+                patch.object(loader_module, "parse_skill_body_markdown", wraps=loader_module.parse_skill_body_markdown) as parse_body,
+            ):
+                skills = loader.load_all()
+
+            self.assertEqual([skill.meta.skill_id for skill in skills], ["repo_helper"])
+            self.assertEqual(parse_head.call_count, 1)
+            self.assertEqual(parse_body.call_count, 0)
+
+    def test_loader_load_skill_uses_full_body_parse_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            skills = base / "skills"
+            write_skill(
+                skills,
+                "repo_helper",
+                """
+                ---
+                skill_id: repo_helper
+                name: Repo Helper
+                description: repo version
+                enabled: true
+                agents: [assistant]
+                channels: [http]
+                tags: [repo]
+                ---
+                Repo body
+                """,
+            )
+            loader = SkillLoader([str(skills)])
+
+            with (
+                patch.object(loader_module, "parse_skill_head_markdown", wraps=loader_module.parse_skill_head_markdown) as parse_head,
+                patch.object(loader_module, "parse_skill_body_markdown", wraps=loader_module.parse_skill_body_markdown) as parse_body,
+            ):
+                skill = loader.load_skill("repo_helper")
+
+            self.assertEqual(skill.body, "Repo body")
+            self.assertEqual(parse_head.call_count, 0)
+            self.assertEqual(parse_body.call_count, 1)
 
     def test_filter_render_and_snapshot_keep_only_visible_skills(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -116,15 +210,15 @@ class SkillTests(unittest.TestCase):
             usage = SkillUsage(skill_id="example_time", use_count=1, reject_count=0)
 
             self.assertEqual([item.meta.skill_id for item in visible], ["example_time"])
-            self.assertEqual(render_always_on_skills(visible), "Always on body")
+            self.assertEqual(render_always_on_skills(visible), "")
             self.assertEqual(heads, [])
             self.assertEqual(snapshot.always_on_ids, ["example_time"])
             self.assertEqual(usage.use_count, 1)
 
-    def test_skill_service_builds_startup_snapshot_and_always_on_text(self) -> None:
+    def test_skill_service_builds_startup_snapshot_and_loads_always_on_body_explicitly(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            system = base / "system"
+            system = base / "skills"
             write_skill(
                 system,
                 "example_time",
@@ -160,16 +254,170 @@ class SkillTests(unittest.TestCase):
             )
             service = SkillService([str(system)])
 
-            runtime = service.build_runtime(agent_id="assistant", channel_id="http", env={}, config={})
+            with (
+                patch.object(service.loader, "load_all", wraps=service.loader.load_all) as load_all,
+                patch.object(service.loader, "load_skill", wraps=service.loader.load_skill) as load_skill,
+            ):
+                runtime = service.build_runtime(agent_id="assistant", channel_id="http", env={}, config={})
 
             self.assertEqual(runtime.snapshot.always_on_ids, ["example_time"])
             self.assertEqual([head.skill_id for head in runtime.snapshot.heads], ["repo_helper"])
             self.assertEqual(runtime.always_on_text, "Always on body")
+            self.assertIsNone(runtime.visible_skills[0].body)
+            self.assertIsNone(runtime.visible_skills[1].body)
+            self.assertEqual(load_all.call_count, 1)
+            self.assertEqual(load_skill.call_count, 1)
+            self.assertEqual(load_skill.call_args.args[0], "example_time")
 
-    def test_selector_activates_skill_by_id_name_and_tag(self) -> None:
+    def test_render_skill_heads_uses_full_format_when_under_budget(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            system = base / "system"
+            skills_root = base / "skills"
+            write_skill(
+                skills_root,
+                "repo_helper",
+                """
+                ---
+                skill_id: repo_helper
+                name: Repo Helper
+                description: repo assistance
+                enabled: true
+                agents: [assistant]
+                channels: [http]
+                aliases: [repo]
+                ---
+                Repo helper body
+                """,
+            )
+            heads = build_skill_heads(SkillLoader([str(skills_root)]).load_all())
+
+            rendered = render_skill_heads(heads, max_chars=500, max_items=10)
+
+            self.assertFalse(rendered.compact)
+            self.assertFalse(rendered.truncated)
+            self.assertEqual(
+                rendered.text,
+                "Visible skills:\n- repo_helper: repo assistance Aliases: repo.",
+            )
+
+    def test_render_skill_heads_uses_compact_format_when_full_exceeds_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            skills_root = base / "skills"
+            write_skill(
+                skills_root,
+                "repo_helper",
+                """
+                ---
+                skill_id: repo_helper
+                name: Repo Helper
+                description: repo assistance with longer description text
+                enabled: true
+                agents: [assistant]
+                channels: [http]
+                aliases: [repo]
+                ---
+                Repo helper body
+                """,
+            )
+            heads = build_skill_heads(SkillLoader([str(skills_root)]).load_all())
+
+            rendered = render_skill_heads(heads, max_chars=50, max_items=10)
+
+            self.assertTrue(rendered.compact)
+            self.assertFalse(rendered.truncated)
+            self.assertEqual(rendered.text, "Visible skills:\n- repo_helper")
+
+    def test_render_skill_heads_truncates_compact_format_when_still_over_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            skills_root = base / "skills"
+            write_skill(
+                skills_root,
+                "repo_helper",
+                """
+                ---
+                skill_id: repo_helper
+                name: Repo Helper
+                description: repo assistance
+                enabled: true
+                agents: [assistant]
+                channels: [http]
+                ---
+                Repo helper body
+                """,
+            )
+            write_skill(
+                skills_root,
+                "time_helper",
+                """
+                ---
+                skill_id: time_helper
+                name: Time Helper
+                description: time assistance
+                enabled: true
+                agents: [assistant]
+                channels: [http]
+                ---
+                Time helper body
+                """,
+            )
+            heads = build_skill_heads(SkillLoader([str(skills_root)]).load_all())
+
+            rendered = render_skill_heads(heads, max_chars=20, max_items=10)
+
+            self.assertTrue(rendered.compact)
+            self.assertTrue(rendered.truncated)
+            self.assertEqual(rendered.truncated_reason, "max_chars")
+            self.assertEqual(rendered.text, "Visible skills:\n- re")
+
+    def test_render_skill_heads_keeps_stable_order_and_item_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            skills_root = base / "skills"
+            write_skill(
+                skills_root,
+                "b_skill",
+                """
+                ---
+                skill_id: b_skill
+                name: B Skill
+                description: second
+                enabled: true
+                agents: [assistant]
+                channels: [http]
+                ---
+                B body
+                """,
+            )
+            write_skill(
+                skills_root,
+                "a_skill",
+                """
+                ---
+                skill_id: a_skill
+                name: A Skill
+                description: first
+                enabled: true
+                agents: [assistant]
+                channels: [http]
+                ---
+                A body
+                """,
+            )
+            heads = build_skill_heads(SkillLoader([str(skills_root)]).load_all())
+
+            rendered = render_skill_heads(heads, max_chars=500, max_items=1)
+
+            self.assertFalse(rendered.compact)
+            self.assertTrue(rendered.truncated)
+            self.assertEqual(rendered.truncated_reason, "max_items")
+            self.assertEqual(rendered.text, "Visible skills:\n- a_skill: first")
+
+    def test_selector_only_activates_explicit_skill_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            system = base / "skills"
             write_skill(
                 system,
                 "repo_helper",
@@ -197,12 +445,12 @@ class SkillTests(unittest.TestCase):
 
             activated = select_activated_skills(visible, "Use repo_helper to inspect the git repo.")
 
-            self.assertEqual([item.meta.skill_id for item in activated], ["repo_helper"])
+            self.assertEqual(activated, [])
 
     def test_selector_explicitly_activates_skill_by_id_for_automation_turn(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            shared = base / "shared"
+            shared = base / "skills"
             write_skill(
                 shared,
                 "github_hot_repos_digest",
@@ -236,10 +484,10 @@ class SkillTests(unittest.TestCase):
 
             self.assertEqual([item.meta.skill_id for item in activated], ["github_hot_repos_digest"])
 
-    def test_selector_activates_skill_by_alias_for_natural_github_digest_request(self) -> None:
+    def test_selector_does_not_activate_skill_by_alias_for_natural_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            shared = base / "shared"
+            shared = base / "skills"
             write_skill(
                 shared,
                 "github_hot_repos_digest",
@@ -271,98 +519,32 @@ class SkillTests(unittest.TestCase):
                 "请给我一份今日开源热榜，关注今天讨论度高的仓库。",
             )
 
-            self.assertEqual([item.meta.skill_id for item in activated], ["github_hot_repos_digest"])
+            self.assertEqual(activated, [])
 
-    def test_selector_activates_automation_management_skill_for_task_crud_request(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            shared = base / "shared"
-            write_skill(
-                shared,
-                "automation_management",
-                """
-                ---
-                skill_id: automation_management
-                name: Automation Management
-                description: help manage recurring automations and existing 自动任务 or 定时任务
-                aliases: ["自动任务管理", "定时任务管理", "自动任务", "定时任务"]
-                enabled: true
-                agents: [assistant]
-                channels: [feishu, http]
-                tags: [automation, tasks, schedule]
-                ---
-                Management body
-                """,
-            )
-            loader = SkillLoader([str(shared)])
-            visible = filter_skills(
-                agent_id="assistant",
-                channel_id="feishu",
-                items=loader.load_all(),
-                env={},
-                config={},
-            )
+    def test_self_improve_management_skill_content_allows_candidate_delete_only(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        skill_path = repo_root / "skills/self_improve_management/SKILL.md"
 
-            activated = select_activated_skills(
-                visible,
-                "把我那个 23:30 的自动任务暂停掉。",
-            )
+        self.assertTrue(skill_path.exists())
+        body = skill_path.read_text(encoding="utf-8")
 
-            self.assertEqual([item.meta.skill_id for item in activated], ["automation_management"])
+        self.assertIn("list_lesson_candidates", body)
+        self.assertIn("get_lesson_candidate_detail", body)
+        self.assertIn("delete_lesson_candidate", body)
+        self.assertIn("must not delete active lessons", body)
 
-    def test_selector_prefers_automation_management_over_github_content_for_task_crud(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            shared = base / "shared"
-            write_skill(
-                shared,
-                "automation_management",
-                """
-                ---
-                skill_id: automation_management
-                name: Automation Management
-                description: help manage recurring automations and existing 自动任务 or 定时任务
-                aliases: ["自动任务管理", "定时任务管理", "自动任务", "定时任务"]
-                enabled: true
-                agents: [assistant]
-                channels: [feishu, http]
-                tags: [automation, tasks, schedule]
-                ---
-                Management body
-                """,
-            )
-            write_skill(
-                shared,
-                "github_hot_repos_digest",
-                """
-                ---
-                skill_id: github_hot_repos_digest
-                name: GitHub Assistant
-                description: use when the user wants GitHub trending repositories or digest content
-                aliases: ["GitHub 热门项目摘要", "GitHub 热门仓库", "GitHub trending", "今日开源热榜"]
-                enabled: true
-                agents: [assistant]
-                channels: [feishu, http]
-                tags: [github, trending, digest]
-                ---
-                Digest body
-                """,
-            )
-            loader = SkillLoader([str(shared)])
-            visible = filter_skills(
-                agent_id="assistant",
-                channel_id="feishu",
-                items=loader.load_all(),
-                env={},
-                config={},
-            )
+    def test_self_improve_skill_content_stays_narrow_and_does_not_allow_agents_rewrite(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        skill_path = repo_root / "skills/self_improve/SKILL.md"
 
-            activated = select_activated_skills(
-                visible,
-                "把 23:50 的那个 GitHub 热榜任务暂停掉。",
-            )
+        self.assertTrue(skill_path.exists())
+        body = skill_path.read_text(encoding="utf-8")
 
-            self.assertEqual([item.meta.skill_id for item in activated], ["automation_management"])
+        self.assertIn("list_self_improve_evidence", body)
+        self.assertIn("save_lesson_candidate", body)
+        self.assertIn("list_system_lessons", body)
+        self.assertIn("repeated failures and later recoveries", body)
+        self.assertIn("Do not edit AGENTS.md", body)
 
 
 if __name__ == "__main__":

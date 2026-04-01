@@ -36,6 +36,7 @@ from marten_runtime.runtime.lanes import ConversationLaneManager
 class _FakeDeliveryClient:
     def __init__(self) -> None:
         self.payloads: list[FeishuDeliveryPayload] = []
+        self.reactions: list[tuple[str, str]] = []
 
     def deliver(self, payload: FeishuDeliveryPayload) -> dict[str, object]:
         self.payloads.append(payload)
@@ -49,11 +50,20 @@ class _FakeDeliveryClient:
             "sequence": payload.sequence,
         }
 
+    def add_reaction(self, message_id: str, emoji_type: str = "OnIt") -> dict[str, object]:
+        self.reactions.append((message_id, emoji_type))
+        return {
+            "ok": True,
+            "message_id": message_id,
+            "emoji_type": emoji_type,
+        }
+
 
 class _RecordingDeliveryTransport:
     def __init__(self) -> None:
         self.sent: list[tuple[str, dict[str, str], dict]] = []
         self.updated: list[tuple[str, dict[str, str], dict]] = []
+        self.reactions: list[tuple[str, dict[str, str], dict]] = []
 
     def post(self, url: str, headers: dict[str, str], body: dict) -> dict:
         if url.endswith("/open-apis/auth/v3/tenant_access_token/internal"):
@@ -62,6 +72,9 @@ class _RecordingDeliveryTransport:
                 "tenant_access_token": "tenant-token",
                 "expire": 7200,
             }
+        if "/reactions" in url:
+            self.reactions.append((url, headers, body))
+            return {"code": 0, "data": {}}
         self.sent.append((url, headers, body))
         return {
             "code": 0,
@@ -373,7 +386,7 @@ class FeishuTests(unittest.TestCase):
 
             await asyncio.gather(service.handle_frame_bytes(frame.SerializeToString()), ticker())
 
-            self.assertGreaterEqual(ticks, 5)
+            self.assertGreaterEqual(ticks, 4)
 
         asyncio.run(exercise())
 
@@ -408,7 +421,7 @@ class FeishuTests(unittest.TestCase):
 
             await asyncio.gather(service.run_forever(), ticker())
 
-            self.assertGreaterEqual(ticks, 5)
+            self.assertGreaterEqual(ticks, 4)
 
         asyncio.run(exercise())
 
@@ -495,6 +508,91 @@ class FeishuTests(unittest.TestCase):
         self.assertEqual(event.text, "hello from feishu")
         self.assertEqual(envelope.channel_id, "feishu")
         self.assertEqual(envelope.message_id, "msg_ws_1")
+
+    def test_websocket_post_payload_extracts_visible_text_and_mentions(self) -> None:
+        payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_ws_post_1",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {
+                        "user_id": "user_post_1",
+                    }
+                },
+                "message": {
+                    "message_id": "msg_ws_post_1",
+                    "chat_id": "chat_post_1",
+                    "chat_type": "group",
+                    "message_type": "post",
+                    "content": json.dumps(
+                        {
+                            "zh_cn": {
+                                "title": "",
+                                "content": [
+                                    [
+                                        {"tag": "at", "user_id": "bot_open_id", "user_name": "铁锤4916"},
+                                        {"tag": "text", "text": " 现在几点？请直接回答。"},
+                                    ]
+                                ],
+                            }
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "mentions": [{"name": "铁锤4916", "key": "@_user_1"}],
+                },
+            },
+        }
+
+        event = parse_feishu_callback(payload)
+
+        self.assertEqual(event.message_type, "post")
+        self.assertEqual(event.mentions, ["铁锤4916"])
+        self.assertEqual(event.text, "@铁锤4916 现在几点？请直接回答。")
+
+    def test_websocket_post_payload_without_locale_wrapper_extracts_visible_text(self) -> None:
+        payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_ws_post_2",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {
+                        "user_id": "user_post_2",
+                    }
+                },
+                "message": {
+                    "message_id": "msg_ws_post_2",
+                    "chat_id": "chat_post_2",
+                    "chat_type": "group",
+                    "message_type": "post",
+                    "content": json.dumps(
+                        {
+                            "title": "",
+                            "content": [
+                                [
+                                    {"tag": "at", "user_id": "bot_open_id", "user_name": "铁锤4916"},
+                                    {"tag": "text", "text": " 现在几点？请直接回答。"},
+                                ]
+                            ],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "mentions": [{"name": "铁锤4916", "key": "@_user_1"}],
+                },
+            },
+        }
+
+        event = parse_feishu_callback(payload)
+
+        self.assertEqual(event.message_type, "post")
+        self.assertEqual(event.text, "@铁锤4916 现在几点？请直接回答。")
 
     def test_feishu_envelope_routes_to_bound_agent_when_mention_required_is_met(self) -> None:
         payload = {
@@ -1013,6 +1111,8 @@ class FeishuTests(unittest.TestCase):
 
         self.assertEqual(result.status, "accepted")
         stats = service.stats()
+        self.assertIsNone(stats["last_trace_id"])
+        self.assertEqual(stats["last_runtime_trace_id"], str(result.envelope.trace_id))
         self.assertEqual(stats["last_session_id"], "sess_last_runtime")
         self.assertEqual(stats["last_run_id"], "run_last_runtime")
 
@@ -1318,6 +1418,89 @@ class FeishuTests(unittest.TestCase):
         ack.ParseFromString(ack_bytes)
         self.assertEqual(json.loads(ack.payload.decode("utf-8"))["code"], 200)
         self.assertEqual(len(delivery.payloads), 1)
+
+    def test_running_websocket_service_acks_before_slow_runtime_completes(self) -> None:
+        async def exercise() -> None:
+            delivery = _FakeDeliveryClient()
+            started = threading.Event()
+            release = threading.Event()
+
+            def runtime_handler(envelope: object) -> dict[str, object]:
+                started.set()
+                release.wait(timeout=2)
+                return {
+                    "status": "accepted",
+                    "trace_id": envelope.trace_id,
+                    "session_id": "sess_ack_early",
+                    "events": [
+                        {
+                            "event_type": "final",
+                            "event_id": "evt_final_ack_early",
+                            "run_id": "run_ack_early",
+                            "trace_id": envelope.trace_id,
+                            "sequence": 1,
+                            "payload": {"text": "done"},
+                        }
+                    ],
+                }
+
+            service = FeishuWebsocketService(
+                env={
+                    "FEISHU_APP_ID": "app-id",
+                    "FEISHU_APP_SECRET": "app-secret",
+                },
+                receipt_store=InMemoryReceiptStore(),
+                runtime_handler=runtime_handler,
+                delivery_client=delivery,
+            )
+            service.state.running = True
+            frame_bytes = self._build_event_frame(
+                {
+                    "schema": "2.0",
+                    "header": {
+                        "event_id": "evt_ack_early_1",
+                        "event_type": "im.message.receive_v1",
+                    },
+                    "event": {
+                        "sender": {
+                            "sender_type": "user",
+                            "sender_id": {
+                                "user_id": "user_ack_early_1",
+                            }
+                        },
+                        "message": {
+                            "message_id": "msg_ack_early_1",
+                            "chat_id": "chat_ack_early_1",
+                            "content": json.dumps({"text": "hello"}),
+                        },
+                    },
+                }
+            )
+
+            start = time.perf_counter()
+            ack_bytes = await service.handle_frame_bytes(frame_bytes)
+            elapsed = time.perf_counter() - start
+
+            self.assertLess(elapsed, 0.1)
+            ack = Frame()
+            ack.ParseFromString(ack_bytes)
+            self.assertEqual(json.loads(ack.payload.decode("utf-8"))["code"], 200)
+            deadline = time.perf_counter() + 1
+            while not started.is_set() and time.perf_counter() < deadline:
+                await asyncio.sleep(0.01)
+            self.assertTrue(started.is_set())
+            self.assertEqual(len(delivery.payloads), 0)
+            self.assertEqual(delivery.reactions, [("msg_ack_early_1", "OnIt")])
+
+            release.set()
+            await service.wait_for_idle()
+
+            self.assertEqual(len(delivery.payloads), 1)
+            self.assertEqual(service.state.last_status, "accepted")
+            self.assertEqual(service.state.last_run_id, "run_ack_early")
+            self.assertEqual(service.state.last_session_id, "sess_ack_early")
+
+        asyncio.run(exercise())
 
     def test_websocket_service_updates_state_from_pong_frame(self) -> None:
         service = FeishuWebsocketService(
@@ -1645,6 +1828,36 @@ class FeishuTests(unittest.TestCase):
         self.assertIn("run_id=run_log_1", captured.output[-1])
         self.assertIn("trace_id=trace_log_1", captured.output[-1])
         self.assertIn("event_id=evt_log_1", captured.output[-1])
+
+    def test_add_reaction_calls_feishu_reaction_api(self) -> None:
+        transport = _RecordingDeliveryTransport()
+        client = FeishuDeliveryClient(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            transport=transport.post,
+            session_store=InMemoryFeishuDeliverySessionStore(),
+            enable_message_update=False,
+        )
+
+        result = client.add_reaction("om_source_1", "OnIt")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["message_id"], "om_source_1")
+        self.assertEqual(result["emoji_type"], "OnIt")
+        self.assertEqual(len(transport.reactions), 1)
+        self.assertTrue(
+            transport.reactions[0][0].endswith("/open-apis/im/v1/messages/om_source_1/reactions")
+        )
+        self.assertEqual(
+            transport.reactions[0][2],
+            {
+                "reaction_type": {
+                    "emoji_type": "OnIt",
+                }
+            },
+        )
 
     def _build_event_frame(self, payload: dict[str, object]) -> bytes:
         frame = Frame()

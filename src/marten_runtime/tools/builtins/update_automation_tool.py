@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from marten_runtime.automation.store import AutomationStore
+from marten_runtime.data_access.adapter import DomainDataAdapter
 
 
-def run_update_automation_tool(payload: dict, store: AutomationStore) -> dict:
+def run_update_automation_tool(payload: dict, adapter: DomainDataAdapter) -> dict:
     automation_id = str(payload.get("automation_id", "")).strip()
     if not automation_id:
         raise ValueError("automation_id is required")
+    existing = adapter.get_item("automation", item_id=automation_id)
+    if bool(existing.get("internal", False)):
+        raise KeyError(automation_id)
     updates = {
         key: value
         for key, value in payload.items()
@@ -24,5 +27,5 @@ def run_update_automation_tool(payload: dict, store: AutomationStore) -> dict:
         }
         and value is not None
     }
-    job = store.update(automation_id, updates)
-    return {"ok": True, "automation": job.model_dump(mode="json")}
+    item = adapter.update_item("automation", item_id=automation_id, values=updates)
+    return {"ok": True, "automation": item}

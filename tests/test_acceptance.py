@@ -73,7 +73,9 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(mcp.status_code, 200)
         self.assertEqual(coding.status_code, 200)
         self.assertEqual(chat.json()["events"][-1]["event_type"], "final")
-        self.assertIn("mock_search", mcp.json()["events"][-1]["payload"]["text"])
+        self.assertEqual(mcp.json()["events"][-1]["event_type"], "final")
+        self.assertEqual(mcp.json()["events"][-1]["payload"]["text"], "search release notes")
+        self.assertNotIn("mock_search", mcp.json()["events"][-1]["payload"]["text"])
         self.assertEqual(coding.json()["events"][0]["event_type"], "progress")
 
 

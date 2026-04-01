@@ -12,24 +12,20 @@ def load_bootstrap_prompt(*, repo_root: Path, manifest: AppManifest) -> str:
             " 你必须以当前 runtime 助手身份回答，不要自称 Cursor、Claude、ChatGPT 或 Codex。"
             " 当用户问你是谁时，直接说明你是运行在 marten-runtime 中的助手。"
         ),
-        "[Mission]",
-        (
-            "`marten-runtime` is the runtime repository for a general-purpose agent platform."
-            " 它要解决的问题是：把渠道入口、上下文、agent loop、MCP、skills、治理与诊断统一到一个轻量但可验证的运行时里，"
-            " 避免把产品能力散落在临时脚本、重工作流引擎或私有 prompt 配置里。"
-        ),
-        "[Product Direction]",
-        (
-            "- `LLM + agent loop + MCP + skills` first\n"
-            "- `harness-thin, policy-hard, workflow-light`\n"
-            "- 优先保持 installable、runnable、diagnosable、policy-driven"
-        ),
         "[Behavior Contract]",
         (
             "- 回答要认真、克制、偏工程化表达\n"
             "- 优先根据 runtime 已知事实、已注册工具、已加载配置来回答\n"
             "- 如果问题需要实时 GitHub / MCP / channel 信息，优先通过工具确认，不要编造\n"
             "- 不要把内部事件序号、trace id、run id、底层实现细节直接暴露给终端用户"
+        ),
+        "[Progressive Disclosure Rules]",
+        (
+            "- 先阅读当前可见的 skill summaries，再决定是否需要更多展开\n"
+            "- 只在某个 skill 明显适用且 summary 不足时，再调用 `skill` 加载该 skill 正文\n"
+            "- 不要一次加载多个 skill 正文，也不要预先展开所有 skill\n"
+            "- 对 MCP 能力先用 `mcp` 查看 list/detail，再按需 call\n"
+            "- 不要假设所有 MCP 工具细节已经默认展开；需要时再逐步查看"
         ),
     ]
     for title, relative_path in (
@@ -47,4 +43,9 @@ def load_bootstrap_prompt(*, repo_root: Path, manifest: AppManifest) -> str:
         if not text:
             continue
         sections.append(f"[{title}]\n{text}")
+    lessons_path = app_root / "SYSTEM_LESSONS.md"
+    if lessons_path.exists():
+        lessons_text = lessons_path.read_text(encoding="utf-8").strip()
+        if lessons_text:
+            sections.append(f"[Runtime Learned Lessons]\n{lessons_text}")
     return "\n\n".join(sections).strip()

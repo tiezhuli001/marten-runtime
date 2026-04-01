@@ -1,6 +1,9 @@
 import threading
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
@@ -12,6 +15,10 @@ from marten_runtime.channels.feishu.delivery_session import InMemoryFeishuDelive
 from marten_runtime.channels.receipts import InMemoryReceiptStore
 from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
+from marten_runtime.self_improve.models import FailureEvent, LessonCandidate, SystemLesson
+from marten_runtime.self_improve.recorder import SelfImproveRecorder
+from marten_runtime.self_improve.service import SelfImproveService, make_default_judge
+from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
 from marten_runtime.session.compaction import compact_context
 from tests.http_app_support import build_test_app
 
@@ -28,24 +35,160 @@ class ContractCompatibilityTests(unittest.TestCase):
     def test_runtime_bootstrap_registers_automation_tool(self) -> None:
         app = build_test_app()
 
-        self.assertIn("register_automation", app.state.runtime.tool_registry.list())
-        self.assertIn("list_automations", app.state.runtime.tool_registry.list())
-        self.assertIn("update_automation", app.state.runtime.tool_registry.list())
-        self.assertIn("delete_automation", app.state.runtime.tool_registry.list())
-        self.assertIn("pause_automation", app.state.runtime.tool_registry.list())
-        self.assertIn("resume_automation", app.state.runtime.tool_registry.list())
+        self.assertIn("skill", app.state.runtime.tool_registry.list())
+        self.assertIn("mcp", app.state.runtime.tool_registry.list())
+        self.assertNotIn("mock_search", app.state.runtime.tool_registry.list())
+        self.assertIn("automation", app.state.runtime.tool_registry.list())
+        self.assertIn("self_improve", app.state.runtime.tool_registry.list())
+        self.assertNotIn("register_automation", app.state.runtime.tool_registry.list())
+        self.assertNotIn("list_lesson_candidates", app.state.runtime.tool_registry.list())
 
     def test_default_assistant_agent_can_use_register_automation(self) -> None:
         app = build_test_app()
 
         assistant = app.state.runtime.default_agent
 
-        self.assertIn("register_automation", assistant.allowed_tools)
-        self.assertIn("list_automations", assistant.allowed_tools)
-        self.assertIn("update_automation", assistant.allowed_tools)
-        self.assertIn("delete_automation", assistant.allowed_tools)
-        self.assertIn("pause_automation", assistant.allowed_tools)
-        self.assertIn("resume_automation", assistant.allowed_tools)
+        self.assertIn("skill", assistant.allowed_tools)
+        self.assertIn("mcp", assistant.allowed_tools)
+        self.assertIn("automation", assistant.allowed_tools)
+        self.assertIn("self_improve", assistant.allowed_tools)
+        self.assertIn("time", assistant.allowed_tools)
+        self.assertNotIn("register_automation", assistant.allowed_tools)
+        self.assertNotIn("list_lesson_candidates", assistant.allowed_tools)
+        self.assertEqual(
+            assistant.allowed_tools,
+            ["automation", "mcp", "self_improve", "skill", "time"],
+        )
+
+    def test_mcp_family_tool_is_the_only_model_visible_mcp_entrypoint(self) -> None:
+        app = build_test_app()
+
+        tool_names = app.state.runtime.tool_registry.list()
+
+        self.assertIn("mcp", tool_names)
+        self.assertFalse(any(name.startswith("mock_") for name in tool_names))
+
+    def test_runtime_bootstrap_uses_capability_catalog_and_descriptions(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        snapshot = runtime.tool_registry.build_snapshot(["automation", "mcp", "self_improve", "skill", "time"])
+
+        self.assertIn("Capability catalog:", runtime.capability_catalog_text or "")
+        self.assertIn("automation", runtime.capability_catalog_text or "")
+        self.assertIn("mcp", runtime.capability_catalog_text or "")
+        self.assertNotIn("mock_search", runtime.capability_catalog_text or "")
+        self.assertNotIn("search_repositories", runtime.capability_catalog_text or "")
+        self.assertIn("action=register/list/detail/update/delete/pause/resume", snapshot.tool_metadata["automation"]["description"])
+        self.assertIn("Inspect available MCP servers and tools", snapshot.tool_metadata["mcp"]["description"])
+
+    def test_internal_self_improve_automation_is_not_exposed_in_operator_listing(self) -> None:
+        app = build_test_app()
+
+        with TestClient(app) as client:
+            response = client.get("/automations")
+
+        self.assertEqual(response.status_code, 200)
+        automation_ids = {item["automation_id"] for item in response.json()["items"]}
+        self.assertNotIn("self_improve_internal", automation_ids)
+
+    def test_internal_self_improve_automation_trigger_accepts_candidate_and_exports_lessons(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            app = build_test_app()
+            runtime = app.state.runtime
+            isolated_store = SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3")
+            runtime.self_improve_store = isolated_store
+            runtime.runtime_loop.self_improve_recorder = SelfImproveRecorder(isolated_store)
+            runtime.self_improve_service = SelfImproveService(
+                isolated_store,
+                lessons_path=Path(tmpdir) / "SYSTEM_LESSONS.md",
+                judge=make_default_judge(
+                    runtime.runtime_loop.llm,
+                    app_id="example_assistant",
+                    agent_id="assistant",
+                ),
+            )
+            runtime.automation_store.save(
+                AutomationJob(
+                    automation_id="self_improve_internal",
+                    name="Internal Self Improve",
+                    app_id="example_assistant",
+                    agent_id="assistant",
+                    prompt_template="Summarize repeated failures and later recoveries.",
+                    schedule_kind="daily",
+                    schedule_expr="03:00",
+                    timezone="UTC",
+                    session_target="isolated",
+                    delivery_channel="http",
+                    delivery_target="internal",
+                    skill_id="self_improve",
+                    enabled=True,
+                    internal=True,
+                )
+            )
+            runtime.self_improve_store.record_failure(
+                FailureEvent(
+                    failure_id="failure_1",
+                    agent_id="assistant",
+                    run_id="run_1",
+                    trace_id="trace_1",
+                    session_id="session_1",
+                    error_code="PROVIDER_TIMEOUT",
+                    error_stage="llm",
+                    summary="provider timed out",
+                    fingerprint="assistant|hello",
+                )
+            )
+            runtime.self_improve_store.record_failure(
+                FailureEvent(
+                    failure_id="failure_2",
+                    agent_id="assistant",
+                    run_id="run_2",
+                    trace_id="trace_2",
+                    session_id="session_2",
+                    error_code="PROVIDER_TIMEOUT",
+                    error_stage="llm",
+                    summary="provider timed out",
+                    fingerprint="assistant|hello",
+                )
+            )
+            runtime.runtime_loop.llm = ScriptedLLMClient(
+                [
+                    LLMReply(
+                        tool_name="self_improve",
+                        tool_payload={
+                            "action": "save_candidate",
+                            "candidate_id": "cand_1",
+                            "agent_id": "assistant",
+                            "source_fingerprints": ["assistant|hello", "assistant|hello"],
+                            "candidate_text": "遇到重复 provider timeout 时先减少无关工具面。",
+                            "rationale": "repeated failures with later recovery evidence",
+                            "score": 0.95,
+                        },
+                    ),
+                    LLMReply(final_text="self improve ok"),
+                    LLMReply(
+                        final_text=(
+                            '{"accept": true, "reason": "stable repeated recovery pattern", '
+                            '"normalized_lesson_text": "遇到重复 provider timeout 时先减少无关工具面。", '
+                            '"topic_key": "provider_timeout"}'
+                        )
+                    ),
+                ]
+            )
+            runtime.self_improve_service.judge = make_default_judge(
+                runtime.runtime_loop.llm,
+                app_id="example_assistant",
+                agent_id="assistant",
+            )
+
+            with TestClient(app) as client:
+                response = client.post("/automations/self_improve_internal/trigger")
+
+            self.assertEqual(response.status_code, 200)
+            lessons = runtime.self_improve_store.list_active_lessons(agent_id="assistant")
+            self.assertEqual(len(lessons), 1)
+            exported = (Path(tmpdir) / "SYSTEM_LESSONS.md").read_text(encoding="utf-8")
+            self.assertIn("遇到重复 provider timeout 时先减少无关工具面。", exported)
 
     def test_http_and_event_contracts_keep_required_fields(self) -> None:
         with TestClient(build_test_app()) as client:
@@ -77,14 +220,110 @@ class ContractCompatibilityTests(unittest.TestCase):
         self.assertEqual(snapshot.session_id, "sess_1")
         self.assertTrue(hasattr(snapshot, "manifest_id"))
 
+    def test_recent_runs_endpoint_lists_latest_runs(self) -> None:
+        with TestClient(build_test_app()) as client:
+            client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "runs-1",
+                    "message_id": "1",
+                    "body": "hello",
+                },
+            )
+            client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "runs-2",
+                    "message_id": "2",
+                    "body": "hello again",
+                },
+            )
+            response = client.get("/diagnostics/runs?limit=2")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["count"], 2)
+        self.assertEqual(len(body["items"]), 2)
+        self.assertIn("run_id", body["items"][0])
+        self.assertIn("status", body["items"][0])
+
+    def test_plain_chat_turn_does_not_expose_full_tool_surface(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        llm = ScriptedLLMClient([LLMReply(final_text="你好")])
+        runtime.runtime_loop.llm = llm
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "plain-chat",
+                    "message_id": "plain-1",
+                    "body": "你好啊",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(llm.requests[0].available_tools, ["automation", "mcp", "self_improve", "skill", "time"])
+
+    def test_github_schedule_turn_keeps_register_automation_available(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        llm = ScriptedLLMClient([LLMReply(final_text="ok")])
+        runtime.runtime_loop.llm = llm
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "github-schedule",
+                    "message_id": "github-1",
+                    "body": "每天晚上11点25给我推送github热榜",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(llm.requests[0].available_tools, ["automation", "mcp", "self_improve", "skill", "time"])
+
+    def test_search_turn_keeps_mcp_family_tool_without_restoring_full_surface(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        llm = ScriptedLLMClient([LLMReply(final_text="ok")])
+        runtime.runtime_loop.llm = llm
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "search-turn",
+                    "message_id": "search-1",
+                    "body": "search release notes",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(llm.requests[0].available_tools, ["automation", "mcp", "self_improve", "skill", "time"])
+        self.assertNotIn("mock_search", llm.requests[0].available_tools)
+
     def test_feishu_inbound_registration_resolves_current_target_and_daily_schedule(self) -> None:
         app = build_test_app()
         runtime = app.state.runtime
         runtime.runtime_loop.llm = ScriptedLLMClient(
             [
                 LLMReply(
-                    tool_name="register_automation",
+                    tool_name="automation",
                     tool_payload={
+                        "action": "register",
                         "automation_id": "github_digest_daily",
                         "name": "github_digest_daily",
                         "app_id": "default_app",
@@ -168,8 +407,13 @@ class ContractCompatibilityTests(unittest.TestCase):
         self.assertIn("server", runtime_diag.json())
         self.assertIn("public_base_url", runtime_diag.json()["server"])
         self.assertIn("channels", runtime_diag.json())
+        self.assertIn("self_improve", runtime_diag.json())
         self.assertIn("lanes", runtime_diag.json())
         self.assertIn("provider_retry_policy", runtime_diag.json())
+        self.assertIn("active_lessons_count", runtime_diag.json()["self_improve"])
+        self.assertIn("latest_candidate_status", runtime_diag.json()["self_improve"])
+        self.assertIn("latest_accepted_lesson_summary", runtime_diag.json()["self_improve"])
+        self.assertIn("latest_rejected_lesson_summary", runtime_diag.json()["self_improve"])
         self.assertIn("websocket", runtime_diag.json()["channels"]["feishu"])
         self.assertIn("mcp_servers", runtime_diag.json())
         mock_search = next(
@@ -306,6 +550,9 @@ class ContractCompatibilityTests(unittest.TestCase):
         app = build_test_app()
         runtime = app.state.runtime
         delivered: list[dict[str, object]] = []
+        expected_scheduled_for = (
+            datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
+        )
 
         class _RecordingDeliveryClient:
             def deliver(self, payload):
@@ -340,9 +587,125 @@ class ContractCompatibilityTests(unittest.TestCase):
         self.assertEqual(body["delivery_target"], "oc_test_chat")
         self.assertEqual(body["events"][-1]["event_type"], "final")
         self.assertEqual(body["events"][-1]["payload"]["text"], "hello from automation")
+        self.assertEqual(body["scheduled_for"], expected_scheduled_for)
         self.assertEqual([item["event_type"] for item in delivered], ["progress", "final"])
         self.assertEqual(delivered[-1]["chat_id"], "oc_test_chat")
-        self.assertEqual(delivered[-1]["dedupe_key"], "feishu:oc_test_chat:2026-03-30")
+        self.assertEqual(
+            delivered[-1]["dedupe_key"],
+            f"feishu:oc_test_chat:{expected_scheduled_for}",
+        )
+
+    def test_manual_automation_trigger_without_skill_id_does_not_500(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        runtime.automation_store.save(
+            AutomationJob(
+                automation_id="plain_delivery",
+                name="plain_delivery",
+                app_id="example_assistant",
+                agent_id="assistant",
+                prompt_template="请只回复：实时链路验证通过。",
+                schedule_kind="daily",
+                schedule_expr="23:59",
+                timezone="Asia/Shanghai",
+                session_target="isolated",
+                delivery_channel="http",
+                delivery_target="internal",
+                skill_id="",
+                enabled=True,
+                internal=False,
+            )
+        )
+        runtime.runtime_loop.llm = ScriptedLLMClient([LLMReply(final_text="实时链路验证通过。")])
+
+        with TestClient(app) as client:
+            response = client.post("/automations/plain_delivery/trigger")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["events"][-1]["payload"]["text"], "实时链路验证通过。")
+
+    def test_http_messages_can_query_and_delete_self_improve_candidates_through_runtime_path(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            app = build_test_app()
+            runtime = app.state.runtime
+            isolated_store = SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3")
+            runtime.self_improve_store = isolated_store
+            runtime.runtime_loop.self_improve_recorder = SelfImproveRecorder(isolated_store)
+            runtime.self_improve_service = SelfImproveService(
+                isolated_store,
+                lessons_path=Path(tmpdir) / "SYSTEM_LESSONS.md",
+                judge=make_default_judge(
+                    runtime.runtime_loop.llm,
+                    app_id="example_assistant",
+                    agent_id="assistant",
+                ),
+            )
+            runtime.self_improve_store.save_candidate(
+                LessonCandidate(
+                    candidate_id="cand_1",
+                    agent_id="assistant",
+                    source_fingerprints=["fp_one", "fp_one"],
+                    candidate_text="候选规则一",
+                    rationale="candidate rationale",
+                    status="pending",
+                    score=0.9,
+                )
+            )
+            runtime.self_improve_store.save_lesson(
+                SystemLesson(
+                    lesson_id="lesson_1",
+                    agent_id="assistant",
+                    topic_key="provider_timeout",
+                    lesson_text="保留的 active lesson",
+                    source_fingerprints=["fp_timeout"],
+                    active=True,
+                )
+            )
+            runtime.runtime_loop.llm = ScriptedLLMClient(
+                [
+                    LLMReply(
+                        tool_name="self_improve",
+                        tool_payload={"action": "list_candidates", "agent_id": "assistant"},
+                    ),
+                    LLMReply(final_text="当前有 1 条候选规则。"),
+                    LLMReply(
+                        tool_name="self_improve",
+                        tool_payload={"action": "delete_candidate", "candidate_id": "cand_1"},
+                    ),
+                    LLMReply(final_text="已删除候选规则 cand_1。"),
+                ]
+            )
+
+            with TestClient(app) as client:
+                query_response = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": "self-improve-query",
+                        "message_id": "msg_query",
+                        "body": "帮我看看最近有哪些候选规则",
+                    },
+                )
+                delete_response = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": "self-improve-delete",
+                        "message_id": "msg_delete",
+                        "body": "删除候选规则 cand_1",
+                    },
+                )
+
+            self.assertEqual(query_response.status_code, 200)
+            self.assertEqual(delete_response.status_code, 200)
+            self.assertEqual(query_response.json()["events"][-1]["payload"]["text"], "当前有 1 条候选规则。")
+            self.assertEqual(delete_response.json()["events"][-1]["payload"]["text"], "已删除候选规则 cand_1。")
+            self.assertEqual(runtime.self_improve_store.list_candidates(agent_id="assistant", limit=10), [])
+            lessons = runtime.self_improve_store.list_active_lessons(agent_id="assistant")
+            self.assertEqual(len(lessons), 1)
+            self.assertEqual(lessons[0].lesson_id, "lesson_1")
 
     def test_run_diagnostics_expose_tool_calls_for_registration(self) -> None:
         app = build_test_app()
@@ -350,8 +713,9 @@ class ContractCompatibilityTests(unittest.TestCase):
         runtime.runtime_loop.llm = ScriptedLLMClient(
             [
                 LLMReply(
-                    tool_name="register_automation",
+                    tool_name="automation",
                     tool_payload={
+                        "action": "register",
                         "automation_id": "daily_hot",
                         "name": "Daily GitHub Hot Repos",
                         "app_id": "example_assistant",
@@ -388,7 +752,7 @@ class ContractCompatibilityTests(unittest.TestCase):
         body = run_diag.json()
         self.assertEqual(body["llm_request_count"], 2)
         self.assertEqual(len(body["tool_calls"]), 1)
-        self.assertEqual(body["tool_calls"][0]["tool_name"], "register_automation")
+        self.assertEqual(body["tool_calls"][0]["tool_name"], "automation")
 
     def test_runtime_diagnostics_expose_feishu_channel_hardening_signals(self) -> None:
         app = build_test_app()
@@ -465,6 +829,8 @@ class ContractCompatibilityTests(unittest.TestCase):
         self.assertIn("retry_policy", feishu)
         self.assertEqual(feishu["retry_policy"]["progress_max_retries"], 2)
         self.assertIn("websocket", feishu)
+        self.assertIn("last_runtime_trace_id", feishu["websocket"])
+        self.assertIsNone(feishu["websocket"]["last_runtime_trace_id"])
         self.assertIsNone(feishu["websocket"]["last_session_id"])
         self.assertIsNone(feishu["websocket"]["last_run_id"])
 

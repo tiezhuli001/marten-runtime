@@ -16,13 +16,83 @@ from marten_runtime.mcp.client import MCPClient
 from marten_runtime.mcp.discovery import discover_mcp_tools
 from marten_runtime.mcp.models import MCPServerSpec, MCPToolSpec
 from marten_runtime.mcp.loader import load_mcp_servers
+from marten_runtime.mcp.normalize import normalize_mcp_request
+from marten_runtime.mcp.request_models import NormalizedMCPRequest
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.runtime.loop import RuntimeLoop
+from marten_runtime.tools.builtins.mcp_tool import run_mcp_tool
 from marten_runtime.tools.registry import ToolRegistry
 
 
 class RuntimeMCPTests(unittest.TestCase):
+    def test_normalized_mcp_request_requires_action(self) -> None:
+        with self.assertRaisesRegex(ValueError, "action"):
+            NormalizedMCPRequest(
+                action="",
+                server_id=None,
+                tool_name=None,
+                arguments={},
+            )
+
+    def test_normalized_mcp_request_keeps_canonical_fields(self) -> None:
+        request = NormalizedMCPRequest(
+            action="call",
+            server_id="mock-search",
+            tool_name="mock_search",
+            arguments={"query": "release notes"},
+        )
+
+        self.assertEqual(
+            request.model_dump(),
+            {
+                "action": "call",
+                "server_id": "mock-search",
+                "tool_name": "mock_search",
+                "arguments": {"query": "release notes"},
+            },
+        )
+
+    def test_normalize_mcp_request_maps_alias_fields_to_canonical_shape(self) -> None:
+        request = normalize_mcp_request(
+            self._server_map(
+                MCPServerSpec(
+                    server_id="mock-search",
+                    transport="mock",
+                    backend_id="remote-mock",
+                    tools=[MCPToolSpec(name="mock_search", description="Mock search tool.")],
+                )
+            ),
+            {
+                "action": "call",
+                "server_id": "mock-search",
+                "tool": "mock_search",
+                "params": {"query": "release notes"},
+            },
+        )
+
+        self.assertEqual(request.tool_name, "mock_search")
+        self.assertEqual(request.arguments, {"query": "release notes"})
+
+    def test_normalize_mcp_request_uses_empty_dict_for_missing_arguments(self) -> None:
+        request = normalize_mcp_request(
+            self._server_map(
+                MCPServerSpec(
+                    server_id="mock-search",
+                    transport="mock",
+                    backend_id="remote-mock",
+                    tools=[MCPToolSpec(name="mock_search", description="Mock search tool.")],
+                )
+            ),
+            {
+                "action": "call",
+                "server_id": "mock-search",
+                "tool_name": "mock_search",
+            },
+        )
+
+        self.assertEqual(request.arguments, {})
+
     def test_client_can_call_tool_inside_asyncio_thread(self) -> None:
         class AsyncSafeClient(MCPClient):
             @asynccontextmanager
@@ -160,21 +230,21 @@ class RuntimeMCPTests(unittest.TestCase):
         client = MCPClient([server])
         discovery = discover_mcp_tools([server], client)
         tools = ToolRegistry()
-        for tool in server.tools:
-            tools.register(
-                tool.name,
-                lambda payload, server_id=server.server_id, tool_name=tool.name: client.call_tool(
-                    server_id,
-                    tool_name,
-                    payload,
-                ),
-                source_kind="mcp",
-                server_id=server.server_id,
-                backend_id=server.backend_id,
-            )
+        tools.register(
+            "mcp",
+            lambda payload: run_mcp_tool(payload, [server], client, discovery),
+        )
         llm = ScriptedLLMClient(
             [
-                LLMReply(tool_name="echo", tool_payload={"query": "release notes"}),
+                LLMReply(
+                    tool_name="mcp",
+                    tool_payload={
+                        "action": "call",
+                        "server_id": "stdio-echo",
+                        "tool_name": "echo",
+                        "arguments": {"query": "release notes"},
+                    },
+                ),
                 LLMReply(final_text="echo=ok"),
             ]
         )
@@ -183,7 +253,7 @@ class RuntimeMCPTests(unittest.TestCase):
             agent_id="assistant",
             role="general_assistant",
             app_id="example_assistant",
-            allowed_tools=["mcp:*"],
+            allowed_tools=["mcp"],
         )
 
         events = runtime.run(session_id="sess_mcp", message="find release notes", trace_id="trace_mcp", agent=agent)
@@ -192,7 +262,162 @@ class RuntimeMCPTests(unittest.TestCase):
         self.assertEqual([tool.name for tool in server.tools], ["echo"])
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
         self.assertEqual(events[-1].payload["text"], "echo=ok")
-        self.assertIn("echo", llm.requests[0].tool_snapshot.mcp_tools)
+        self.assertEqual(llm.requests[0].available_tools, ["mcp"])
+
+    def test_mcp_family_tool_can_infer_single_tool_server_from_query_payload(self) -> None:
+        server = MCPServerSpec(
+            server_id="mock-search",
+            transport="mock",
+            backend_id="remote-mock",
+            tools=[MCPToolSpec(name="mock_search", description="Mock search tool.")],
+        )
+        client = MCPClient([server])
+
+        result = run_mcp_tool(
+            {"query": "release notes"},
+            [server],
+            client,
+            {"mock-search": {"state": "configured", "tool_count": 1, "error": None}},
+        )
+
+        self.assertEqual(result["action"], "call")
+        self.assertEqual(result["server_id"], "mock-search")
+        self.assertEqual(result["tool_name"], "mock_search")
+        self.assertEqual(result["arguments"]["query"], "release notes")
+
+    def test_mcp_family_tool_accepts_json_string_arguments(self) -> None:
+        server = MCPServerSpec(
+            server_id="mock-search",
+            transport="mock",
+            backend_id="remote-mock",
+            tools=[MCPToolSpec(name="mock_search", description="Mock search tool.")],
+        )
+        client = MCPClient([server])
+
+        result = run_mcp_tool(
+            {
+                "action": "call",
+                "server_id": "mock-search",
+                "tool_name": "mock_search",
+                "arguments": '{"query":"release notes"}',
+            },
+            [server],
+            client,
+            {"mock-search": {"state": "configured", "tool_count": 1, "error": None}},
+        )
+
+        self.assertEqual(result["arguments"]["query"], "release notes")
+
+    def test_normalize_mcp_request_accepts_json_string_arguments(self) -> None:
+        request = normalize_mcp_request(
+            self._server_map(
+                MCPServerSpec(
+                    server_id="mock-search",
+                    transport="mock",
+                    backend_id="remote-mock",
+                    tools=[MCPToolSpec(name="mock_search", description="Mock search tool.")],
+                )
+            ),
+            {
+                "action": "call",
+                "server_id": "mock-search",
+                "tool_name": "mock_search",
+                "arguments": '{"query":"release notes"}',
+            },
+        )
+
+        self.assertEqual(request.arguments, {"query": "release notes"})
+
+    def test_normalize_mcp_request_infers_server_from_unique_tool_name(self) -> None:
+        request = normalize_mcp_request(
+            self._server_map(
+                MCPServerSpec(
+                    server_id="mock-search",
+                    transport="mock",
+                    backend_id="remote-mock",
+                    tools=[MCPToolSpec(name="mock_search", description="Mock search tool.")],
+                ),
+                MCPServerSpec(
+                    server_id="other-search",
+                    transport="mock",
+                    backend_id="remote-mock",
+                    tools=[MCPToolSpec(name="other_search", description="Other search tool.")],
+                ),
+            ),
+            {
+                "action": "call",
+                "tool_name": "mock_search",
+                "arguments": {"query": "release notes"},
+            },
+        )
+
+        self.assertEqual(request.server_id, "mock-search")
+
+    def test_normalize_mcp_request_infers_single_tool_name_on_server(self) -> None:
+        request = normalize_mcp_request(
+            self._server_map(
+                MCPServerSpec(
+                    server_id="mock-search",
+                    transport="mock",
+                    backend_id="remote-mock",
+                    tools=[MCPToolSpec(name="mock_search", description="Mock search tool.")],
+                )
+            ),
+            {
+                "action": "call",
+                "server_id": "mock-search",
+                "arguments": {"query": "release notes"},
+            },
+        )
+
+        self.assertEqual(request.tool_name, "mock_search")
+
+    def test_normalize_mcp_request_rejects_ambiguous_server_inference(self) -> None:
+        with self.assertRaisesRegex(ValueError, "server_id is required"):
+            normalize_mcp_request(
+                self._server_map(
+                    MCPServerSpec(
+                        server_id="mock-search",
+                        transport="mock",
+                        backend_id="remote-mock",
+                        tools=[MCPToolSpec(name="search_a", description="Search A.")],
+                    ),
+                    MCPServerSpec(
+                        server_id="other-search",
+                        transport="mock",
+                        backend_id="remote-mock",
+                        tools=[MCPToolSpec(name="search_b", description="Search B.")],
+                    ),
+                ),
+                {"query": "release notes"},
+            )
+
+    def test_normalize_mcp_request_rejects_ambiguous_tool_name_matches(self) -> None:
+        with self.assertRaisesRegex(ValueError, "ambiguous tool_name: mock_search"):
+            normalize_mcp_request(
+                self._server_map(
+                    MCPServerSpec(
+                        server_id="mock-search-a",
+                        transport="mock",
+                        backend_id="remote-mock",
+                        tools=[MCPToolSpec(name="mock_search", description="Search A.")],
+                    ),
+                    MCPServerSpec(
+                        server_id="mock-search-b",
+                        transport="mock",
+                        backend_id="remote-mock",
+                        tools=[MCPToolSpec(name="mock_search", description="Search B.")],
+                    ),
+                ),
+                {
+                    "action": "call",
+                    "tool_name": "mock_search",
+                    "arguments": {"query": "release notes"},
+                },
+            )
+
+    def _server_map(self, *servers: MCPServerSpec) -> dict[str, MCPServerSpec]:
+        return {server.server_id: server for server in servers}
 
     def test_runtime_can_call_real_stdio_mcp_tool(self) -> None:
         fixture = Path(__file__).parent / "fixtures" / "mcp_stdio_server.py"

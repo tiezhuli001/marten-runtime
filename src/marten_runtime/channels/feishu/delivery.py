@@ -76,6 +76,30 @@ class FeishuDeliveryClient:
         self._tenant_access_token_expire_at: float = 0.0
         self._delivered_keys: set[str] = set()
 
+    def add_reaction(self, message_id: str, emoji_type: str = "OnIt") -> dict[str, object]:
+        tenant_access_token = self._get_tenant_access_token()
+        base_url = self.env.get("FEISHU_BASE_URL", "https://open.feishu.cn").rstrip("/")
+        response = self.transport(
+            f"{base_url}/open-apis/im/v1/messages/{message_id}/reactions",
+            {
+                "Authorization": f"Bearer {tenant_access_token}",
+                "Content-Type": "application/json",
+            },
+            {
+                "reaction_type": {
+                    "emoji_type": emoji_type,
+                }
+            },
+        )
+        if response.get("code", 0) != 0:
+            raise RuntimeError(f"feishu_reaction_failed:{response.get('code')}:{response.get('msg', '')}")
+        logger.info("feishu_reaction action=add emoji_type=%s source_message_id=%s", emoji_type, message_id)
+        return {
+            "ok": True,
+            "message_id": message_id,
+            "emoji_type": emoji_type,
+        }
+
     def send(self, payload: FeishuDeliveryPayload) -> dict:
         tenant_access_token = self._get_tenant_access_token()
         base_url = self.env.get("FEISHU_BASE_URL", "https://open.feishu.cn").rstrip("/")
