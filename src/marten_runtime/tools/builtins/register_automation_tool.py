@@ -5,6 +5,7 @@ import re
 
 from marten_runtime.automation.store import AutomationStore
 from marten_runtime.data_access.adapter import DomainDataAdapter
+from marten_runtime.tools.builtins.automation_view import normalize_schedule_input, present_automation
 
 
 REQUIRED_FIELDS = (
@@ -72,19 +73,24 @@ def run_register_automation_tool(
         job = store.create_from_registration(values)
     return {
         "ok": True,
-        "automation_id": job.automation_id,
+        **present_automation(
+            {
+                "automation_id": job.automation_id,
+                "name": job.name,
+                "schedule_kind": job.schedule_kind,
+                "schedule_expr": job.schedule_expr,
+                "timezone": job.timezone,
+                "enabled": job.enabled,
+            }
+        ),
         "semantic_fingerprint": job.semantic_fingerprint,
-        "schedule_kind": job.schedule_kind,
-        "schedule_expr": job.schedule_expr,
-        "timezone": job.timezone,
-        "delivery_channel": job.delivery_channel,
-        "delivery_target": job.delivery_target,
-        "skill_id": job.skill_id,
     }
 
 
 def _normalize_payload(payload: dict, context: dict[str, str]) -> dict[str, object]:
     normalized = dict(payload)
+    if not str(normalized.get("name", "")).strip():
+        normalized["name"] = str(payload.get("task_name", "")).strip()
     if not str(normalized.get("skill_id", "")).strip():
         normalized["skill_id"] = str(payload.get("skill", "")).strip()
     normalized["app_id"] = _resolve_alias(
@@ -107,9 +113,10 @@ def _normalize_payload(payload: dict, context: dict[str, str]) -> dict[str, obje
         context.get("conversation_id", ""),
         {"current_channel", "current_chat", "current_conversation"},
     )
-    schedule_kind, schedule_expr = _normalize_schedule(
+    schedule_kind, schedule_expr = normalize_schedule_input(
         str(payload.get("schedule_kind", "")),
         str(payload.get("schedule_expr", "")),
+        trigger_time=str(payload.get("trigger_time", "")),
     )
     normalized["schedule_kind"] = schedule_kind
     normalized["schedule_expr"] = schedule_expr
@@ -125,18 +132,6 @@ def _resolve_alias(value: object, fallback: str, aliases: set[str]) -> str:
     if text.lower() in aliases:
         return fallback
     return text
-
-
-def _normalize_schedule(schedule_kind: str, schedule_expr: str) -> tuple[str, str]:
-    kind = schedule_kind.strip().lower()
-    expr = schedule_expr.strip()
-    daily_cron = re.fullmatch(r"(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+\*", expr)
-    if daily_cron is not None and kind in {"", "cron", "daily"}:
-        minute = int(daily_cron.group(1))
-        hour = int(daily_cron.group(2))
-        return "daily", f"{hour:02d}:{minute:02d}"
-    return kind or "daily", expr
-
 
 def _build_default_automation_id(normalized: dict[str, object]) -> str:
     skill_id = _slugify(str(normalized.get("skill_id", "")).strip() or "automation")

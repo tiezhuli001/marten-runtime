@@ -10,7 +10,7 @@ from marten_runtime.skills.models import SkillSpec
 from marten_runtime.skills.render import render_always_on_skills, render_skill_heads
 from marten_runtime.skills.snapshot import SkillSnapshot
 
-DEFAULT_SKILL_HEAD_MAX_CHARS = 1200
+DEFAULT_SKILL_HEAD_MAX_CHARS = 240
 DEFAULT_SKILL_HEAD_MAX_ITEMS = 24
 
 

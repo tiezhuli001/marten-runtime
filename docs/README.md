@@ -13,10 +13,11 @@ This directory contains the public design and operations notes for `marten-runti
 7. [2026-03-31-agent-domain-query-adapter-design.md](./2026-03-31-agent-domain-query-adapter-design.md)
 8. [2026-03-31-automation-domain-adapter-design.md](./2026-03-31-automation-domain-adapter-design.md)
 9. [2026-03-31-progressive-disclosure-llm-first-capability-design.md](./2026-03-31-progressive-disclosure-llm-first-capability-design.md)
-10. [plans/2026-04-01-bootstrap-assembly-hygiene-plan.md](./plans/2026-04-01-bootstrap-assembly-hygiene-plan.md)
-11. [CONFIG_SURFACES.md](./CONFIG_SURFACES.md)
-12. [LIVE_VERIFICATION_CHECKLIST.md](./LIVE_VERIFICATION_CHECKLIST.md)
-13. [archive/README.md](./archive/README.md)
+10. [2026-04-01-feishu-generic-card-protocol-design.md](./2026-04-01-feishu-generic-card-protocol-design.md)
+11. [plans/2026-04-01-bootstrap-assembly-hygiene-plan.md](./plans/2026-04-01-bootstrap-assembly-hygiene-plan.md)
+12. [CONFIG_SURFACES.md](./CONFIG_SURFACES.md)
+13. [LIVE_VERIFICATION_CHECKLIST.md](./LIVE_VERIFICATION_CHECKLIST.md)
+14. [archive/README.md](./archive/README.md)
 
 ## What Each File Is For
 
@@ -36,6 +37,8 @@ This directory contains the public design and operations notes for `marten-runti
   - design for moving the public automation resource layer onto the same thin adapter core without exposing scheduler internals or generic CRUD to the LLM
 - `2026-03-31-progressive-disclosure-llm-first-capability-design.md`
   - final design for shrinking capability exposure to skill summaries, capability catalog, and on-demand expansion
+- `2026-04-01-feishu-generic-card-protocol-design.md`
+  - current design for the Feishu-side minimal `feishu_card` protocol, generic renderer boundary, and LLM-first structured reply contract
 - `plans/2026-04-01-bootstrap-assembly-hygiene-plan.md`
   - current active cleanup follow-up plan for shrinking the `interfaces/http/bootstrap.py` assembly hotspot without changing runtime behavior
 - `CONFIG_SURFACES.md`
@@ -57,6 +60,8 @@ This directory contains the public design and operations notes for `marten-runti
 - the narrow self-improve loop is implemented: failure/recovery evidence persists in SQLite, candidate lessons are produced through a dedicated skill, accepted lessons are exported into runtime-managed `SYSTEM_LESSONS.md`
 - the first thin domain-query adapter slice is implemented for `self_improve`: the assistant can list candidate lessons, inspect candidate detail, read self-improve summary, and delete bad candidates without raw DB exposure
 - the automation resource layer is now adapter-backed as well: `list_automations`, `get_automation_detail`, `update_automation`, `delete_automation`, `pause_automation`, `resume_automation`, and the final write step of `register_automation` all converge on the same thin internal adapter while scheduler/trigger/dispatch stay in the automation subsystem
+- the Feishu message pipeline unification and generic renderer iterations are complete enough to move into archive; current Feishu source-of-truth is the generic-card design doc plus `ARCHITECTURE_CHANGELOG.md`
+- the current runtime latency breakdown slice is complete enough to move into archive; timing truth now lives in code, tests, and `ARCHITECTURE_CHANGELOG.md`
 - live Feishu validation has already confirmed the self-improve candidate query/delete path on the real runtime chain; use `last_run_id -> diagnostics/run -> trace_id -> diagnostics/trace` for correlation
 - stable architecture truth now lives in `docs/architecture/adr/` plus `docs/ARCHITECTURE_CHANGELOG.md`
 - `apps/example_assistant/SYSTEM_LESSONS.md` is a runtime-managed artifact and is intentionally ignored by git

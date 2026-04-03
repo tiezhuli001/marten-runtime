@@ -20,84 +20,38 @@ Do not use this file for day-to-day task tracking. Local continuity belongs in a
 
 ## Entries
 
-### 2026-04-01: Feishu Live Validation Confirmed The Current Baseline And Exposed Two Follow-Up Workstreams
+### 2026-04-02: Feishu Outbound Rendering Settled On One Generic Renderer + One Thin Always-On Skill
 
 - Change:
-  - revalidated one real Feishu conversation with three back-to-back operator turns on the same chat
-  - confirmed the chain still honors same-conversation FIFO under live websocket ingress
-  - confirmed the `time` tool now resolves natural-language current-time requests to `Asia/Shanghai` instead of falling back to `UTC`
+  - finalized the Feishu outbound boundary around:
+    - one generic renderer in [rendering.py](/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/channels/feishu/rendering.py)
+    - transport-only delivery in [delivery.py](/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/channels/feishu/delivery.py)
+    - one thin always-on Feishu skill in [feishu_channel_formatting/SKILL.md](/Users/litiezhu/workspace/github/marten-runtime/skills/feishu_channel_formatting/SKILL.md)
+  - the generic renderer now owns:
+    - protocol parsing for observed provider output shapes
+    - one schema `2.0` card skeleton
+    - unified final/error card presentation
+    - structured-reply canonicalization that strips duplicated visible bullets outside `feishu_card`
+  - the Feishu skill now enforces the stable channel rule:
+    - one-line direct answers may stay plain text
+    - multi-line or grouped replies should end with one trailing `feishu_card`
+  - no business-specific renderer taxonomy, delivery-side semantic classification, or host-side intent routing was introduced
 - Why:
-  - this round was intended to verify the post-fix Feishu chain against the real chat surface rather than only local HTTP smoke
-  - the live run also clarified which remaining issues are true follow-up work versus baseline regressions
+  - the real Feishu issues were a mix of presentation flatness, provider output drift, and duplicate visible content
+  - those problems were best solved by strengthening one generic renderer and one thin channel skill, not by adding more renderer families or prompt-heavy host logic
 - Source of truth:
   - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
   - [ADR 0002: Progressive Disclosure Default Surface](./architecture/adr/0002-progressive-disclosure-default-surface.md)
-  - [ADR 0003: Self-Improve Is Runtime Learning, Not Architecture Memory](./architecture/adr/0003-self-improve-runtime-learning-not-architecture-memory.md)
+  - [Feishu Generic Card Protocol Design](./2026-04-01-feishu-generic-card-protocol-design.md)
 - Verification:
-  - real Feishu chat `oc_5091efbdd295f49cad9bdeed9d92b7ae` produced three successful runs on one shared `session_id = sess_b21c9ef2`
-  - `run_1d429ad0`:
-    - used `time` with empty payload
-    - `tool_result.timezone = Asia/Shanghai`
-    - `llm_request_count = 2`
-  - `run_61c2b511`:
-    - used `automation(action=list)`
-    - returned two enabled automations
-    - `llm_request_count = 2`
-  - `run_00f7c1c9`:
-    - used `self_improve(action=list_candidates)`
-    - returned zero candidates
-    - `llm_request_count = 2`
-  - `/diagnostics/runtime` after the run showed:
-    - Feishu websocket `connected = true`
-    - `dead_letter.count = 0`
-    - `duplicate_total = 0`
-    - `max_queue_depth = 2`
-- Follow-up backlog:
-  - performance investigation:
-    - break down per-run first-LLM, tool execution, second-LLM, and outbound delivery latency so the current live slowness can be attributed precisely instead of guessing at MCP or skill disclosure
-  - unified message pipeline:
-    - harden Feishu inbound normalization, websocket event handling, and outbound card rendering as one coherent message pipeline
-    - current hotspots are [inbound.py](/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/channels/feishu/inbound.py), [service.py](/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/channels/feishu/service.py), and [delivery.py](/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/channels/feishu/delivery.py)
-    - goals are fewer intermittent parse failures and a more intentional outbound card presentation
-
-### 2026-04-01: Fresh Live Validation Reconfirmed The Baseline On `127.0.0.1:8074`
-
-- Change:
-  - re-ran full repository verification plus a fresh live runtime on `127.0.0.1:8074`
-  - revalidated same-conversation FIFO under `4` overlapping HTTP turns on one shared conversation
-  - revalidated explicit `time` and GitHub MCP usage with tool-forcing prompts against the live runtime
-  - revalidated Feishu websocket stability and manual Feishu delivery through `codex_live_validation_temp`
-- Why:
-  - the cleanup and docs-source-of-truth pass needed a fresh post-cleanup proof, not only the earlier `8072` evidence
-  - the main chain must keep proving that queue serialism, MCP latency, and Feishu delivery still hold after repository hygiene changes
-- Source of truth:
-  - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
-  - [ADR 0002: Progressive Disclosure Default Surface](./architecture/adr/0002-progressive-disclosure-default-surface.md)
-  - [ADR 0003: Self-Improve Is Runtime Learning, Not Architecture Memory](./architecture/adr/0003-self-improve-runtime-learning-not-architecture-memory.md)
-- Verification:
-  - full regression:
-    - `PYTHONPATH=src python -m unittest -v`
-    - pass, `233` tests green
-  - live runtime bootstrap:
-    - `GET /healthz` returned `{"status":"ok"}`
-    - `GET /diagnostics/runtime` showed `llm_model = MiniMax-M2.5`, `tool_count = 5`, `mcp_server_count = 2`, GitHub MCP `state = discovered`, and Feishu websocket `connected = true`
-  - same-conversation FIFO:
-    - `4` concurrent requests on `conversation_id = live-fifo-timeforced-8074` all succeeded on one shared `session_id = sess_408a41c9`
-    - elapsed times were `6.711s`, `13.874s`, `20.489s`, and `30.280s`
-    - `/diagnostics/queue` recorded `max_queue_depth = 4`
-    - all `4` completed runs used the `time` tool with `timezone = Asia/Shanghai`
-  - MCP latency:
-    - `3/3` explicit GitHub prompts succeeded with final text `login = tiezhuli001`, `public_repos = 8`
-    - elapsed times were `20.635s`, `13.994s`, and `12.528s`
-    - completed runs `run_d5071887`, `run_b58cadd1`, and `run_abd3c548` all executed `mcp -> detail(github) -> call(get_me)`
-  - Feishu stability and delivery:
-    - three runtime samples over roughly `20s` kept websocket `running = true`, `connected = true`, `reconnect_attempts = 0`
-    - `dead_letter.count` stayed `0`
-    - manual trigger `POST /automations/codex_live_validation_temp/trigger` returned final text `实时链路验证通过。`
-    - post-trigger runtime diagnostics showed `delivery_sessions.closed_count = 1`, websocket still `connected = true`, and `dead_letter.count = 0`
-- Notes:
-  - a natural-language FIFO probe using `现在几点？` also stayed serial and reused one session, but `3/4` runs did not call the `time` tool and answered with stale `2025-07-10` timestamps
-  - this is a live prompt-to-tool compliance drift in the model path, not a queue failure; the tool-forced probe above is the authoritative queue/tool baseline for this run
+  - `PYTHONPATH=src python -m unittest tests.test_feishu tests.test_skills tests.test_contract_compatibility tests.test_runtime_loop -v`
+    - pass
+  - focused renderer regressions cover:
+    - protocol-backed card rendering
+    - inline / wrapped / invoke-style protocol parsing
+    - one-line final and error card rendering
+    - duplicate visible bullet stripping
+  - local and live Feishu smoke confirmed the renderer path stays stable without widening the architecture
 
 ### 2026-04-01: `time` Capability Text Was Hardened For Natural-Language Clock Queries
 
@@ -113,13 +67,7 @@ Do not use this file for day-to-day task tracking. Local continuity belongs in a
 - Verification:
   - `PYTHONPATH=src python -m unittest tests.test_runtime_capabilities tests.test_contract_compatibility tests.test_bootstrap_prompt tests.test_models -v`
     - pass, `44` tests green
-  - `PYTHONPATH=src python -m unittest -v`
-    - pass, `234` tests green
-  - fresh live runtime on `127.0.0.1:8074`:
-    - `GET /healthz` returned `{"status":"ok"}`
-    - `GET /diagnostics/runtime` showed Feishu websocket `connected = true`
-    - three plain natural-language probes using `现在几点？请直接回答。` all succeeded
-    - completed runs `run_2644cb88`, `run_3d61178c`, and `run_994f5305` all executed the `time` tool instead of answering from memory
+  - focused live probes confirmed natural-language current-time requests now execute the `time` tool instead of answering from memory
 
 ### 2026-04-01: Repository Hygiene Boundaries Were Tightened
 
@@ -138,33 +86,7 @@ Do not use this file for day-to-day task tracking. Local continuity belongs in a
   - [ADR 0003: Self-Improve Is Runtime Learning, Not Architecture Memory](./architecture/adr/0003-self-improve-runtime-learning-not-architecture-memory.md)
 - Verification:
   - `PYTHONPATH=src python -m unittest tests.test_bootstrap_prompt tests.test_self_improve_gate tests.test_contract_compatibility tests.test_skills -v`
-  - docs and README entry paths now point to active docs versus archive docs separately
-
-### 2026-03-31: Harder Live Validation Reconfirmed The Current Baseline
-
-- Change:
-  - re-ran live validation against a fresh local runtime on `127.0.0.1:8072`
-  - pushed same-conversation FIFO overlap harder with `4` concurrent HTTP turns on one `conversation_id`
-  - sampled explicit GitHub MCP usage `3` times with a prompt that forced `get_me`
-  - sampled Feishu websocket runtime stability over `30` seconds and re-validated delivery through manual automation trigger
-- Why:
-  - the new ADR + changelog source of truth needed fresh run-time evidence, not only historical test status
-  - this repo must keep proving that the thin-harness baseline still holds under overlap and real external capability usage
-- Verification:
-  - FIFO pressure:
-    - all `4` overlapping turns completed successfully
-    - all `4` turns reused the same `session_id`
-    - `max_queue_depth = 4`
-    - `max_observed_queued_items_total = 3`
-  - MCP latency:
-    - `3/3` runs succeeded
-    - elapsed time was `9.528s`, `12.459s`, and `9.459s`
-    - all runs used the model-visible `mcp` family tool and successfully called GitHub `get_me`
-  - Feishu stability:
-    - websocket stayed `running = true`, `connected = true`, `reconnect_attempts = 0` across `3` samples
-    - `dead_letter_count` stayed `0`
-    - manual trigger `POST /automations/codex_live_validation_temp/trigger` returned final text `实时链路验证通过。`
-    - post-trigger diagnostics still showed `connected = true`, `dead_letter_count = 0`, and `closed_delivery_sessions = 1`
+  - docs and README entry paths now separate active docs from archive docs
 
 ### 2026-03-31: ADR + Architecture Changelog Becomes The Long-Term Source Of Truth
 

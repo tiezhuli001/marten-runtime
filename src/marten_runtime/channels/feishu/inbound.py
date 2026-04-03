@@ -19,7 +19,7 @@ def parse_feishu_callback(payload: dict) -> FeishuInboundEvent:
             chat_type=str(payload.get("chat_type") or ""),
             message_type=str(payload.get("message_type") or ""),
             mentions=_extract_mentions(payload.get("mentions")),
-            text=str(payload["text"]),
+            text=_extract_text(payload.get("text")),
         )
     header = payload.get("header", {})
     event = payload.get("event", {})
@@ -72,7 +72,7 @@ def to_inbound_envelope(event: FeishuInboundEvent) -> InboundEnvelope:
 
 def _extract_text(content: object) -> str:
     if isinstance(content, dict):
-        direct_text = str(content.get("text", ""))
+        direct_text = _extract_direct_text(content.get("text"))
         if direct_text:
             return direct_text
         rich_text = _extract_rich_text(content)
@@ -85,12 +85,20 @@ def _extract_text(content: object) -> str:
         except json.JSONDecodeError:
             return content
         if isinstance(decoded, dict):
-            direct_text = str(decoded.get("text", ""))
+            direct_text = _extract_direct_text(decoded.get("text"))
             if direct_text:
                 return direct_text
             rich_text = _extract_rich_text(decoded)
             if rich_text:
                 return rich_text
+    return ""
+
+
+def _extract_direct_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
     return ""
 
 

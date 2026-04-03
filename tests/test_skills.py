@@ -269,6 +269,35 @@ class SkillTests(unittest.TestCase):
             self.assertEqual(load_skill.call_count, 1)
             self.assertEqual(load_skill.call_args.args[0], "example_time")
 
+    def test_skill_service_runtime_prefers_compact_skill_heads_under_default_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            system = base / "skills"
+            for skill_id in ["alpha_skill", "beta_skill", "gamma_skill"]:
+                write_skill(
+                    system,
+                    skill_id,
+                    f"""
+                    ---
+                    skill_id: {skill_id}
+                    name: {skill_id}
+                    description: this is a deliberately long description for {skill_id} to force compact rendering in runtime startup payloads
+                    enabled: true
+                    agents: [assistant]
+                    channels: [http]
+                    ---
+                    Body for {skill_id}
+                    """,
+                )
+            service = SkillService([str(system)])
+
+            runtime = service.build_runtime(agent_id="assistant", channel_id="http", env={}, config={})
+
+            self.assertEqual(
+                runtime.skill_heads_text,
+                "Visible skills:\n- alpha_skill\n- beta_skill\n- gamma_skill",
+            )
+
     def test_render_skill_heads_uses_full_format_when_under_budget(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -545,6 +574,56 @@ class SkillTests(unittest.TestCase):
         self.assertIn("list_system_lessons", body)
         self.assertIn("repeated failures and later recoveries", body)
         self.assertIn("Do not edit AGENTS.md", body)
+
+    def test_feishu_channel_formatting_skill_is_repo_bundled_and_feishu_only(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        skill_path = repo_root / "skills/feishu_channel_formatting/SKILL.md"
+
+        self.assertTrue(skill_path.exists())
+        body = skill_path.read_text(encoding="utf-8")
+
+        self.assertIn("always_on: true", body)
+        self.assertIn("channels: [feishu]", body)
+        self.assertIn("Only a one-line direct answer may stay plain text", body)
+        self.assertIn("Everything else must end with one trailing `feishu_card`", body)
+        self.assertIn("2+ lines", body)
+        self.assertIn("2+ bullets", body)
+        self.assertIn("lists, grouped items, status summaries, checks, candidate sets, ranked results, or multi-record output", body)
+        self.assertIn("When you emit `feishu_card`, keep the visible answer to one short summary line", body)
+        self.assertIn("Do not keep any visible bullet list or second paragraph outside `feishu_card`", body)
+        self.assertIn("Do not repeat the same bullet list both in the visible text and in `feishu_card`", body)
+        self.assertIn("Never use Markdown tables, HTML, or code fences", body)
+        self.assertIn("Prefer 2-5 flat bullets", body)
+        self.assertIn("`**名称**｜状态：...｜时间：...`", body)
+        self.assertIn("Use `title`, `summary`, and `sections` only", body)
+        self.assertIn("Do not emit keys like `type`, `template`, `items`, or other alternate card schemas", body)
+        self.assertIn("If you are not confident you can produce valid JSON, do not emit `feishu_card`", body)
+        self.assertIn("Never mention raw field names like `delivery_target`, `skill_id`, `automation_id`, or `trace_id`", body)
+        self.assertIn('{"title":"任务概览","summary":"共 2 项","sections":[{"items":["', body)
+        self.assertIn("`sections[].items` must be plain strings", body)
+        self.assertIn("Do not expose internal ids", body)
+
+    def test_skill_service_includes_feishu_channel_formatting_only_for_feishu_runtime(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        service = SkillService([str(repo_root / "skills")])
+
+        feishu_runtime = service.build_runtime(
+            agent_id="assistant",
+            channel_id="feishu",
+            env={},
+            config={},
+        )
+        http_runtime = service.build_runtime(
+            agent_id="assistant",
+            channel_id="http",
+            env={},
+            config={},
+        )
+
+        self.assertIn("feishu_channel_formatting", feishu_runtime.snapshot.always_on_ids)
+        self.assertIn("Avoid Markdown tables", feishu_runtime.always_on_text or "")
+        self.assertNotIn("feishu_channel_formatting", http_runtime.snapshot.always_on_ids)
+        self.assertEqual(http_runtime.always_on_text, None)
 
 
 if __name__ == "__main__":

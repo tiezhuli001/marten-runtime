@@ -250,6 +250,8 @@ class ContractCompatibilityTests(unittest.TestCase):
         self.assertEqual(len(body["items"]), 2)
         self.assertIn("run_id", body["items"][0])
         self.assertIn("status", body["items"][0])
+        self.assertIn("timings", body["items"][0])
+        self.assertIn("total_ms", body["items"][0]["timings"])
 
     def test_plain_chat_turn_does_not_expose_full_tool_surface(self) -> None:
         app = build_test_app()
@@ -753,6 +755,11 @@ class ContractCompatibilityTests(unittest.TestCase):
         self.assertEqual(body["llm_request_count"], 2)
         self.assertEqual(len(body["tool_calls"]), 1)
         self.assertEqual(body["tool_calls"][0]["tool_name"], "automation")
+        self.assertIn("timings", body)
+        self.assertIn("llm_first_ms", body["timings"])
+        self.assertIn("tool_ms", body["timings"])
+        self.assertIn("llm_second_ms", body["timings"])
+        self.assertIn("total_ms", body["timings"])
 
     def test_runtime_diagnostics_expose_feishu_channel_hardening_signals(self) -> None:
         app = build_test_app()
@@ -833,6 +840,44 @@ class ContractCompatibilityTests(unittest.TestCase):
         self.assertIsNone(feishu["websocket"]["last_runtime_trace_id"])
         self.assertIsNone(feishu["websocket"]["last_session_id"])
         self.assertIsNone(feishu["websocket"]["last_run_id"])
+
+    def test_feishu_channel_messages_inject_feishu_always_on_skill_but_http_does_not(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        runtime.runtime_loop.llm = ScriptedLLMClient(
+            [
+                LLMReply(final_text="feishu ok"),
+                LLMReply(final_text="http ok"),
+            ]
+        )
+
+        with TestClient(app) as client:
+            feishu_response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "feishu",
+                    "user_id": "demo",
+                    "conversation_id": "feishu-skill-check",
+                    "message_id": "msg-feishu-skill",
+                    "body": "请简短回复我",
+                },
+            )
+            http_response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "http-skill-check",
+                    "message_id": "msg-http-skill",
+                    "body": "请简短回复我",
+                },
+            )
+
+        self.assertEqual(feishu_response.status_code, 200)
+        self.assertEqual(http_response.status_code, 200)
+        self.assertEqual(runtime.runtime_loop.llm.requests[0].always_on_skill_text is not None, True)
+        self.assertIn("Avoid Markdown tables", runtime.runtime_loop.llm.requests[0].always_on_skill_text or "")
+        self.assertEqual(runtime.runtime_loop.llm.requests[1].always_on_skill_text, None)
 
     def test_runtime_diagnostics_redact_feishu_websocket_endpoint_secrets(self) -> None:
         app = build_test_app()

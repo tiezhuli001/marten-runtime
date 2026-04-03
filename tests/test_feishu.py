@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from collections.abc import Mapping
+from unittest.mock import patch
 
 from lark_oapi.ws.const import (
     HEADER_MESSAGE_ID,
@@ -25,11 +26,17 @@ from marten_runtime.channels.delivery_retry import DeliveryRetryPolicy
 from marten_runtime.channels.receipts import InMemoryReceiptStore
 from marten_runtime.channels.feishu.delivery_session import InMemoryFeishuDeliverySessionStore
 from marten_runtime.channels.feishu.delivery import FeishuDeliveryClient, FeishuDeliveryPayload
+from marten_runtime.channels.feishu.rendering import (
+    FeishuCardProtocol,
+    parse_feishu_card_protocol,
+    render_final_reply_card,
+)
 from marten_runtime.channels.feishu.inbound import parse_feishu_callback, to_inbound_envelope
 from marten_runtime.channels.feishu.models import FeishuInboundEvent
 from marten_runtime.channels.feishu.models import FeishuWebsocketClientConfig, FeishuWebsocketEndpoint
 from marten_runtime.channels.feishu.service import FeishuWebsocketService
 from marten_runtime.gateway.dedupe import build_dedupe_key
+from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.lanes import ConversationLaneManager
 
 
@@ -126,6 +133,305 @@ class _FlakyDeliveryTransport:
 
 
 class FeishuTests(unittest.TestCase):
+    def test_parse_feishu_card_protocol_extracts_trailing_block(self) -> None:
+        visible, protocol = parse_feishu_card_protocol(
+            "当前有 2 个任务。\n\n```feishu_card\n"
+            '{"title":"任务","summary":"共 2 项","sections":[{"items":["A","B"]}]}\n'
+            "```"
+        )
+
+        self.assertEqual(visible, "当前有 2 个任务。")
+        self.assertIsInstance(protocol, FeishuCardProtocol)
+        self.assertEqual(protocol.title, "任务")
+        self.assertEqual(protocol.summary, "共 2 项")
+        self.assertEqual(protocol.sections[0].items, ["A", "B"])
+
+    def test_parse_feishu_card_protocol_rejects_unsupported_keys(self) -> None:
+        visible, protocol = parse_feishu_card_protocol(
+            '检查结果。\n\n```feishu_card\n{"title":"ok","actions":[1]}\n```'
+        )
+
+        self.assertEqual(visible, '检查结果。\n\n```feishu_card\n{"title":"ok","actions":[1]}\n```')
+        self.assertEqual(protocol, None)
+
+    def test_parse_feishu_card_protocol_accepts_provider_style_invoke_block(self) -> None:
+        visible, protocol = parse_feishu_card_protocol(
+            "当前有 **2 个定时任务**：\n\n"
+            "- **GitHub热榜推荐**：每天 22:20｜已启用\n"
+            "- **GitHub热榜推荐**：每天 22:30｜已启用\n\n"
+            "<invoke name=\"feishu_card\">\n"
+            "<parameter name=\"title\">定时任务概览</parameter>\n"
+            "<parameter name=\"summary\">当前共 2 个定时任务</parameter>\n"
+            "<parameter name=\"sections\">[{\"title\": \"任务列表\", \"items\": [\"GitHub热榜推荐：每天 22:20｜已启用\", \"GitHub热榜推荐：每天 22:30｜已启用\"]}]</parameter>\n"
+            "</invoke>"
+        )
+
+        self.assertEqual(
+            visible,
+            "当前有 **2 个定时任务**：\n\n- **GitHub热榜推荐**：每天 22:20｜已启用\n- **GitHub热榜推荐**：每天 22:30｜已启用",
+        )
+        self.assertIsInstance(protocol, FeishuCardProtocol)
+        self.assertEqual(protocol.title, "定时任务概览")
+        self.assertEqual(protocol.summary, "当前共 2 个定时任务")
+        self.assertEqual(protocol.sections[0].title, "任务列表")
+        self.assertEqual(
+            protocol.sections[0].items,
+            ["GitHub热榜推荐：每天 22:20｜已启用", "GitHub热榜推荐：每天 22:30｜已启用"],
+        )
+
+    def test_parse_feishu_card_protocol_accepts_provider_invoke_block_with_trailing_closer(self) -> None:
+        visible, protocol = parse_feishu_card_protocol(
+            "当前共有 **2 个定时任务**。\n\n"
+            "<invoke name=\"feishu_card\">\n"
+            "<parameter name=\"title\">定时任务列表</parameter>\n"
+            "<parameter name=\"summary\">共 2 项</parameter>\n"
+            "<parameter name=\"sections\">[{\"items\": [\"GitHub热榜推荐｜已启用｜22:20\", \"GitHub热榜推荐｜已启用｜22:30\"]}]</parameter>\n"
+            "</invoke>\n"
+            "</minimax:tool_call>"
+        )
+
+        self.assertEqual(visible, "当前共有 **2 个定时任务**。")
+        self.assertIsInstance(protocol, FeishuCardProtocol)
+        self.assertEqual(protocol.title, "定时任务列表")
+        self.assertEqual(protocol.summary, "共 2 项")
+        self.assertEqual(
+            protocol.sections[0].items,
+            ["GitHub热榜推荐｜已启用｜22:20", "GitHub热榜推荐｜已启用｜22:30"],
+        )
+
+    def test_parse_feishu_card_protocol_accepts_bare_marker_plus_json_suffix(self) -> None:
+        visible, protocol = parse_feishu_card_protocol(
+            "当前有 **2 个定时任务**：\n\n"
+            "- **GitHub热榜推荐**：每天 22:20｜已启用\n"
+            "- **GitHub热榜推荐**：每天 22:30｜已启用\n\n"
+            "feishu_card\n"
+            "{\"title\":\"定时任务列表\",\"sections\":[{\"title\":\"任务\",\"items\":[\"GitHub热榜推荐：每天 22:20｜已启用\",\"GitHub热榜推荐：每天 22:30｜已启用\"]}]}"
+        )
+
+        self.assertEqual(
+            visible,
+            "当前有 **2 个定时任务**：\n\n- **GitHub热榜推荐**：每天 22:20｜已启用\n- **GitHub热榜推荐**：每天 22:30｜已启用",
+        )
+        self.assertIsInstance(protocol, FeishuCardProtocol)
+        self.assertEqual(protocol.title, "定时任务列表")
+        self.assertEqual(protocol.sections[0].title, "任务")
+        self.assertEqual(
+            protocol.sections[0].items,
+            ["GitHub热榜推荐：每天 22:20｜已启用", "GitHub热榜推荐：每天 22:30｜已启用"],
+        )
+
+    def test_parse_feishu_card_protocol_accepts_json_fenced_wrapper_object(self) -> None:
+        visible, protocol = parse_feishu_card_protocol(
+            "当前共有 **2 个定时任务**。\n\n"
+            "```json\n"
+            '{"feishu_card":{"title":"定时任务列表","summary":"当前共 2 个定时任务","sections":[{"items":["任务1：GitHub热榜推荐 - 每天 22:20（启用）","任务2：GitHub热榜推荐 - 每天 22:30（启用）"]}]}}\n'
+            "```"
+        )
+
+        self.assertEqual(visible, "当前共有 **2 个定时任务**。")
+        self.assertIsInstance(protocol, FeishuCardProtocol)
+        self.assertEqual(protocol.title, "定时任务列表")
+        self.assertEqual(protocol.summary, "当前共 2 个定时任务")
+        self.assertEqual(
+            protocol.sections[0].items,
+            ["任务1：GitHub热榜推荐 - 每天 22:20（启用）", "任务2：GitHub热榜推荐 - 每天 22:30（启用）"],
+        )
+
+    def test_parse_feishu_card_protocol_accepts_bare_marker_then_fenced_json(self) -> None:
+        visible, protocol = parse_feishu_card_protocol(
+            "当前共有 **2 个自动任务**。\n\n"
+            "feishu_card\n"
+            "```json\n"
+            '{"title":"自动任务概览","summary":"共 2 个定时任务","sections":[{"items":["GitHub热榜推荐｜每天 22:20｜已启用","GitHub热榜推荐｜每天 22:30｜已启用"]}]}\n'
+            "```"
+        )
+
+        self.assertEqual(visible, "当前共有 **2 个自动任务**。")
+        self.assertIsInstance(protocol, FeishuCardProtocol)
+        self.assertEqual(protocol.title, "自动任务概览")
+        self.assertEqual(protocol.summary, "共 2 个定时任务")
+        self.assertEqual(
+            protocol.sections[0].items,
+            ["GitHub热榜推荐｜每天 22:20｜已启用", "GitHub热榜推荐｜每天 22:30｜已启用"],
+        )
+
+    def test_parse_feishu_card_protocol_accepts_bare_trailing_protocol_json(self) -> None:
+        visible, protocol = parse_feishu_card_protocol(
+            "当前共有 2 个自动任务，都是 GitHub 热榜推荐。\n\n"
+            '{"title":"自动任务概览","summary":"共 2 项","sections":[{"items":["GitHub热榜推荐｜已启用｜22:20","GitHub热榜推荐｜已启用｜22:30"]}]}'
+        )
+
+        self.assertEqual(visible, "当前共有 2 个自动任务，都是 GitHub 热榜推荐。")
+        self.assertIsInstance(protocol, FeishuCardProtocol)
+        self.assertEqual(protocol.title, "自动任务概览")
+        self.assertEqual(protocol.summary, "共 2 项")
+        self.assertEqual(
+            protocol.sections[0].items,
+            ["GitHub热榜推荐｜已启用｜22:20", "GitHub热榜推荐｜已启用｜22:30"],
+        )
+
+    def test_parse_feishu_card_protocol_accepts_inline_trailing_protocol_json(self) -> None:
+        visible, protocol = parse_feishu_card_protocol(
+            "当前共有 **3 个定时任务**，都是 GitHub 热门仓库推送：\n\n"
+            "- **GitHub热榜推荐**｜22:20｜已启用\n"
+            "- **GitHub Top10**｜22:00｜已启用\n"
+            "- **GitHub热榜推荐**｜22:30｜已启用\n\n"
+            "均推送到同一个飞书会话。"
+            '{"title":"定时任务概览","summary":"共 3 项","sections":[{"items":["GitHub热榜推荐｜22:20｜已启用","GitHub Top10｜22:00｜已启用","GitHub热榜推荐｜22:30｜已启用"]}]}'
+        )
+
+        self.assertEqual(
+            visible,
+            "当前共有 **3 个定时任务**，都是 GitHub 热门仓库推送：\n\n"
+            "- **GitHub热榜推荐**｜22:20｜已启用\n"
+            "- **GitHub Top10**｜22:00｜已启用\n"
+            "- **GitHub热榜推荐**｜22:30｜已启用\n\n"
+            "均推送到同一个飞书会话。",
+        )
+        self.assertIsInstance(protocol, FeishuCardProtocol)
+        self.assertEqual(protocol.title, "定时任务概览")
+        self.assertEqual(protocol.summary, "共 3 项")
+
+    def test_render_final_reply_card_strips_inline_trailing_protocol_json(self) -> None:
+        card = render_final_reply_card(
+            "当前共有 **3 个定时任务**，都是 GitHub 热门仓库推送：\n\n"
+            "- **GitHub热榜推荐**｜22:20｜已启用\n"
+            "- **GitHub Top10**｜22:00｜已启用\n"
+            "- **GitHub热榜推荐**｜22:30｜已启用\n\n"
+            "均推送到同一个飞书会话。"
+            '{"title":"定时任务概览","summary":"共 3 项","sections":[{"items":["GitHub热榜推荐｜22:20｜已启用","GitHub Top10｜22:00｜已启用","GitHub热榜推荐｜22:30｜已启用"]}]}'
+        )
+
+        self.assertEqual(card["schema"], "2.0")
+        self.assertEqual(card["header"]["title"]["content"], "定时任务概览")
+        self.assertEqual(card["header"]["template"], "indigo")
+        elements = card["body"]["elements"]
+        self.assertEqual(
+            elements[0]["content"],
+            "当前共有 **3 个定时任务**，都是 GitHub 热门仓库推送：\n\n均推送到同一个飞书会话。",
+        )
+        self.assertEqual(elements[1]["tag"], "hr")
+        self.assertEqual(elements[2]["content"], "**📌 共 3 项**")
+        self.assertEqual(
+            elements[3]["content"],
+            "**🗂️ 详情**",
+        )
+        self.assertEqual(
+            elements[4]["content"],
+            "- GitHub热榜推荐｜22:20｜已启用\n- GitHub Top10｜22:00｜已启用\n- GitHub热榜推荐｜22:30｜已启用",
+        )
+
+    def test_render_final_reply_card_uses_generic_visual_slot_order(self) -> None:
+        card = render_final_reply_card(
+            "当前有 2 个任务。\n\n```feishu_card\n"
+            '{"title":"启用中的任务","summary":"共 2 项","sections":[{"title":"任务列表","items":["日报同步：每天 22:20","失败样本回看：每 6 小时"]}]}\n'
+            "```"
+        )
+
+        self.assertEqual(card["schema"], "2.0")
+        self.assertEqual(card["header"]["title"]["content"], "启用中的任务")
+        self.assertEqual(card["header"]["template"], "indigo")
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "当前有 2 个任务。")
+        self.assertEqual(elements[1]["tag"], "hr")
+        self.assertEqual(elements[2]["content"], "**📌 共 2 项**")
+        self.assertEqual(elements[3]["content"], "**🗂️ 任务列表**")
+        self.assertEqual(elements[4]["content"], "- 日报同步：每天 22:20\n- 失败样本回看：每 6 小时")
+
+    def test_render_final_reply_card_deduplicates_visible_bullets_when_protocol_present(self) -> None:
+        card = render_final_reply_card(
+            "当前共有 **3 个定时任务**，都是 GitHub 热门仓库推送：\n\n"
+            "- **GitHub热榜推荐**｜22:20｜已启用\n"
+            "- **GitHub Top10**｜22:00｜已启用\n"
+            "- **GitHub热榜推荐**｜22:30｜已启用\n\n"
+            '{"title":"定时任务概览","summary":"共 3 项","sections":[{"items":["GitHub热榜推荐｜22:20｜已启用","GitHub Top10｜22:00｜已启用","GitHub热榜推荐｜22:30｜已启用"]}]}'
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "定时任务概览")
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "当前共有 **3 个定时任务**，都是 GitHub 热门仓库推送：")
+        self.assertEqual(elements[2]["content"], "**📌 共 3 项**")
+        self.assertEqual(
+            elements[4]["content"],
+            "- GitHub热榜推荐｜22:20｜已启用\n- GitHub Top10｜22:00｜已启用\n- GitHub热榜推荐｜22:30｜已启用",
+        )
+
+    def test_render_final_reply_card_strips_visible_bullets_when_protocol_items_are_compacted(self) -> None:
+        card = render_final_reply_card(
+            "当前共有 **4 个定时任务**，均为 GitHub 热榜相关的每日推送：\n\n"
+            "- **GitHub热榜推荐**｜每天 22:20｜已启用\n"
+            "- **GitHub Top10**｜每天 21:10｜已启用\n"
+            "- **GitHub Top10**｜每天 22:00｜已启用\n"
+            "- **GitHub热榜推荐**｜每天 22:30｜已启用\n\n"
+            '{"title":"定时任务概览","summary":"共 4 项","sections":[{"items":["GitHub热榜推荐｜22:20","GitHub Top10｜21:10","GitHub Top10｜22:00","GitHub热榜推荐｜22:30"]}]}'
+        )
+
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "当前共有 **4 个定时任务**，均为 GitHub 热榜相关的每日推送：")
+        self.assertEqual(elements[1]["tag"], "hr")
+        self.assertEqual(elements[2]["content"], "**📌 共 4 项**")
+        self.assertEqual(elements[3]["content"], "**🗂️ 详情**")
+        self.assertEqual(
+            elements[4]["content"],
+            "- GitHub热榜推荐｜22:20\n- GitHub Top10｜21:10\n- GitHub Top10｜22:00\n- GitHub热榜推荐｜22:30",
+        )
+
+    def test_render_final_reply_card_derives_generic_structure_from_plain_bullets(self) -> None:
+        card = render_final_reply_card(
+            "当前共有 **2 个定时任务**，都是 GitHub 热榜推荐：\n\n"
+            "- **GitHub热榜推荐**｜22:20｜每天｜已启用\n"
+            "- **GitHub热榜推荐**｜22:30｜每天｜已启用\n\n"
+            "两者都推送到同一个飞书会话。"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "当前共有 2 个定时任务")
+        self.assertEqual(card["header"]["template"], "indigo")
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "**📌 都是 GitHub 热榜推荐**")
+        self.assertEqual(
+            elements[1]["content"],
+            "**🗂️ 详情**",
+        )
+        self.assertEqual(
+            elements[2]["content"],
+            "- **GitHub热榜推荐**｜22:20｜每天｜已启用\n- **GitHub热榜推荐**｜22:30｜每天｜已启用",
+        )
+        self.assertEqual(elements[3]["tag"], "hr")
+        self.assertEqual(elements[4]["content"], "<font color='grey'>💬 两者都推送到同一个飞书会话。</font>")
+
+    def test_delivery_final_rendering_delegates_to_generic_renderer(self) -> None:
+        captured: list[tuple[str, dict[str, str], dict]] = []
+
+        def fake_post(url: str, headers: dict[str, str], body: dict) -> dict:
+            captured.append((url, headers, body))
+            if url.endswith("/open-apis/auth/v3/tenant_access_token/internal"):
+                return {"code": 0, "tenant_access_token": "tenant-token", "expire": 7200}
+            return {"code": 0, "data": {"message_id": "om_message_delegate"}}
+
+        client = FeishuDeliveryClient(
+            env={"FEISHU_APP_ID": "app-id", "FEISHU_APP_SECRET": "app-secret"},
+            transport=fake_post,
+        )
+        payload = FeishuDeliveryPayload(
+            chat_id="chat_delegate_1",
+            event_type="final",
+            event_id="evt_delegate_1",
+            run_id="run_delegate_1",
+            trace_id="trace_delegate_1",
+            sequence=1,
+            text="委托测试",
+        )
+
+        with patch(
+            "marten_runtime.channels.feishu.delivery.feishu_rendering.render_final_reply_card",
+            return_value={"config": {"wide_screen_mode": True}, "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": "delegated"}}]},
+        ) as render_mock:
+            client.send(payload)
+
+        render_mock.assert_called_once_with("委托测试", event_type="final")
+        card = json.loads(captured[1][2]["content"])
+        self.assertEqual(card["elements"][0]["text"]["content"], "delegated")
+
     def test_feishu_same_chat_overlap_is_queued_without_busy_reply(self) -> None:
         delivery = _FakeDeliveryClient()
         calls: list[str] = []
@@ -594,6 +900,73 @@ class FeishuTests(unittest.TestCase):
         self.assertEqual(event.message_type, "post")
         self.assertEqual(event.text, "@铁锤4916 现在几点？请直接回答。")
 
+    def test_websocket_post_payload_with_null_text_falls_back_to_rich_text(self) -> None:
+        payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_ws_post_null_text_1",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {
+                        "user_id": "user_post_null_text_1",
+                    }
+                },
+                "message": {
+                    "message_id": "msg_ws_post_null_text_1",
+                    "chat_id": "chat_post_null_text_1",
+                    "chat_type": "group",
+                    "message_type": "post",
+                    "content": json.dumps(
+                        {
+                            "text": None,
+                            "zh_cn": {
+                                "title": "",
+                                "content": [
+                                    [
+                                        {"tag": "at", "user_id": "bot_open_id", "user_name": "铁锤4916"},
+                                        {"tag": "text", "text": "现在几点？"},
+                                    ]
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            },
+        }
+
+        event = parse_feishu_callback(payload)
+
+        self.assertEqual(event.message_type, "post")
+        self.assertEqual(event.text, "@铁锤4916现在几点？")
+
+    def test_callback_payload_with_null_text_dict_falls_back_to_rich_text(self) -> None:
+        payload = {
+            "event_id": "evt_simple_null_text_1",
+            "message_id": "msg_simple_null_text_1",
+            "chat_id": "chat_simple_null_text_1",
+            "user_id": "user_simple_null_text_1",
+            "message_type": "post",
+            "text": {
+                "text": None,
+                "content": [
+                    [
+                        {"tag": "text", "text": "hello"},
+                        {"tag": "unknown", "value": "ignored"},
+                        {"tag": "at", "user_name": "bot"},
+                    ]
+                ],
+            },
+        }
+
+        event = parse_feishu_callback(payload)
+
+        self.assertEqual(event.message_type, "post")
+        self.assertEqual(event.text, "hello@bot")
+
     def test_feishu_envelope_routes_to_bound_agent_when_mention_required_is_met(self) -> None:
         payload = {
             "schema": "2.0",
@@ -686,11 +1059,111 @@ class FeishuTests(unittest.TestCase):
         self.assertEqual(captured[1][1]["Authorization"], "Bearer tenant-token")
         self.assertEqual(captured[1][2]["msg_type"], "interactive")
         card = json.loads(captured[1][2]["content"])
-        card_text = card["elements"][0]["text"]["content"]
+        self.assertEqual(card["schema"], "2.0")
+        self.assertEqual(card["header"]["title"]["content"], "处理结果")
+        self.assertEqual(card["header"]["template"], "indigo")
+        card_text = card["body"]["elements"][0]["content"]
         self.assertEqual(card_text, "Your GitHub login is **tiezhuli001**.")
         self.assertNotIn("run_id=", card_text)
         self.assertNotIn("trace_id=", card_text)
         self.assertNotIn("event_id=", card_text)
+
+    def test_final_delivery_payload_renders_generic_card_protocol_when_present(self) -> None:
+        captured: list[tuple[str, dict[str, str], dict]] = []
+
+        def fake_post(url: str, headers: dict[str, str], body: dict) -> dict:
+            captured.append((url, headers, body))
+            if url.endswith("/open-apis/auth/v3/tenant_access_token/internal"):
+                return {
+                    "code": 0,
+                    "tenant_access_token": "tenant-token",
+                    "expire": 7200,
+                }
+            return {
+                "code": 0,
+                "data": {
+                    "message_id": "om_message_2",
+                },
+            }
+
+        client = FeishuDeliveryClient(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            transport=fake_post,
+        )
+        payload = FeishuDeliveryPayload(
+            chat_id="chat_card_1",
+            event_type="final",
+            event_id="evt_card_1",
+            run_id="run_card_1",
+            trace_id="trace_card_1",
+            sequence=1,
+            text=(
+                "当前有 2 个启用中的任务。\n\n"
+                "```feishu_card\n"
+                '{"title":"启用中的任务","summary":"共 2 项","sections":[{"title":"任务列表","items":["日报同步：每天 22:20","失败样本回看：每 6 小时"]}]}\n'
+                "```"
+            ),
+        )
+
+        result = client.send(payload)
+
+        self.assertTrue(result["ok"])
+        card = json.loads(captured[1][2]["content"])
+        elements = card["body"]["elements"]
+        self.assertEqual(card["schema"], "2.0")
+        self.assertEqual(card["header"]["title"]["content"], "启用中的任务")
+        self.assertEqual(card["header"]["template"], "indigo")
+        self.assertEqual(elements[0]["content"], "当前有 2 个启用中的任务。")
+        self.assertEqual(elements[2]["content"], "**📌 共 2 项**")
+        self.assertEqual(elements[3]["content"], "**🗂️ 任务列表**")
+        self.assertIn("日报同步：每天 22:20", elements[4]["content"])
+        self.assertIn("失败样本回看：每 6 小时", elements[4]["content"])
+        self.assertNotIn("```feishu_card", json.dumps(card, ensure_ascii=False))
+
+    def test_final_delivery_payload_falls_back_when_card_protocol_is_invalid(self) -> None:
+        captured: list[tuple[str, dict[str, str], dict]] = []
+
+        def fake_post(url: str, headers: dict[str, str], body: dict) -> dict:
+            captured.append((url, headers, body))
+            if url.endswith("/open-apis/auth/v3/tenant_access_token/internal"):
+                return {
+                    "code": 0,
+                    "tenant_access_token": "tenant-token",
+                    "expire": 7200,
+                }
+            return {
+                "code": 0,
+                "data": {
+                    "message_id": "om_message_3",
+                },
+            }
+
+        client = FeishuDeliveryClient(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            transport=fake_post,
+        )
+        payload = FeishuDeliveryPayload(
+            chat_id="chat_card_2",
+            event_type="final",
+            event_id="evt_card_2",
+            run_id="run_card_2",
+            trace_id="trace_card_2",
+            sequence=1,
+            text='检查结果如下。\n\n```feishu_card\n{"title":["bad type"]}\n```',
+        )
+
+        result = client.send(payload)
+
+        self.assertTrue(result["ok"])
+        card = json.loads(captured[1][2]["content"])
+        self.assertEqual(card["schema"], "2.0")
+        self.assertEqual(card["body"]["elements"][0]["content"], '检查结果如下。\n\n```feishu_card\n{"title":["bad type"]}\n```')
 
     def test_websocket_service_uses_app_credentials_to_get_endpoint(self) -> None:
         captured: list[tuple[str, dict[str, str], dict[str, str]]] = []
@@ -1606,6 +2079,70 @@ class FeishuTests(unittest.TestCase):
         self.assertEqual(transport.sent[0][2]["msg_type"], "interactive")
         self.assertEqual(sessions.active_count(), 0)
 
+    def test_websocket_service_records_outbound_timing_for_visible_delivery_only(self) -> None:
+        history = InMemoryRunHistory()
+        run = history.start(
+            session_id="sess_outbound",
+            trace_id="trace_outbound",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_example",
+        )
+
+        class _TimingAwareDeliveryClient:
+            def deliver(self, payload: FeishuDeliveryPayload) -> dict[str, object]:
+                if payload.event_type == "progress":
+                    return {"ok": True, "action": "skip"}
+                return {"ok": True, "action": "send"}
+
+        service = FeishuWebsocketService(
+            receipt_store=InMemoryReceiptStore(),
+            runtime_handler=lambda envelope: {"status": "accepted", "events": []},
+            delivery_client=_TimingAwareDeliveryClient(),
+            run_history=history,
+        )
+        event = FeishuInboundEvent(
+            event_id="evt_outbound",
+            message_id="msg_outbound",
+            chat_id="chat_outbound",
+            user_id="user_outbound",
+            text="hello",
+        )
+        envelope = to_inbound_envelope(event)
+        body = {
+            "events": [
+                {
+                    "event_type": "progress",
+                    "event_id": "evt_progress",
+                    "run_id": run.run_id,
+                    "trace_id": run.trace_id,
+                    "sequence": 1,
+                    "payload": {"text": "running"},
+                },
+                {
+                    "event_type": "final",
+                    "event_id": "evt_final",
+                    "run_id": run.run_id,
+                    "trace_id": run.trace_id,
+                    "sequence": 2,
+                    "payload": {"text": "done"},
+                },
+            ]
+        }
+
+        with patch(
+            "marten_runtime.channels.feishu.service.time.perf_counter",
+            side_effect=[10.0, 11.0, 11.2],
+        ):
+            _, delivery_results = service._deliver_runtime_events(
+                event=event,
+                envelope=envelope,
+                body=body,
+            )
+
+        self.assertEqual(len(delivery_results), 2)
+        self.assertEqual(history.get(run.run_id).timings.outbound_ms, 199)
+        self.assertEqual(history.get(run.run_id).timings.total_ms, 199)
+
     def test_automation_final_delivery_suppresses_duplicate_window(self) -> None:
         transport = _RecordingDeliveryTransport()
         client = FeishuDeliveryClient(
@@ -1700,6 +2237,11 @@ class FeishuTests(unittest.TestCase):
         self.assertEqual(error_result["action"], "send")
         self.assertEqual(len(transport.sent), 1)
         self.assertEqual(len(transport.updated), 0)
+        self.assertEqual(transport.sent[0][2]["msg_type"], "interactive")
+        error_card = json.loads(transport.sent[0][2]["content"])
+        self.assertEqual(error_card["header"]["title"]["content"], "处理失败")
+        self.assertEqual(error_card["header"]["template"], "red")
+        self.assertEqual(error_card["body"]["elements"][0]["content"], "failed")
         self.assertEqual(sessions.active_count(), 0)
 
     def test_hidden_progress_does_not_hit_transport_or_dead_letter(self) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from marten_runtime.data_access.adapter import DomainDataAdapter
+from marten_runtime.tools.builtins.automation_view import present_automation
 
 
 def run_list_automations_tool(payload: dict, adapter: DomainDataAdapter) -> dict:
@@ -15,4 +16,5 @@ def run_list_automations_tool(payload: dict, adapter: DomainDataAdapter) -> dict
     if include_disabled:
         filters["include_disabled"] = True
     items = adapter.list_items("automation", filters=filters, limit=100)
-    return {"ok": True, "items": items, "count": len(items)}
+    presented = [present_automation(item) for item in items]
+    return {"ok": True, "items": presented, "count": len(presented)}

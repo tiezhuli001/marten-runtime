@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from marten_runtime.automation.sqlite_store import SQLiteAutomationStore
 from marten_runtime.automation.store import AutomationStore
@@ -55,7 +56,11 @@ class RuntimeLoopTests(unittest.TestCase):
         llm = ScriptedLLMClient([LLMReply(final_text="hello")])
         runtime = RuntimeLoop(llm, tools, history)
 
-        events = runtime.run(session_id="sess_1", message="hello", trace_id="trace_plain")
+        with patch(
+            "marten_runtime.runtime.loop.time.perf_counter",
+            side_effect=[10.0, 11.0, 11.12, 11.25, 11.25],
+        ):
+            events = runtime.run(session_id="sess_1", message="hello", trace_id="trace_plain")
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
         self.assertEqual(events[0].trace_id, "trace_plain")
@@ -67,6 +72,10 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(run.trace_id, "trace_plain")
         self.assertEqual(run.status, "succeeded")
         self.assertEqual(run.delivery_status, "final")
+        self.assertEqual(run.timings.llm_first_ms, 119)
+        self.assertEqual(run.timings.tool_ms, 0)
+        self.assertEqual(run.timings.llm_second_ms, 0)
+        self.assertEqual(run.timings.total_ms, 1250)
 
     def test_runtime_passes_system_prompt_to_llm_request(self) -> None:
         tools = ToolRegistry()
@@ -160,14 +169,23 @@ class RuntimeLoopTests(unittest.TestCase):
             allowed_tools=["time"],
         )
 
-        events = runtime.run(session_id="sess_1", message="tell me now", trace_id="trace_tool", agent=agent)
+        with patch(
+            "marten_runtime.runtime.loop.time.perf_counter",
+            side_effect=[10.0, 11.0, 11.1, 11.2, 11.34, 12.0, 12.17, 12.5, 12.5],
+        ):
+            events = runtime.run(session_id="sess_1", message="tell me now", trace_id="trace_tool", agent=agent)
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
         self.assertEqual(events[0].run_id, events[1].run_id)
         self.assertEqual(events[1].payload["text"], "time=ok")
         self.assertEqual(llm.requests[0].available_tools, ["time"])
         self.assertIn("time", llm.requests[0].tool_snapshot.builtin_tools)
-        self.assertEqual(history.get(events[0].run_id).tool_snapshot_id, llm.requests[0].tool_snapshot.tool_snapshot_id)
+        run = history.get(events[0].run_id)
+        self.assertEqual(run.tool_snapshot_id, llm.requests[0].tool_snapshot.tool_snapshot_id)
+        self.assertEqual(run.timings.llm_first_ms, 99)
+        self.assertEqual(run.timings.tool_ms, 140)
+        self.assertEqual(run.timings.llm_second_ms, 169)
+        self.assertEqual(run.timings.total_ms, 2500)
 
     def test_runtime_supports_multi_step_tool_loop_before_final(self) -> None:
         tools = ToolRegistry()
@@ -218,6 +236,24 @@ class RuntimeLoopTests(unittest.TestCase):
         run = history.get(events[0].run_id)
         self.assertEqual(run.status, "failed")
         self.assertEqual(run.error_code, "TOOL_NOT_ALLOWED")
+
+    def test_runtime_failure_paths_finalize_total_timing(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = FailingLLMClient()
+        runtime = RuntimeLoop(llm, tools, history)
+
+        with patch(
+            "marten_runtime.runtime.loop.time.perf_counter",
+            side_effect=[10.0, 11.0, 11.3, 11.7],
+        ):
+            events = runtime.run(session_id="sess_fail", message="hello", trace_id="trace_fail")
+
+        self.assertEqual([event.event_type for event in events], ["progress", "error"])
+        run = history.get(events[0].run_id)
+        self.assertEqual(run.status, "failed")
+        self.assertGreaterEqual(run.timings.llm_first_ms, 299)
+        self.assertEqual(run.timings.total_ms, 1699)
 
     def test_runtime_distinguishes_tool_execution_failure_from_generic_runtime_failure(self) -> None:
         tools = ToolRegistry()

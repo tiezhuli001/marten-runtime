@@ -3,7 +3,13 @@ from pathlib import Path
 from unittest import mock
 
 from marten_runtime.config.models_loader import ModelProfile, load_models_config, resolve_model_profile
-from marten_runtime.runtime.llm_client import DemoLLMClient, LLMRequest, OpenAIChatLLMClient, build_llm_client
+from marten_runtime.runtime.llm_client import (
+    DemoLLMClient,
+    LLMRequest,
+    OpenAIChatLLMClient,
+    _default_transport,
+    build_llm_client,
+)
 from marten_runtime.tools.registry import ToolSnapshot
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -177,6 +183,136 @@ class ModelSmokeTests(unittest.TestCase):
         self.assertEqual(captured[0]["tools"][0]["function"]["name"], "time")
         self.assertTrue(any(item["role"] == "tool" for item in captured[1]["messages"]))
 
+    def test_openai_client_omits_skill_heads_and_capability_catalog_on_tool_followup(self) -> None:
+        responses = [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "time",
+                                        "arguments": "{\"timezone\": \"UTC\"}",
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            {"choices": [{"message": {"content": "time=ok"}}]},
+        ]
+        captured: list[dict] = []
+
+        def fake_transport(url: str, headers: dict[str, str], body: dict) -> dict:
+            del url, headers
+            captured.append(body)
+            return responses.pop(0)
+
+        client = OpenAIChatLLMClient(
+            api_key="secret",
+            model="gpt-4.1",
+            profile_name="default",
+            transport=fake_transport,
+        )
+        request = LLMRequest(
+            session_id="sess_1",
+            trace_id="trace_1",
+            message="what time is it?",
+            agent_id="assistant",
+            app_id="example_assistant",
+            system_prompt="system",
+            skill_heads_text="skills",
+            capability_catalog_text="catalog",
+            available_tools=["time"],
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1", builtin_tools=["time"]),
+        )
+
+        client.complete(request)
+        client.complete(
+            request.model_copy(
+                update={
+                    "tool_result": {"iso_time": "2026-03-27T00:00:00Z"},
+                    "requested_tool_name": "time",
+                    "requested_tool_payload": {"timezone": "UTC"},
+                }
+            )
+        )
+
+        first_messages = captured[0]["messages"]
+        second_messages = captured[1]["messages"]
+        first_system = next(item["content"] for item in first_messages if item["role"] == "system")
+        second_system = next(item["content"] for item in second_messages if item["role"] == "system")
+        self.assertIn("skills", first_system)
+        self.assertNotIn("catalog", first_system)
+        self.assertNotIn("skills", second_system)
+        self.assertNotIn("catalog", second_system)
+
+    def test_openai_client_omits_capability_catalog_when_tools_are_already_declared(self) -> None:
+        captured: list[dict] = []
+
+        def fake_transport(url: str, headers: dict[str, str], body: dict) -> dict:
+            del url, headers
+            captured.append(body)
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+        client = OpenAIChatLLMClient(
+            api_key="secret",
+            model="gpt-4.1",
+            profile_name="default",
+            transport=fake_transport,
+        )
+        request = LLMRequest(
+            session_id="sess_1",
+            trace_id="trace_1",
+            message="what time is it?",
+            agent_id="assistant",
+            app_id="example_assistant",
+            system_prompt="system",
+            skill_heads_text="skills",
+            capability_catalog_text="catalog",
+            available_tools=["time"],
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1", builtin_tools=["time"]),
+        )
+
+        reply = client.complete(request)
+
+        self.assertEqual(reply.final_text, "ok")
+        messages = captured[0]["messages"]
+        system_message = next(item["content"] for item in messages if item["role"] == "system")
+        self.assertIn("skills", system_message)
+        self.assertNotIn("catalog", system_message)
+        self.assertEqual(captured[0]["tools"][0]["function"]["name"], "time")
+
+    def test_openai_client_keeps_capability_catalog_when_no_function_tools_are_declared(self) -> None:
+        captured: list[dict] = []
+
+        def fake_transport(url: str, headers: dict[str, str], body: dict) -> dict:
+            del url, headers
+            captured.append(body)
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+        client = OpenAIChatLLMClient(
+            api_key="secret",
+            model="gpt-4.1",
+            profile_name="default",
+            transport=fake_transport,
+        )
+        request = LLMRequest(
+            session_id="sess_1",
+            trace_id="trace_1",
+            message="hello",
+            agent_id="assistant",
+            app_id="example_assistant",
+            capability_catalog_text="catalog",
+        )
+
+        client.complete(request)
+
+        messages = captured[0]["messages"]
+        self.assertTrue(any(item.get("content") == "catalog" for item in messages))
+
     def test_openai_client_accepts_empty_tool_arguments_string(self) -> None:
         def fake_transport(url: str, headers: dict[str, str], body: dict) -> dict:
             del url, headers, body
@@ -320,6 +456,39 @@ class ModelSmokeTests(unittest.TestCase):
         self.assertEqual(captured[0]["messages"][0]["content"], "You are marten-runtime.")
         self.assertEqual(captured[0]["messages"][1]["role"], "user")
 
+    def test_openai_client_collapses_multiple_system_messages_into_one(self) -> None:
+        captured: list[dict] = []
+
+        def fake_transport(url: str, headers: dict[str, str], body: dict) -> dict:
+            del url, headers
+            captured.append(body)
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+        client = OpenAIChatLLMClient(
+            api_key="secret",
+            model="gpt-4.1",
+            profile_name="default",
+            transport=fake_transport,
+        )
+        request = LLMRequest(
+            session_id="sess_1",
+            trace_id="trace_1",
+            message="hello",
+            agent_id="assistant",
+            app_id="example_assistant",
+            system_prompt="system",
+            skill_heads_text="skills",
+            capability_catalog_text="catalog",
+            working_context_text="working",
+        )
+
+        reply = client.complete(request)
+
+        self.assertEqual(reply.final_text, "ok")
+        system_messages = [item for item in captured[0]["messages"] if item["role"] == "system"]
+        self.assertEqual(len(system_messages), 1)
+        self.assertEqual(system_messages[0]["content"], "system\n\nskills\n\ncatalog\n\nworking")
+
     def test_openai_client_retries_retryable_transport_failures(self) -> None:
         attempts = {"count": 0}
 
@@ -348,6 +517,35 @@ class ModelSmokeTests(unittest.TestCase):
 
         self.assertEqual(reply.final_text, "ok")
         self.assertEqual(attempts["count"], 3)
+
+    def test_default_transport_sets_user_agent_header(self) -> None:
+        captured: dict[str, object] = {}
+
+        class _FakeResponse:
+            def __enter__(self) -> "_FakeResponse":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return b'{"choices":[{"message":{"content":"ok"}}]}'
+
+        def fake_urlopen(req, timeout=30):
+            captured["request"] = req
+            captured["timeout"] = timeout
+            return _FakeResponse()
+
+        with mock.patch("marten_runtime.runtime.llm_client.urllib_request.urlopen", side_effect=fake_urlopen):
+            payload = _default_transport(
+                "https://example.com/v1/chat/completions",
+                {"Authorization": "Bearer secret", "Content-Type": "application/json"},
+                {"model": "gpt-5.4", "messages": [{"role": "user", "content": "hello"}]},
+            )
+
+        self.assertEqual(payload["choices"][0]["message"]["content"], "ok")
+        req = captured["request"]
+        self.assertEqual(req.get_header("User-agent"), "marten-runtime/0.1")
 
 
 if __name__ == "__main__":
