@@ -284,6 +284,7 @@ def build_http_runtime(
             update={"auto_reconnect": channels_config.feishu.websocket.auto_reconnect}
         ),
         lane_manager=state.lane_manager,
+        run_history=state.run_history,
     )
     return state
 

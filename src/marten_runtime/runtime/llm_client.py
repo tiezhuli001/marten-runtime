@@ -107,7 +107,9 @@ Transport = Callable[[str, dict[str, str], dict], dict]
 
 def _default_transport(url: str, headers: dict[str, str], body: dict) -> dict:
     payload = json.dumps(body).encode("utf-8")
-    req = urllib_request.Request(url, data=payload, headers=headers, method="POST")
+    request_headers = dict(headers)
+    request_headers.setdefault("User-Agent", "marten-runtime/0.1")
+    req = urllib_request.Request(url, data=payload, headers=request_headers, method="POST")
     try:
         with urllib_request.urlopen(req, timeout=30) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -181,11 +183,17 @@ class OpenAIChatLLMClient:
 
     def _build_messages(self, request: LLMRequest) -> list[dict]:
         messages: list[dict] = []
+        is_tool_followup = bool(request.tool_history) or (
+            request.tool_result is not None and bool(request.requested_tool_name)
+        )
+        include_capability_catalog = bool(request.capability_catalog_text) and not is_tool_followup and not bool(
+            request.available_tools
+        )
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
-        if request.skill_heads_text:
+        if request.skill_heads_text and not is_tool_followup:
             messages.append({"role": "system", "content": request.skill_heads_text})
-        if request.capability_catalog_text:
+        if include_capability_catalog:
             messages.append({"role": "system", "content": request.capability_catalog_text})
         if request.always_on_skill_text:
             messages.append({"role": "system", "content": request.always_on_skill_text})
@@ -229,7 +237,7 @@ class OpenAIChatLLMClient:
                     "content": json.dumps(item.tool_result, ensure_ascii=True),
                 }
             )
-        return messages
+        return _collapse_system_messages(messages)
 
     def _parse_reply(self, payload: dict) -> LLMReply:
         message = payload["choices"][0]["message"]
@@ -271,6 +279,26 @@ def _parse_tool_arguments(arguments: object) -> dict:
     if not normalized:
         return {}
     return json.loads(normalized)
+
+
+def _collapse_system_messages(messages: list[dict]) -> list[dict]:
+    system_chunks: list[str] = []
+    collapsed: list[dict] = []
+    flushed = False
+
+    for item in messages:
+        if item.get("role") == "system":
+            content = item.get("content")
+            if isinstance(content, str) and content.strip():
+                system_chunks.append(content)
+            continue
+        if system_chunks and not flushed:
+            collapsed.append({"role": "system", "content": "\n\n".join(system_chunks)})
+            flushed = True
+        collapsed.append(item)
+    if system_chunks and not flushed:
+        collapsed.append({"role": "system", "content": "\n\n".join(system_chunks)})
+    return collapsed
 
 
 def _resolve_base_url(*, profile: ModelProfile, env: Mapping[str, str]) -> str | None:

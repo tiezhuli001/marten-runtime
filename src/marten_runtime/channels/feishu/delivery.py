@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from marten_runtime.channels.dead_letter import InMemoryDeadLetterQueue
 from marten_runtime.channels.delivery_retry import DeliveryRetryPolicy
 from marten_runtime.channels.feishu.delivery_session import InMemoryFeishuDeliverySessionStore
+from marten_runtime.channels.feishu import rendering as feishu_rendering
 
 
 class FeishuDeliveryPayload(BaseModel):
@@ -315,7 +316,7 @@ class FeishuDeliveryClient:
         return self._tenant_access_token
 
     def _build_message_body(self, payload: FeishuDeliveryPayload) -> dict[str, str]:
-        if payload.event_type == "final":
+        if payload.event_type in {"final", "error"}:
             return {
                 "msg_type": "interactive",
                 "content": self._render_card(payload),
@@ -326,22 +327,10 @@ class FeishuDeliveryClient:
         }
 
     def _render_card(self, payload: FeishuDeliveryPayload) -> str:
-        card = {
-            "config": {
-                "wide_screen_mode": True,
-                "enable_forward": True,
-            },
-            "elements": [
-                {
-                    "tag": "div",
-                    "text": {
-                        "tag": "lark_md",
-                        "content": payload.text,
-                    },
-                }
-            ],
-        }
-        return json.dumps(card, ensure_ascii=False)
+        return json.dumps(
+            feishu_rendering.render_final_reply_card(payload.text, event_type=payload.event_type),
+            ensure_ascii=False,
+        )
 
     def _render_text(self, payload: FeishuDeliveryPayload) -> str:
         return payload.text

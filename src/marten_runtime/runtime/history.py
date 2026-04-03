@@ -1,7 +1,15 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class RunTimings(BaseModel):
+    llm_first_ms: int = 0
+    tool_ms: int = 0
+    llm_second_ms: int = 0
+    outbound_ms: int = 0
+    total_ms: int = 0
 
 
 class RunRecord(BaseModel):
@@ -22,7 +30,8 @@ class RunRecord(BaseModel):
     delivery_status: str = "none"
     error_code: str | None = None
     llm_request_count: int = 0
-    tool_calls: list[dict[str, object]] = []
+    tool_calls: list[dict[str, object]] = Field(default_factory=list)
+    timings: RunTimings = Field(default_factory=RunTimings)
 
 
 class InMemoryRunHistory:
@@ -95,3 +104,24 @@ class InMemoryRunHistory:
 
     def set_llm_request_count(self, run_id: str, count: int) -> None:
         self._items[run_id].llm_request_count = count
+
+    def set_stage_timing(self, run_id: str, *, stage: str, elapsed_ms: int) -> None:
+        record = self._items[run_id]
+        if stage == "llm_first":
+            record.timings.llm_first_ms = elapsed_ms
+            return
+        if stage == "tool":
+            record.timings.tool_ms = elapsed_ms
+            return
+        if stage == "llm_second":
+            record.timings.llm_second_ms = elapsed_ms
+            return
+        raise KeyError(stage)
+
+    def add_outbound_timing(self, run_id: str, *, elapsed_ms: int) -> None:
+        record = self._items[run_id]
+        record.timings.outbound_ms += elapsed_ms
+        record.timings.total_ms += elapsed_ms
+
+    def finalize_total_timing(self, run_id: str, *, elapsed_ms: int) -> None:
+        self._items[run_id].timings.total_ms = elapsed_ms

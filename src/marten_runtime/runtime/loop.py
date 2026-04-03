@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -59,6 +60,7 @@ class RuntimeLoop:
     ) -> list[OutboundEvent]:
         trace_id = trace_id or f"trace_{uuid4().hex[:8]}"
         self.last_request_count = 0
+        run_started_at = time.perf_counter()
         resolved_agent = agent or AgentSpec(
             agent_id="assistant",
             role="general_assistant",
@@ -134,9 +136,22 @@ class RuntimeLoop:
             try:
                 self.request_count += 1
                 self.last_request_count += 1
+                llm_started_at = time.perf_counter()
                 reply = self.llm.complete(current_request)
+                self.history.set_stage_timing(
+                    run.run_id,
+                    stage="llm_first" if not tool_history else "llm_second",
+                    elapsed_ms=_elapsed_ms(llm_started_at),
+                )
                 try:
+                    tool_started_at = time.perf_counter()
                     tool_result = resolve_tool_call(reply, self.tools, tool_snapshot)
+                    if tool_result is not None:
+                        self.history.set_stage_timing(
+                            run.run_id,
+                            stage="tool",
+                            elapsed_ms=_elapsed_ms(tool_started_at),
+                        )
                 except ToolCallRejected as exc:
                     events.append(
                         OutboundEvent(
@@ -151,6 +166,7 @@ class RuntimeLoop:
                         )
                     )
                     self.history.fail(run.run_id, error_code=exc.error_code)
+                    self.history.finalize_total_timing(run.run_id, elapsed_ms=_elapsed_ms(run_started_at))
                     self.history.set_llm_request_count(run.run_id, self.last_request_count)
                     return events
                 except ToolExecutionFailed as exc:
@@ -180,9 +196,20 @@ class RuntimeLoop:
                         )
                     )
                     self.history.fail(run.run_id, error_code=exc.error_code)
+                    self.history.set_stage_timing(
+                        run.run_id,
+                        stage="tool",
+                        elapsed_ms=_elapsed_ms(tool_started_at),
+                    )
+                    self.history.finalize_total_timing(run.run_id, elapsed_ms=_elapsed_ms(run_started_at))
                     self.history.set_llm_request_count(run.run_id, self.last_request_count)
                     return events
             except Exception as exc:
+                self.history.set_stage_timing(
+                    run.run_id,
+                    stage="llm_first" if not tool_history else "llm_second",
+                    elapsed_ms=_elapsed_ms(llm_started_at),
+                )
                 if _is_provider_failure(exc):
                     normalized = normalize_provider_error(exc)
                     self._record_failure(
@@ -212,6 +239,7 @@ class RuntimeLoop:
                         )
                     )
                     self.history.fail(run.run_id, error_code=normalized.error_code)
+                    self.history.finalize_total_timing(run.run_id, elapsed_ms=_elapsed_ms(run_started_at))
                     self.history.set_llm_request_count(run.run_id, self.last_request_count)
                     return events
                 self._record_failure(
@@ -240,6 +268,7 @@ class RuntimeLoop:
                     )
                 )
                 self.history.fail(run.run_id, error_code="RUNTIME_LOOP_FAILED")
+                self.history.finalize_total_timing(run.run_id, elapsed_ms=_elapsed_ms(run_started_at))
                 self.history.set_llm_request_count(run.run_id, self.last_request_count)
                 return events
             if tool_result is None:
@@ -261,6 +290,7 @@ class RuntimeLoop:
                         )
                     )
                     self.history.fail(run.run_id, error_code="EMPTY_FINAL_RESPONSE")
+                    self.history.finalize_total_timing(run.run_id, elapsed_ms=_elapsed_ms(run_started_at))
                     self.history.set_llm_request_count(run.run_id, self.last_request_count)
                     return events
                 events.append(
@@ -276,6 +306,7 @@ class RuntimeLoop:
                     )
                 )
                 self.history.finish(run.run_id, delivery_status="final")
+                self.history.finalize_total_timing(run.run_id, elapsed_ms=_elapsed_ms(run_started_at))
                 self.history.set_llm_request_count(run.run_id, self.last_request_count)
                 self._record_recovery(
                     agent_id=resolved_agent.agent_id,
@@ -318,6 +349,7 @@ class RuntimeLoop:
             )
         )
         self.history.fail(run.run_id, error_code="TOOL_LOOP_LIMIT_EXCEEDED")
+        self.history.finalize_total_timing(run.run_id, elapsed_ms=_elapsed_ms(run_started_at))
         self.history.set_llm_request_count(run.run_id, self.last_request_count)
         self._record_failure(
             agent_id=resolved_agent.agent_id,
@@ -384,3 +416,7 @@ def _is_provider_failure(exc: Exception) -> bool:
     if isinstance(exc, (ProviderTransportError, TimeoutError, OSError)):
         return True
     return str(exc).startswith("provider_")
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return max(0, int((time.perf_counter() - started_at) * 1000))

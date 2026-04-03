@@ -13,6 +13,9 @@ This directory holds completed plans and one-off audits that remain useful for t
 - `audits/ARCHITECTURE_AUDIT.md`
 - `audits/2026-03-31-repo-cleanup-audit.md`
 - `plans/2026-03-31-progressive-disclosure-capability-refinement-plan.md`
+- `plans/2026-04-01-runtime-latency-breakdown-and-optimization-plan.md`
+- `plans/2026-04-01-feishu-message-pipeline-unification-plan.md`
+- `plans/2026-04-02-feishu-generic-renderer-iteration-plan.md`
 
 ## Rules
 
