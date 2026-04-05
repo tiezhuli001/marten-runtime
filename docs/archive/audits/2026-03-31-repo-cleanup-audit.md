@@ -69,7 +69,7 @@
 - `skills/automation_management/`
 - `skills/example_repo_helper/`
 - `skills/example_time/`
-- `skills/github_hot_repos_digest/`
+- `skills/github_trending_digest/`（后续已收敛为 MCP-first 能力并移除 skill 文件）
 - `skills/self_improve/`
 - `skills/self_improve_management/`
 
@@ -78,8 +78,8 @@
 这些文档属于当前 repo 的阶段性设计与计划记录，当前 README/docs 也仍在引用其中一部分：
 
 - `docs/2026-03-30-self-improve-design.md`
-- `docs/2026-03-31-agent-domain-query-adapter-design.md`
-- `docs/2026-03-31-automation-domain-adapter-design.md`
+- `docs/archive/2026-03-31-agent-domain-query-adapter-design.md`
+- `docs/archive/2026-03-31-automation-domain-adapter-design.md`
 - `docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md`
 - `docs/plans/2026-03-30-self-improve-plan.md`
 - `docs/plans/2026-03-31-agent-domain-query-adapter-plan.md`
@@ -138,8 +138,8 @@
 - `docs/2026-03-29-private-agent-harness-design.md`
 - `docs/2026-03-30-conversation-lanes-provider-resilience-design.md`
 - `docs/2026-03-30-self-improve-design.md`
-- `docs/2026-03-31-agent-domain-query-adapter-design.md`
-- `docs/2026-03-31-automation-domain-adapter-design.md`
+- `docs/archive/2026-03-31-agent-domain-query-adapter-design.md`
+- `docs/archive/2026-03-31-automation-domain-adapter-design.md`
 - `docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md`
 - `docs/plans/2026-03-27-runtime-integration-hardening-plan.md`
 - `docs/plans/2026-03-28-feishu-websocket-first-migration-plan.md`
@@ -174,8 +174,8 @@
 
 - `apps/example_assistant/skills/example_repo_helper/SKILL.md`
 - `skills/shared/automation_management/SKILL.md`
-- `skills/shared/github_hot_repos_digest/SKILL.md`
-- `skills/shared/github_hot_repos_digest/references/github_mcp_capabilities.md`
+- `skills/shared/github_trending_digest/SKILL.md`
+- `skills/shared/github_trending_digest/references/github_mcp_capabilities.md`（历史结构示例；当前孤儿 reference 已删除）
 - `skills/system/example_time/SKILL.md`
 
 判断依据：

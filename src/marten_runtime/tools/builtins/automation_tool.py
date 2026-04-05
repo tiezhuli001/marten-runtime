@@ -15,7 +15,11 @@ def run_automation_tool(
     adapter: DomainDataAdapter,
 ) -> dict:
     action = str(payload.get("action", "")).strip().lower()
+    if not action and not payload:
+        action = "list"
     request = {key: value for key, value in payload.items() if key != "action"}
+    if action == "list" and "include_disabled" not in request:
+        request["include_disabled"] = True
     if action == "register":
         result = run_register_automation_tool(request, store, adapter)
     elif action == "list":

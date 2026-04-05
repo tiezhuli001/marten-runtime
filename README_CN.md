@@ -83,7 +83,7 @@ flowchart LR
 - 一个通过聊天注册的 GitHub 热门仓库日报路径
 - 该路径要求已经配置 GitHub MCP，且 MCP 至少提供 `search_repositories` 这类 repo discovery 能力
 - 业务逻辑仍放在 skill 中，平台只补一层很薄的 automation bridge
-- 自动任务查询能力保持收敛，只提供 `list_automations` 和 `GET /automations`
+- 自动任务查询能力保持收敛：模型侧只暴露 `automation` family tool；operator 侧保留 `GET /automations`
 - 自动任务增删改停恢复同样保持收敛，只通过 builtin tools 完成，不额外引入本地 automation MCP
 - 这不代表仓库正在扩成通用 proactive jobs / workflow 平台
 
@@ -91,10 +91,12 @@ flowchart LR
 
 最近一轮 MVP 收敛更新：
 
-- 补齐了 GitHub 热门仓库自动化主链：`register_automation -> store -> due-window scheduler -> isolated automation turn -> final delivery`
-- 增加自动任务 builtin tools：`list_automations`、`update_automation`、`delete_automation`、`pause_automation`、`resume_automation`
-- 增加共享 `Automation Management` skill，让自动任务 CRUD 的语义判断继续交给 `LLM + skill`
-- 将 GitHub skill 收敛成更通用的 `GitHub Assistant`，同时保留热榜 digest、仓库检查、issue / PR、release / account 等高频路径
+- GitHub 热榜已收敛到 repo-local MCP sidecar：`github_trending.trending_repositories`
+- 已从 active 代码、测试、automation 数据中移除 legacy `github_hot_repos_digest` skill 面
+- 历史 automation 记录会在 store 边界自动迁移到 canonical `github_trending_digest`
+- GitHub 热榜 Feishu 卡片现在会明确说明“按 GitHub Trending 页面顺序”，且不会重复展示抓取时间
+- 自动任务 `automation` family tool 统一承载 `register/list/detail/update/delete/pause/resume`
+- 保持 `LLM + agent + skill + MCP first`，没有为 GitHub 热榜增加 runtime 业务特判
 - 增加会话级 conversation lanes，同一 `channel_id + conversation_id` 的 HTTP `/messages` 和 Feishu interactive turn 会按 FIFO 串行处理
 - 增强 provider resilience，对 `429`、`502`、`503`、`504` 做 retryable 归一化，并输出稳定的 provider-specific error code
 - 增强 Feishu 诊断面，能直接看到最近一次入站对应的 `session_id`、`run_id`、`llm_request_count` 和 `tool_calls`
@@ -203,7 +205,7 @@ PYTHONPATH=src python -m unittest tests.test_bindings tests.test_router tests.te
 PYTHONPATH=src python -m unittest -v
 ```
 
-当前本地最新结果：`164` 个测试全绿。
+建议直接运行上面的命令进行本地全量验证，不要依赖文档中固定的测试数量。
 
 ## Documentation
 
@@ -212,6 +214,6 @@ PYTHONPATH=src python -m unittest -v
 1. [docs/README.md](./docs/README.md)
 2. [docs/2026-03-29-private-agent-harness-design.md](./docs/2026-03-29-private-agent-harness-design.md)
 3. [docs/2026-03-30-conversation-lanes-provider-resilience-design.md](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md)
-4. [docs/plans/2026-03-30-github-hot-repos-mvp-plan.md](./docs/plans/2026-03-30-github-hot-repos-mvp-plan.md)
-5. [docs/plans/2026-03-30-conversation-lanes-provider-resilience-plan.md](./docs/plans/2026-03-30-conversation-lanes-provider-resilience-plan.md)
+4. [docs/2026-03-30-self-improve-design.md](./docs/2026-03-30-self-improve-design.md)
+5. [docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md](./docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md)
 6. [docs/CONFIG_SURFACES.md](./docs/CONFIG_SURFACES.md)

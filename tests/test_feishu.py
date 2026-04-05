@@ -199,6 +199,22 @@ class FeishuTests(unittest.TestCase):
             ["GitHub热榜推荐｜已启用｜22:20", "GitHub热榜推荐｜已启用｜22:30"],
         )
 
+    def test_parse_feishu_card_protocol_accepts_minimax_wrapper_before_invoke_block(self) -> None:
+        visible, protocol = parse_feishu_card_protocol(
+            "<minimax:tool_call>\n"
+            "<invoke name=\"feishu_card\">\n"
+            "<parameter name=\"title\">GitHub 今日热榜</parameter>\n"
+            "<parameter name=\"summary\">共 10 项</parameter>\n"
+            "<parameter name=\"sections\">[{\"items\": [\"1｜gallery｜+286 ⭐\", \"2｜mlx-vlm｜+408 ⭐\"]}]</parameter>\n"
+            "</invoke>\n"
+            "</minimax:tool_call>"
+        )
+
+        self.assertEqual(visible, "")
+        self.assertIsInstance(protocol, FeishuCardProtocol)
+        self.assertEqual(protocol.title, "GitHub 今日热榜")
+        self.assertEqual(protocol.summary, "共 10 项")
+
     def test_parse_feishu_card_protocol_accepts_bare_marker_plus_json_suffix(self) -> None:
         visible, protocol = parse_feishu_card_protocol(
             "当前有 **2 个定时任务**：\n\n"
@@ -274,17 +290,17 @@ class FeishuTests(unittest.TestCase):
         visible, protocol = parse_feishu_card_protocol(
             "当前共有 **3 个定时任务**，都是 GitHub 热门仓库推送：\n\n"
             "- **GitHub热榜推荐**｜22:20｜已启用\n"
-            "- **GitHub Top10**｜22:00｜已启用\n"
+            "- **GitHub热榜推荐**｜22:00｜已启用\n"
             "- **GitHub热榜推荐**｜22:30｜已启用\n\n"
             "均推送到同一个飞书会话。"
-            '{"title":"定时任务概览","summary":"共 3 项","sections":[{"items":["GitHub热榜推荐｜22:20｜已启用","GitHub Top10｜22:00｜已启用","GitHub热榜推荐｜22:30｜已启用"]}]}'
+            '{"title":"定时任务概览","summary":"共 3 项","sections":[{"items":["GitHub热榜推荐｜22:20｜已启用","GitHub热榜推荐｜22:00｜已启用","GitHub热榜推荐｜22:30｜已启用"]}]}'
         )
 
         self.assertEqual(
             visible,
             "当前共有 **3 个定时任务**，都是 GitHub 热门仓库推送：\n\n"
             "- **GitHub热榜推荐**｜22:20｜已启用\n"
-            "- **GitHub Top10**｜22:00｜已启用\n"
+            "- **GitHub热榜推荐**｜22:00｜已启用\n"
             "- **GitHub热榜推荐**｜22:30｜已启用\n\n"
             "均推送到同一个飞书会话。",
         )
@@ -296,10 +312,10 @@ class FeishuTests(unittest.TestCase):
         card = render_final_reply_card(
             "当前共有 **3 个定时任务**，都是 GitHub 热门仓库推送：\n\n"
             "- **GitHub热榜推荐**｜22:20｜已启用\n"
-            "- **GitHub Top10**｜22:00｜已启用\n"
+            "- **GitHub热榜推荐**｜22:00｜已启用\n"
             "- **GitHub热榜推荐**｜22:30｜已启用\n\n"
             "均推送到同一个飞书会话。"
-            '{"title":"定时任务概览","summary":"共 3 项","sections":[{"items":["GitHub热榜推荐｜22:20｜已启用","GitHub Top10｜22:00｜已启用","GitHub热榜推荐｜22:30｜已启用"]}]}'
+            '{"title":"定时任务概览","summary":"共 3 项","sections":[{"items":["GitHub热榜推荐｜22:20｜已启用","GitHub热榜推荐｜22:00｜已启用","GitHub热榜推荐｜22:30｜已启用"]}]}'
         )
 
         self.assertEqual(card["schema"], "2.0")
@@ -318,7 +334,29 @@ class FeishuTests(unittest.TestCase):
         )
         self.assertEqual(
             elements[4]["content"],
-            "- GitHub热榜推荐｜22:20｜已启用\n- GitHub Top10｜22:00｜已启用\n- GitHub热榜推荐｜22:30｜已启用",
+            "- GitHub热榜推荐｜22:20｜已启用\n- GitHub热榜推荐｜22:00｜已启用\n- GitHub热榜推荐｜22:30｜已启用",
+        )
+
+
+    def test_render_final_reply_card_strips_visible_markdown_table_when_protocol_sections_exist(self) -> None:
+        card = render_final_reply_card(
+            "今日 GitHub 热榜（2026-04-05）:\n\n"
+            "| 排名 | 仓库 | 语言 | 今日新增 | 简介 |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| 1 | google-ai-edge/gallery | Kotlin | +286 | 本地ML/GenAI用例展示 |\n"
+            "| 2 | mlx-vlm | Python | +408 | VLM |\n\n"
+            '{"title":"今日GitHub热榜","summary":"共 10 项","sections":[{"items":["google-ai-edge/gallery｜Kotlin｜+286｜本地ML/GenAI用例展示","mlx-vlm｜Python｜+408｜VLM"]}]}'
+        )
+
+        elements = card["body"]["elements"]
+        self.assertEqual(card["header"]["title"]["content"], "今日GitHub热榜")
+        self.assertEqual(elements[0]["content"], "今日 GitHub 热榜（2026-04-05）:")
+        self.assertEqual(elements[1]["tag"], "hr")
+        self.assertEqual(elements[2]["content"], "**📌 共 10 项**")
+        self.assertEqual(elements[3]["content"], "**🗂️ 详情**")
+        self.assertEqual(
+            elements[4]["content"],
+            "- google-ai-edge/gallery｜Kotlin｜+286｜本地ML/GenAI用例展示\n- mlx-vlm｜Python｜+408｜VLM",
         )
 
     def test_render_final_reply_card_uses_generic_visual_slot_order(self) -> None:
@@ -342,9 +380,9 @@ class FeishuTests(unittest.TestCase):
         card = render_final_reply_card(
             "当前共有 **3 个定时任务**，都是 GitHub 热门仓库推送：\n\n"
             "- **GitHub热榜推荐**｜22:20｜已启用\n"
-            "- **GitHub Top10**｜22:00｜已启用\n"
+            "- **GitHub热榜推荐**｜22:00｜已启用\n"
             "- **GitHub热榜推荐**｜22:30｜已启用\n\n"
-            '{"title":"定时任务概览","summary":"共 3 项","sections":[{"items":["GitHub热榜推荐｜22:20｜已启用","GitHub Top10｜22:00｜已启用","GitHub热榜推荐｜22:30｜已启用"]}]}'
+            '{"title":"定时任务概览","summary":"共 3 项","sections":[{"items":["GitHub热榜推荐｜22:20｜已启用","GitHub热榜推荐｜22:00｜已启用","GitHub热榜推荐｜22:30｜已启用"]}]}'
         )
 
         self.assertEqual(card["header"]["title"]["content"], "定时任务概览")
@@ -353,17 +391,17 @@ class FeishuTests(unittest.TestCase):
         self.assertEqual(elements[2]["content"], "**📌 共 3 项**")
         self.assertEqual(
             elements[4]["content"],
-            "- GitHub热榜推荐｜22:20｜已启用\n- GitHub Top10｜22:00｜已启用\n- GitHub热榜推荐｜22:30｜已启用",
+            "- GitHub热榜推荐｜22:20｜已启用\n- GitHub热榜推荐｜22:00｜已启用\n- GitHub热榜推荐｜22:30｜已启用",
         )
 
     def test_render_final_reply_card_strips_visible_bullets_when_protocol_items_are_compacted(self) -> None:
         card = render_final_reply_card(
             "当前共有 **4 个定时任务**，均为 GitHub 热榜相关的每日推送：\n\n"
             "- **GitHub热榜推荐**｜每天 22:20｜已启用\n"
-            "- **GitHub Top10**｜每天 21:10｜已启用\n"
-            "- **GitHub Top10**｜每天 22:00｜已启用\n"
+            "- **GitHub热榜推荐**｜每天 21:10｜已启用\n"
+            "- **GitHub热榜推荐**｜每天 22:00｜已启用\n"
             "- **GitHub热榜推荐**｜每天 22:30｜已启用\n\n"
-            '{"title":"定时任务概览","summary":"共 4 项","sections":[{"items":["GitHub热榜推荐｜22:20","GitHub Top10｜21:10","GitHub Top10｜22:00","GitHub热榜推荐｜22:30"]}]}'
+            '{"title":"定时任务概览","summary":"共 4 项","sections":[{"items":["GitHub热榜推荐｜22:20","GitHub热榜推荐｜21:10","GitHub热榜推荐｜22:00","GitHub热榜推荐｜22:30"]}]}'
         )
 
         elements = card["body"]["elements"]
@@ -373,7 +411,22 @@ class FeishuTests(unittest.TestCase):
         self.assertEqual(elements[3]["content"], "**🗂️ 详情**")
         self.assertEqual(
             elements[4]["content"],
-            "- GitHub热榜推荐｜22:20\n- GitHub Top10｜21:10\n- GitHub Top10｜22:00\n- GitHub热榜推荐｜22:30",
+            "- GitHub热榜推荐｜22:20\n- GitHub热榜推荐｜21:10\n- GitHub热榜推荐｜22:00\n- GitHub热榜推荐｜22:30",
+        )
+
+    def test_render_final_reply_card_keeps_existing_ordered_markers_without_double_bullets(self) -> None:
+        card = render_final_reply_card(
+            "这里是今日 GitHub 热榜。\n\n"
+            '{"title":"今日GitHub热榜","summary":"共 2 项","sections":[{"items":["1. owner-one/repo-one｜Python｜+321","2. owner-two/repo-two｜TypeScript｜+210"]}]}'
+        )
+
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "这里是今日 GitHub 热榜。")
+        self.assertEqual(elements[2]["content"], "**📌 共 2 项**")
+        self.assertEqual(elements[3]["content"], "**🗂️ 详情**")
+        self.assertEqual(
+            elements[4]["content"],
+            "1. owner-one/repo-one｜Python｜+321\n2. owner-two/repo-two｜TypeScript｜+210",
         )
 
     def test_render_final_reply_card_derives_generic_structure_from_plain_bullets(self) -> None:

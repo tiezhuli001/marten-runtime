@@ -17,7 +17,7 @@ class BootstrapPromptTests(unittest.TestCase):
         self.assertIn("优先调用 `automation`，并使用 `action=register` 完成注册", prompt)
         self.assertIn("不要先展示一次结果再询问是否注册", prompt)
         self.assertIn("优先依赖当前可见 skill 的描述、别名和工具描述", prompt)
-        self.assertNotIn("github_hot_repos_digest", prompt)
+        self.assertNotIn("github_trending_digest", prompt)
         self.assertNotIn("general-purpose agent platform", prompt)
         self.assertNotIn("harness-thin, policy-hard, workflow-light", prompt)
         self.assertNotIn("[Mission]", prompt)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from marten_runtime.automation.skill_ids import canonicalize_automation_skill_id
 from marten_runtime.data_access.adapter import DomainDataAdapter
 
 
@@ -27,5 +28,7 @@ def run_update_automation_tool(payload: dict, adapter: DomainDataAdapter) -> dic
         }
         and value is not None
     }
+    if "skill_id" in updates:
+        updates["skill_id"] = canonicalize_automation_skill_id(str(updates["skill_id"]))
     item = adapter.update_item("automation", item_id=automation_id, values=updates)
     return {"ok": True, "automation": item}

@@ -68,11 +68,11 @@ flowchart LR
 
 Latest MVP-facing changes:
 
-- added a narrow GitHub hot-repos automation path driven by `register_automation`, a due-window scheduler, isolated automation turns, and final-channel delivery
+- added a narrow GitHub hot-repos automation path driven by the `automation` family tool with `action=register`, a due-window scheduler, isolated automation turns, and final-channel delivery
 - moved the public automation resource layer onto the thin shared adapter core while keeping automation lifecycle logic outside the adapter
-- added builtin automation management tools: `list_automations`, `get_automation_detail`, `update_automation`, `delete_automation`, `pause_automation`, and `resume_automation`
+- added the builtin `automation` family tool for recurring-job register/list/detail/update/delete/pause/resume flows
 - added the shared `Automation Management` skill so CRUD intent stays in `LLM + skill`, while store mutation stays in builtin tools
-- broadened the GitHub skill into `GitHub Assistant`, with aliases and concise GitHub MCP-first guidance for trending digests, repository inspection, issue / PR work, and release/account queries
+- replaced the temporary GitHub skill approximation with one thin repo-local MCP sidecar for trending retrieval, while keeping the rest of the runtime GitHub surface MCP-first
 - added in-memory conversation lanes so same `channel_id + conversation_id` turns queue in FIFO order for HTTP `/messages` and Feishu interactive ingress
 - strengthened provider resilience with retryable `429` / `502` / `503` / `504` normalization and stable provider-specific runtime error codes
 - strengthened Feishu live-chain observability with run-level `tool_calls`, `llm_request_count`, and websocket diagnostics exposing the latest inbound `session_id`, `run_id`, and runtime trace correlation
@@ -96,7 +96,6 @@ Key references:
 - [Conversation Lanes And Provider Resilience Design](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md)
 - [Self-Improve Design](./docs/2026-03-30-self-improve-design.md)
 - [Progressive Disclosure Capability Design](./docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md)
-- [Bootstrap Assembly Hygiene Plan](./docs/plans/2026-04-01-bootstrap-assembly-hygiene-plan.md)
 - [Config Surfaces](./docs/CONFIG_SURFACES.md)
 - [Live Verification Checklist](./docs/LIVE_VERIFICATION_CHECKLIST.md)
 - [Archive Index](./docs/archive/README.md)
@@ -241,7 +240,7 @@ Full suite:
 PYTHONPATH=src python -m unittest -v
 ```
 
-Latest local result: `198` tests green.
+Latest local result: `269` tests green.
 
 ## Documentation
 
@@ -251,5 +250,13 @@ Recommended reading order:
 2. [docs/2026-03-29-private-agent-harness-design.md](./docs/2026-03-29-private-agent-harness-design.md)
 3. [docs/2026-03-30-conversation-lanes-provider-resilience-design.md](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md)
 4. [docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md](./docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md)
-5. [docs/plans/2026-04-01-bootstrap-assembly-hygiene-plan.md](./docs/plans/2026-04-01-bootstrap-assembly-hygiene-plan.md)
-6. [docs/CONFIG_SURFACES.md](./docs/CONFIG_SURFACES.md)
+5. [docs/ARCHITECTURE_CHANGELOG.md](./docs/ARCHITECTURE_CHANGELOG.md)
+6. [docs/archive/plans/2026-04-05-github-trending-mcp-plan.md](./docs/archive/plans/2026-04-05-github-trending-mcp-plan.md)
+7. [docs/CONFIG_SURFACES.md](./docs/CONFIG_SURFACES.md)
+
+## Recent Updates
+
+- GitHub trending now runs through one thin repo-local MCP sidecar: `github_trending.trending_repositories`.
+- The removed legacy `github_hot_repos_digest` skill surface has been cleaned from active code, tests, and automation data.
+- Historical automation rows are migrated at the automation-store boundary to canonical `github_trending_digest` ids.
+- Feishu GitHub trending cards now state that ranking follows the GitHub Trending page order and avoid repeating the fetched time in multiple places.

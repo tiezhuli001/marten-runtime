@@ -328,6 +328,29 @@ class RuntimeMCPTests(unittest.TestCase):
 
         self.assertEqual(request.arguments, {"query": "release notes"})
 
+    def test_normalize_mcp_request_maps_search_repositories_q_alias_to_query(self) -> None:
+        request = normalize_mcp_request(
+            self._server_map(
+                MCPServerSpec(
+                    server_id="github",
+                    transport="stdio",
+                    backend_id="github",
+                    tools=[MCPToolSpec(name="search_repositories", description="Search GitHub repositories.")],
+                )
+            ),
+            {
+                "action": "call",
+                "server_id": "github",
+                "tool_name": "search_repositories",
+                "arguments": {"q": "agent framework", "sort": "stars", "per_page": 10},
+            },
+        )
+
+        self.assertEqual(
+            request.arguments,
+            {"query": "agent framework", "sort": "stars", "per_page": 10},
+        )
+
     def test_normalize_mcp_request_infers_server_from_unique_tool_name(self) -> None:
         request = normalize_mcp_request(
             self._server_map(

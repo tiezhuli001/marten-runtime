@@ -23,8 +23,10 @@ def normalize_mcp_request(
     arguments = _normalize_arguments(
         normalized_payload.get("arguments", normalized_payload.get("params", normalized_payload.get("payload")))
     )
+    arguments = _normalize_tool_specific_arguments(tool_name, arguments)
     if action == "call" and not arguments:
         arguments = _collect_inline_arguments(normalized_payload)
+        arguments = _normalize_tool_specific_arguments(tool_name, arguments)
     if action == "call" and not server_id:
         server_id = _infer_server_id(server_map, tool_name)
     if action == "call" and not server_id:
@@ -74,6 +76,14 @@ def _normalize_arguments(arguments: object) -> dict:
 def _collect_inline_arguments(payload: dict) -> dict:
     control_keys = {"action", "server_id", "tool_name", "tool", "name", "arguments", "params", "payload"}
     return {key: value for key, value in payload.items() if key not in control_keys}
+
+
+def _normalize_tool_specific_arguments(tool_name: str | None, arguments: dict) -> dict:
+    if tool_name == "search_repositories" and "query" not in arguments and "q" in arguments:
+        normalized = dict(arguments)
+        normalized["query"] = normalized.pop("q")
+        return normalized
+    return arguments
 
 
 def _require_server(server_map: dict[str, MCPServerSpec], server_id: str) -> MCPServerSpec:

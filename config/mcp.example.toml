@@ -6,10 +6,6 @@ transport = "mock"
 backend_id = "remote-mock"
 enabled = true
 timeout_ms = 10000
-availability_policy = "fail_closed"
-session_mode = "shared_worker"
-schema_cache_ttl_s = 300
-circuit_breaker_policy = "5_failures_60s"
 
 [[servers.tools]]
 name = "mock_search"

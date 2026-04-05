@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from marten_runtime.automation.skill_ids import canonicalize_automation_skill_id
 from marten_runtime.data_access.specs import ENTITY_SPECS, EntitySpec
 from marten_runtime.automation.store import AutomationStore
 from marten_runtime.self_improve.models import LessonCandidate
@@ -37,8 +38,12 @@ class DomainDataAdapter:
                 expected = str(filters["delivery_target"])
                 items = [item for item in items if item.delivery_target == expected]
             if "skill_id" in filters:
-                expected = str(filters["skill_id"])
-                items = [item for item in items if item.skill_id == expected]
+                expected = canonicalize_automation_skill_id(str(filters["skill_id"]))
+                items = [
+                    item
+                    for item in items
+                    if canonicalize_automation_skill_id(item.skill_id) == expected
+                ]
             if "enabled" in filters:
                 expected = bool(filters["enabled"])
                 items = [item for item in items if item.enabled is expected]

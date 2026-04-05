@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextvars import ContextVar, Token
 import re
 
+from marten_runtime.automation.skill_ids import canonicalize_automation_skill_id
 from marten_runtime.automation.store import AutomationStore
 from marten_runtime.data_access.adapter import DomainDataAdapter
 from marten_runtime.tools.builtins.automation_view import normalize_schedule_input, present_automation
@@ -93,6 +94,8 @@ def _normalize_payload(payload: dict, context: dict[str, str]) -> dict[str, obje
         normalized["name"] = str(payload.get("task_name", "")).strip()
     if not str(normalized.get("skill_id", "")).strip():
         normalized["skill_id"] = str(payload.get("skill", "")).strip()
+    if str(normalized.get("skill_id", "")).strip():
+        normalized["skill_id"] = canonicalize_automation_skill_id(str(normalized["skill_id"]))
     normalized["app_id"] = _resolve_alias(
         payload.get("app_id"),
         context.get("app_id", ""),

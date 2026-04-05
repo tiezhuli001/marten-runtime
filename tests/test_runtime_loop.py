@@ -116,9 +116,7 @@ class RuntimeLoopTests(unittest.TestCase):
             ["previous question", "previous answer"],
         )
         self.assertEqual(llm.requests[0].working_context["active_goal"], "current turn")
-        run = history.get(llm.requests[0].trace_id.replace("trace_", "run_")) if False else history.get(
-            history.list_runs()[0].run_id
-        )
+        run = history.get(history.list_runs()[0].run_id)
         self.assertEqual(run.context_snapshot_id, llm.requests[0].context_snapshot_id)
 
     def test_runtime_passes_skill_heads_and_activated_bodies_into_llm_request(self) -> None:
@@ -406,7 +404,7 @@ class RuntimeLoopTests(unittest.TestCase):
                             "session_target": "isolated",
                             "delivery_channel": "feishu",
                             "delivery_target": "oc_test_chat",
-                            "skill_id": "github_hot_repos_digest",
+                            "skill_id": "github_trending_digest",
                         },
                     ),
                     LLMReply(final_text="已为你创建每日 GitHub 热门项目推送。"),

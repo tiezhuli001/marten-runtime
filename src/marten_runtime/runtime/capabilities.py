@@ -81,7 +81,9 @@ def render_tool_description(declaration: CapabilityDeclaration) -> str:
     if declaration.name == "automation":
         return (
             "Manage recurring automations with action=register/list/detail/update/delete/pause/resume. "
-            "Use this when the user wants to create or manage scheduled tasks."
+            "Use this when the user wants to create or manage scheduled tasks. "
+            "For requests like 当前有哪些定时任务 / 列出定时任务 / 查看任务列表, call the family tool with action=list. "
+            "Stay inside the automation family contract and 不要调用不存在的子工具名."
         )
     if declaration.name == "mcp":
         return (

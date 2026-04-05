@@ -15,6 +15,9 @@ from marten_runtime.skills.snapshot import SkillSnapshot
 from marten_runtime.tools.registry import ToolRegistry
 
 
+DEFAULT_ALLOWED_TOOLS = ['automation', 'mcp', 'self_improve', 'skill', 'time']
+
+
 def _tool_rejection_text(error_code: str) -> str:
     if error_code == "TOOL_NOT_ALLOWED":
         return "当前操作未被允许，请换个说法或缩小范围。"
@@ -65,7 +68,7 @@ class RuntimeLoop:
             agent_id="assistant",
             role="general_assistant",
             app_id="example_assistant",
-            allowed_tools=self.tools.list(),
+            allowed_tools=list(DEFAULT_ALLOWED_TOOLS),
         )
         tool_snapshot = self.tools.build_snapshot(resolved_agent.allowed_tools)
         runtime_context = assemble_runtime_context(

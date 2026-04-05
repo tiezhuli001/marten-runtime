@@ -2,6 +2,7 @@ import hashlib
 import json
 
 from pydantic import BaseModel, Field
+from marten_runtime.automation.skill_ids import canonicalize_automation_skill_id
 
 
 class AutomationJob(BaseModel):
@@ -28,6 +29,7 @@ class AutomationJob(BaseModel):
     schedule_value: str = Field(default="", exclude=True)
 
     def model_post_init(self, __context: object) -> None:
+        self.skill_id = canonicalize_automation_skill_id(self.skill_id)
         if not self.name:
             self.name = self.automation_id
         if not self.prompt_template and self.prompt:
@@ -53,7 +55,7 @@ def build_automation_semantic_fingerprint(job: "AutomationJob | dict[str, object
             "agent_id": job.agent_id,
             "delivery_channel": job.delivery_channel,
             "delivery_target": job.delivery_target,
-            "skill_id": job.skill_id,
+            "skill_id": canonicalize_automation_skill_id(job.skill_id),
             "schedule_kind": job.schedule_kind,
             "schedule_expr": job.schedule_expr,
             "timezone": job.timezone,
@@ -66,7 +68,7 @@ def build_automation_semantic_fingerprint(job: "AutomationJob | dict[str, object
             "agent_id": str(job.get("agent_id", "")),
             "delivery_channel": str(job.get("delivery_channel", "")),
             "delivery_target": str(job.get("delivery_target", "")),
-            "skill_id": str(job.get("skill_id", "")),
+            "skill_id": canonicalize_automation_skill_id(str(job.get("skill_id", ""))),
             "schedule_kind": str(job.get("schedule_kind", "")),
             "schedule_expr": str(job.get("schedule_expr", "")),
             "timezone": str(job.get("timezone", "")),
