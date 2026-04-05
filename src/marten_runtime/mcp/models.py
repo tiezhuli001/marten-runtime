@@ -20,9 +20,4 @@ class MCPServerSpec(BaseModel):
     url: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     adapter: str | None = None
-    availability_policy: str = "fail_closed"
-    session_mode: str = "shared_worker"
-    schema_cache_ttl_s: int = 300
-    circuit_breaker_policy: str = "5_failures_60s"
-    allowed_agents: list[str] = Field(default_factory=list)
     tools: list[MCPToolSpec] = Field(default_factory=list)

@@ -41,29 +41,6 @@ class SelfImproveRecorderTests(unittest.TestCase):
         self.assertEqual(len(recoveries), 1)
         self.assertEqual(recoveries[0].related_failure_fingerprint, failure.fingerprint)
 
-    def test_recorder_creates_one_threshold_trigger_on_third_matching_failure(self) -> None:
-        with TemporaryDirectory() as tmpdir:
-            store = SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3")
-            recorder = SelfImproveRecorder(store)
-
-            for run_id in ("run_1", "run_2", "run_3", "run_4"):
-                recorder.record_failure(
-                    agent_id="assistant",
-                    run_id=run_id,
-                    trace_id=f"trace_{run_id}",
-                    session_id=f"session_{run_id}",
-                    error_code="PROVIDER_TIMEOUT",
-                    error_stage="llm",
-                    summary="provider timed out",
-                    provider_name="minimax",
-                    message="请总结今天的问题",
-                )
-
-            triggers = store.list_pending_triggers(agent_id="assistant", limit=10)
-
-        self.assertEqual(len(triggers), 1)
-        self.assertEqual(triggers[0]["fingerprint"], "assistant|请总结今天的问题".lower())
-
 
 if __name__ == "__main__":
     unittest.main()

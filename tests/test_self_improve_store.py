@@ -147,35 +147,6 @@ class SQLiteSelfImproveStoreTests(unittest.TestCase):
         self.assertIsNotNone(old_lesson.superseded_at)
         self.assertTrue(new_lesson.active)
 
-    def test_failure_threshold_trigger_is_debounced_within_same_window(self) -> None:
-        with TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "self_improve.sqlite3"
-            store = SQLiteSelfImproveStore(db_path)
-
-            first = store.create_threshold_trigger(
-                agent_id="assistant",
-                fingerprint="fp_timeout",
-                window_start="2026-03-30T00:00:00+00:00",
-            )
-            second = store.create_threshold_trigger(
-                agent_id="assistant",
-                fingerprint="fp_timeout",
-                window_start="2026-03-30T00:00:00+00:00",
-            )
-            third = store.create_threshold_trigger(
-                agent_id="assistant",
-                fingerprint="fp_timeout",
-                window_start="2026-03-31T00:00:00+00:00",
-            )
-
-            reloaded = SQLiteSelfImproveStore(db_path)
-            triggers = reloaded.list_pending_triggers(agent_id="assistant", limit=10)
-
-        self.assertTrue(first)
-        self.assertFalse(second)
-        self.assertTrue(third)
-        self.assertEqual(len(triggers), 2)
-
 
 if __name__ == "__main__":
     unittest.main()

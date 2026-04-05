@@ -57,12 +57,10 @@ def assemble_runtime_context(
     snapshot = compact_context(
         session_id=session_id,
         active_goal=current_message,
-        token_budget=2048,
         recent_decisions=[
             message.content for message in replay if message.role == "assistant"
         ][-2:],
         source_message_range=[max(0, len((session_messages or [])) - len(replay)), len(session_messages or [])],
-        tool_snapshot_id=tool_snapshot.tool_snapshot_id,
     )
     working_context = rehydrate_context(snapshot)
     return RuntimeContext(

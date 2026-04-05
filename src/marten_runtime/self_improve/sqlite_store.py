@@ -43,24 +43,6 @@ class SQLiteSelfImproveStore:
                 ),
             )
 
-    def count_recent_failures_since(
-        self,
-        *,
-        agent_id: str,
-        fingerprint: str,
-        created_at_gte: str,
-    ) -> int:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT COUNT(1)
-                FROM runtime_failure_events
-                WHERE agent_id = ? AND fingerprint = ? AND created_at >= ?
-                """,
-                (agent_id, fingerprint, created_at_gte),
-            ).fetchone()
-        return int(row[0] if row is not None else 0)
-
     def list_recent_failures(self, *, agent_id: str, limit: int) -> list[FailureEvent]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -285,50 +267,6 @@ class SQLiteSelfImproveStore:
             raise KeyError(lesson_id)
         return self._row_to_lesson(row)
 
-    def create_threshold_trigger(
-        self,
-        *,
-        agent_id: str,
-        fingerprint: str,
-        window_start: str,
-    ) -> bool:
-        try:
-            with self._connect() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO self_improve_triggers (
-                        agent_id, fingerprint, window_start, status, created_at
-                    ) VALUES (?, ?, ?, 'pending', ?)
-                    """,
-                    (agent_id, fingerprint, window_start, window_start),
-                )
-        except sqlite3.IntegrityError:
-            return False
-        return True
-
-    def list_pending_triggers(self, *, agent_id: str, limit: int) -> list[dict[str, str]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT agent_id, fingerprint, window_start, status, created_at
-                FROM self_improve_triggers
-                WHERE agent_id = ? AND status = 'pending'
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (agent_id, limit),
-            ).fetchall()
-        return [
-            {
-                "agent_id": str(row[0]),
-                "fingerprint": str(row[1]),
-                "window_start": str(row[2]),
-                "status": str(row[3]),
-                "created_at": str(row[4]),
-            }
-            for row in rows
-        ]
-
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path)
 
@@ -392,18 +330,6 @@ class SQLiteSelfImproveStore:
                     active INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
                     superseded_at TEXT
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS self_improve_triggers (
-                    agent_id TEXT NOT NULL,
-                    fingerprint TEXT NOT NULL,
-                    window_start TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    PRIMARY KEY (agent_id, fingerprint, window_start)
                 )
                 """
             )

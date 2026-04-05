@@ -20,6 +20,8 @@ from marten_runtime.self_improve.recorder import SelfImproveRecorder
 from marten_runtime.self_improve.service import SelfImproveService, make_default_judge
 from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
 from marten_runtime.session.compaction import compact_context
+from marten_runtime.skills.service import SkillRuntimeView
+from marten_runtime.skills.snapshot import SkillSnapshot
 from tests.http_app_support import build_test_app
 
 
@@ -43,7 +45,7 @@ class ContractCompatibilityTests(unittest.TestCase):
         self.assertNotIn("register_automation", app.state.runtime.tool_registry.list())
         self.assertNotIn("list_lesson_candidates", app.state.runtime.tool_registry.list())
 
-    def test_default_assistant_agent_can_use_register_automation(self) -> None:
+    def test_default_assistant_agent_keeps_family_tool_contract(self) -> None:
         app = build_test_app()
 
         assistant = app.state.runtime.default_agent
@@ -210,15 +212,15 @@ class ContractCompatibilityTests(unittest.TestCase):
             sequence=2,
             trace_id="trace_1",
             payload={"text": "ok"},
-            created_at=compact_context("sess_1", "goal", 10).model_fields["snapshot_id"].default if False else __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+            created_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
         )
 
         self.assertIn("session_id", message)
         self.assertIn("events", message)
         self.assertEqual(event.trace_id, "trace_1")
-        snapshot = compact_context("sess_1", "goal", 10)
+        snapshot = compact_context("sess_1", "goal")
         self.assertEqual(snapshot.session_id, "sess_1")
-        self.assertTrue(hasattr(snapshot, "manifest_id"))
+        self.assertEqual(snapshot.continuation_hint, "goal")
 
     def test_recent_runs_endpoint_lists_latest_runs(self) -> None:
         with TestClient(build_test_app()) as client:
@@ -274,7 +276,7 @@ class ContractCompatibilityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(llm.requests[0].available_tools, ["automation", "mcp", "self_improve", "skill", "time"])
 
-    def test_github_schedule_turn_keeps_register_automation_available(self) -> None:
+    def test_github_schedule_turn_keeps_family_tool_surface(self) -> None:
         app = build_test_app()
         runtime = app.state.runtime
         llm = ScriptedLLMClient([LLMReply(final_text="ok")])
@@ -337,7 +339,7 @@ class ContractCompatibilityTests(unittest.TestCase):
                         "session_target": "isolated",
                         "delivery_channel": "feishu",
                         "delivery_target": "current_channel",
-                        "skill_id": "github_hot_repos_digest",
+                        "skill_id": "github_trending_digest",
                     },
                 ),
                 LLMReply(final_text="ok"),
@@ -535,7 +537,7 @@ class ContractCompatibilityTests(unittest.TestCase):
                 session_target="isolated",
                 delivery_channel="feishu",
                 delivery_target="oc_test_chat",
-                skill_id="github_hot_repos_digest",
+                skill_id="github_trending_digest",
                 enabled=False,
             )
         )
@@ -575,7 +577,7 @@ class ContractCompatibilityTests(unittest.TestCase):
                 session_target="isolated",
                 delivery_channel="feishu",
                 delivery_target="oc_test_chat",
-                skill_id="github_hot_repos_digest",
+                skill_id="github_trending_digest",
             )
         )
 
@@ -625,6 +627,42 @@ class ContractCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["events"][-1]["payload"]["text"], "实时链路验证通过。")
+
+    def test_manual_automation_trigger_for_legacy_github_digest_does_not_require_skill_file(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        runtime.automation_store.save(
+            AutomationJob(
+                automation_id="legacy_hot",
+                name="legacy_hot",
+                app_id="example_assistant",
+                agent_id="assistant",
+                prompt_template="请只回复：兼容触发通过。",
+                schedule_kind="daily",
+                schedule_expr="23:59",
+                timezone="Asia/Shanghai",
+                session_target="isolated",
+                delivery_channel="http",
+                delivery_target="internal",
+                skill_id="github_trending_digest",
+                enabled=True,
+                internal=False,
+            )
+        )
+        runtime.runtime_loop.llm = ScriptedLLMClient([LLMReply(final_text="兼容触发通过。")])
+        runtime.skill_service.build_runtime = lambda **_: SkillRuntimeView(  # type: ignore[method-assign]
+            visible_skills=[],
+            snapshot=SkillSnapshot(skill_snapshot_id="skill_empty"),
+            skill_heads_text=None,
+            always_on_text=None,
+        )
+        runtime.skill_service.load_skill = lambda skill_id: (_ for _ in ()).throw(KeyError(skill_id))  # type: ignore[method-assign]
+
+        with TestClient(app) as client:
+            response = client.post("/automations/legacy_hot/trigger")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["events"][-1]["payload"]["text"], "兼容触发通过。")
 
     def test_http_messages_can_query_and_delete_self_improve_candidates_through_runtime_path(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -729,7 +767,7 @@ class ContractCompatibilityTests(unittest.TestCase):
                         "session_target": "isolated",
                         "delivery_channel": "feishu",
                         "delivery_target": "oc_test_chat",
-                        "skill_id": "github_hot_repos_digest",
+                        "skill_id": "github_trending_digest",
                     },
                 ),
                 LLMReply(final_text="ok"),

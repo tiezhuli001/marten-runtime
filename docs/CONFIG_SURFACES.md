@@ -29,7 +29,7 @@ This page answers one question: which value belongs in which file.
 | Feishu credentials | `.env` | `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, `FEISHU_BASE_URL` |
 | Binding rules | `config/bindings.toml` | `[[bindings]]` |
 | MCP stdio/http/docker connection | `mcps.json` | `servers.<id>.transport`, `command`, `args`, `env`, `cwd`, `url`, `headers` |
-| MCP policy/governance | `config/mcp.example.toml` or local `config/mcp.toml` | `session_mode`, `schema_cache_ttl_s`, `circuit_breaker_policy`, `allowed_agents` |
+| MCP server defaults | `config/mcp.example.toml` or local `config/mcp.toml` | `[[servers]]`, `timeout_ms`, `[[servers.tools]]` |
 | App binding / manifest | `apps/<app_id>/app.toml` | app-local fields |
 | Model bootstrap instructions | `apps/<app_id>/*.md` | `AGENTS.md`, `TOOLS.md`, `SOUL.md`, `BOOTSTRAP.md` |
 
@@ -43,8 +43,8 @@ This planned MVP is intentionally narrow:
 - a dedicated skill uses GitHub MCP repo-discovery capability to gather repository candidates
 - the runtime sends one final digest to the configured target
 - the operator surface can inspect current recurring jobs through `GET /automations`
-- the main agent can inspect current recurring jobs through the narrow builtin `list_automations`
-- recurring-job CRUD stays on builtin tools such as `update_automation`, `delete_automation`, `pause_automation`, and `resume_automation`
+- the main agent can inspect current recurring jobs through the narrow builtin `automation` family tool with `action=list`
+- recurring-job CRUD stays on the builtin `automation` family tool with `action=update/delete/pause/resume`
 
 Hard prerequisites:
 
@@ -131,7 +131,7 @@ Notes:
 
 - If you put the literal token value directly in `mcps.json.env`, that value is authoritative.
 - If you use `$GITHUB_PERSONAL_ACCESS_TOKEN`, the runtime resolves it from the current shell or repo `.env`.
-- Governance such as allowed tools and allowed agents still belongs in `config/mcp.example.toml` or a local `config/mcp.toml`, plus `config/agents.toml`.
+- Keep `config/mcp.example.toml` focused on thin server defaults and keep model-visible permissions in `config/agents.toml`.
 
 ## Local Start
 
@@ -160,7 +160,7 @@ Run-level operator diagnostics:
 
 - `GET /diagnostics/run/{run_id}` returns `llm_request_count`
 - `GET /diagnostics/run/{run_id}` returns `tool_calls`
-- use these fields to confirm whether a real turn invoked `register_automation`, `list_automations`, or other allowed tools
+- use these fields to confirm whether a real turn invoked `automation`, `mcp`, `self_improve`, or other allowed tools
 
 Feishu live diagnostics:
 

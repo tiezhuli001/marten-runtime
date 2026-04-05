@@ -23,7 +23,7 @@ class AutomationDispatchTests(unittest.TestCase):
                 session_target="isolated",
                 delivery_channel="feishu",
                 delivery_target="oc_test_chat",
-                skill_id="github_hot_repos_digest",
+                skill_id="github_trending_digest",
             )
         )
         scheduler = Scheduler(store)
@@ -47,7 +47,7 @@ class AutomationDispatchTests(unittest.TestCase):
                 session_target="isolated",
                 delivery_channel="feishu",
                 delivery_target="oc_test_chat",
-                skill_id="github_hot_repos_digest",
+                skill_id="github_trending_digest",
             )
         )
         scheduler = Scheduler(store)
@@ -59,7 +59,7 @@ class AutomationDispatchTests(unittest.TestCase):
         self.assertEqual(dispatches[0].automation_id, "daily_hot")
         self.assertEqual(dispatches[0].scheduled_for, "2026-03-30")
         self.assertEqual(dispatches[0].delivery_target, "oc_test_chat")
-        self.assertEqual(dispatches[0].skill_id, "github_hot_repos_digest")
+        self.assertEqual(dispatches[0].skill_id, "github_trending_digest")
 
     def test_same_day_window_is_idempotent(self) -> None:
         store = AutomationStore()
@@ -76,7 +76,7 @@ class AutomationDispatchTests(unittest.TestCase):
                 session_target="isolated",
                 delivery_channel="feishu",
                 delivery_target="oc_test_chat",
-                skill_id="github_hot_repos_digest",
+                skill_id="github_trending_digest",
             )
         )
         scheduler = Scheduler(store)

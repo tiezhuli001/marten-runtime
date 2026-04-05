@@ -10,10 +10,18 @@ from tests.http_app_support import build_test_app
 
 class AcceptanceTests(unittest.TestCase):
     def test_repo_default_channel_template_keeps_feishu_disabled(self) -> None:
-        runtime = build_http_runtime(env={}, load_env_file=False, use_compat_json=False)
+        runtime = build_http_runtime(
+            env={"MINIMAX_API_KEY": "test-key"},
+            load_env_file=False,
+            use_compat_json=False,
+        )
 
         self.assertFalse(runtime.channels_config.feishu.enabled)
         self.assertFalse(runtime.channels_config.feishu.auto_start)
+
+    def test_http_runtime_bootstrap_fails_closed_without_provider_key(self) -> None:
+        with self.assertRaisesRegex(ValueError, "missing_llm_api_key:MINIMAX_API_KEY"):
+            build_http_runtime(env={}, load_env_file=False, use_compat_json=False)
 
     def test_feishu_websocket_service_starts_with_app_when_channel_enabled(self) -> None:
         app = build_test_app()
@@ -36,7 +44,7 @@ class AcceptanceTests(unittest.TestCase):
         start_mock.assert_awaited_once()
         stop_mock.assert_awaited_once()
 
-    def test_chat_skill_mcp_memory_and_coding_paths_exist(self) -> None:
+    def test_http_messages_cover_plain_chat_mcp_and_generic_repo_request_paths(self) -> None:
         with TestClient(build_test_app()) as client:
             chat = client.post(
                 "/messages",

@@ -11,7 +11,6 @@ from marten_runtime.skills.render import build_skill_heads, render_always_on_ski
 from marten_runtime.skills.selector import select_activated_skills
 from marten_runtime.skills.service import SkillService
 from marten_runtime.skills.snapshot import SkillSnapshot
-from marten_runtime.skills.usage import SkillUsage
 
 
 def write_skill(root: Path, skill_id: str, body: str) -> None:
@@ -21,6 +20,15 @@ def write_skill(root: Path, skill_id: str, body: str) -> None:
 
 
 class SkillTests(unittest.TestCase):
+    def test_repo_feishu_formatting_skill_constrains_trending_order_and_rank_markers(self) -> None:
+        skill_body = Path(
+            "/Users/litiezhu/workspace/github/marten-runtime/skills/feishu_channel_formatting/SKILL.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("preserve the original repository order returned by the MCP result", skill_body)
+        self.assertIn("do not re-rank, sort, or regroup trending items", skill_body)
+        self.assertIn("do not use alphabetical markers like `a.` / `b.` / `c.`", skill_body)
+
     def test_loader_reads_single_level_skills_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -207,13 +215,10 @@ class SkillTests(unittest.TestCase):
             )
             heads = build_skill_heads(visible)
             snapshot = SkillSnapshot.from_skills("skill_snapshot_1", visible)
-            usage = SkillUsage(skill_id="example_time", use_count=1, reject_count=0)
-
             self.assertEqual([item.meta.skill_id for item in visible], ["example_time"])
             self.assertEqual(render_always_on_skills(visible), "")
             self.assertEqual(heads, [])
             self.assertEqual(snapshot.always_on_ids, ["example_time"])
-            self.assertEqual(usage.use_count, 1)
 
     def test_skill_service_builds_startup_snapshot_and_loads_always_on_body_explicitly(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -482,10 +487,10 @@ class SkillTests(unittest.TestCase):
             shared = base / "skills"
             write_skill(
                 shared,
-                "github_hot_repos_digest",
+                "github_trending_digest",
                 """
                 ---
-                skill_id: github_hot_repos_digest
+                skill_id: github_trending_digest
                 name: GitHub Hot Repos Digest
                 description: daily hot repositories digest
                 enabled: true
@@ -508,10 +513,10 @@ class SkillTests(unittest.TestCase):
             activated = select_activated_skills(
                 visible,
                 "Run the scheduled digest.",
-                explicit_skill_ids=["github_hot_repos_digest"],
+                explicit_skill_ids=["github_trending_digest"],
             )
 
-            self.assertEqual([item.meta.skill_id for item in activated], ["github_hot_repos_digest"])
+            self.assertEqual([item.meta.skill_id for item in activated], ["github_trending_digest"])
 
     def test_selector_does_not_activate_skill_by_alias_for_natural_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -519,10 +524,10 @@ class SkillTests(unittest.TestCase):
             shared = base / "skills"
             write_skill(
                 shared,
-                "github_hot_repos_digest",
+                "github_trending_digest",
                 """
                 ---
-                skill_id: github_hot_repos_digest
+                skill_id: github_trending_digest
                 name: GitHub Hot Repos Digest
                 description: build a concise daily digest for fast-moving GitHub repositories
                 enabled: true
@@ -557,9 +562,9 @@ class SkillTests(unittest.TestCase):
         self.assertTrue(skill_path.exists())
         body = skill_path.read_text(encoding="utf-8")
 
-        self.assertIn("list_lesson_candidates", body)
-        self.assertIn("get_lesson_candidate_detail", body)
-        self.assertIn("delete_lesson_candidate", body)
+        self.assertIn("action=list_candidates", body)
+        self.assertIn("action=candidate_detail", body)
+        self.assertIn("action=delete_candidate", body)
         self.assertIn("must not delete active lessons", body)
 
     def test_self_improve_skill_content_stays_narrow_and_does_not_allow_agents_rewrite(self) -> None:
@@ -569,8 +574,8 @@ class SkillTests(unittest.TestCase):
         self.assertTrue(skill_path.exists())
         body = skill_path.read_text(encoding="utf-8")
 
-        self.assertIn("list_self_improve_evidence", body)
-        self.assertIn("save_lesson_candidate", body)
+        self.assertIn("action=list_evidence", body)
+        self.assertIn("action=save_candidate", body)
         self.assertIn("list_system_lessons", body)
         self.assertIn("repeated failures and later recoveries", body)
         self.assertIn("Do not edit AGENTS.md", body)
@@ -602,6 +607,20 @@ class SkillTests(unittest.TestCase):
         self.assertIn('{"title":"任务概览","summary":"共 2 项","sections":[{"items":["', body)
         self.assertIn("`sections[].items` must be plain strings", body)
         self.assertIn("Do not expose internal ids", body)
+        self.assertIn("For GitHub trending answers, prefer `stars_period` over `stars_total`", body)
+        self.assertIn("mention the trend window and fetched time", body)
+        self.assertIn("Do not write vague summaries like `Top 10 如下`", body)
+        self.assertIn("official GitHub Trending page order", body)
+        self.assertIn("not a local re-sort by `stars_period` or `stars_total`", body)
+        self.assertIn("explicitly include one short user-facing note", body)
+        self.assertIn("榜单顺序遵循 GitHub Trending 页面", body)
+        self.assertIn("do not repeat the fetched time again inside the ordering note", body)
+        self.assertIn("include numeric rank prefixes like `1.`", body)
+        self.assertIn("show the fetched date and time", body)
+        self.assertIn("exactly as `YYYY-MM-DD HH:MM`", body)
+        self.assertIn("do not shorten it to `HH:MM` only", body)
+        self.assertIn("use `已启用` and `已暂停` as the only status labels", body)
+        self.assertIn("do not summarize shared category labels like `均为 GitHub 热榜推荐`", body)
 
     def test_skill_service_includes_feishu_channel_formatting_only_for_feishu_runtime(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]

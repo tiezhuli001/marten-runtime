@@ -9,11 +9,12 @@ channels: [http, feishu]
 tags: [automation, recurring, schedule, tasks, management]
 ---
 
-Use the builtin automation tools to manage recurring jobs already stored in the runtime.
+Use the builtin `automation` family tool to manage recurring jobs already stored in the runtime.
 
 Operating rules:
-- Treat automation management as local control-plane work. Prefer builtin tools over MCP.
-- Read before mutating. Usually start with `list_automations`.
+- Treat automation management as local control-plane work. Prefer the builtin `automation` tool over MCP.
+- Read before mutating. Usually start with `automation` + `action=list`.
+- Use `action=detail` when one candidate task needs a clearer match before updating it.
 - Do not require the user to provide an internal `automation_id` up front.
 - If more than one task could match, ask one short clarification question after listing candidates.
 - Use `include_disabled=true` when the user may be referring to a paused task.
@@ -21,14 +22,17 @@ Operating rules:
 - Keep replies concise and outcome-oriented.
 
 Suggested tool patterns:
-- Query current tasks: call `list_automations`
+- Query current tasks: call `automation` with `action=list`
+- Inspect one task before mutating: call `automation` with `action=detail`
 - Modify time, timezone, name, delivery target, or skill:
-  - call `list_automations`
+  - call `automation` with `action=list`
   - identify the intended task
-  - call `update_automation`
+  - call `automation` with `action=update`
 - Pause or resume:
-  - call `list_automations`
-  - call `pause_automation` or `resume_automation`
+  - call `automation` with `action=list`
+  - call `automation` with `action=pause` or `action=resume`
 - Delete:
-  - call `list_automations`
-  - call `delete_automation` only when the user clearly asked to remove the task
+  - call `automation` with `action=list`
+  - call `automation` with `action=delete` only when the user clearly asked to remove the task
+- Register a new recurring digest or task:
+  - call `automation` with `action=register`

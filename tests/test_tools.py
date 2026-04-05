@@ -137,7 +137,7 @@ class ToolTests(unittest.TestCase):
                     "session_target": "isolated",
                     "delivery_channel": "feishu",
                     "delivery_target": "oc_test_chat",
-                    "skill_id": "github_hot_repos_digest",
+                    "skill_id": "github_trending_digest",
                 },
             )
 
@@ -166,18 +166,18 @@ class ToolTests(unittest.TestCase):
                     "timezone": "Asia/Shanghai",
                     "delivery_channel": "feishu",
                     "delivery_target": "oc_test_chat",
-                    "skill": "github_hot_repos_digest",
+                    "skill": "github_trending_digest",
                 },
                 store,
                 adapter,
             )
 
             self.assertTrue(result["ok"])
-            self.assertEqual(result["automation_id"], "github_hot_repos_digest_2325")
+            self.assertEqual(result["automation_id"], "github_trending_digest_2325")
             self.assertEqual(result["name"], "GitHub热榜推荐")
             self.assertEqual(result["schedule_text"], "每天 23:25")
-            saved = store.get("github_hot_repos_digest_2325")
-            self.assertEqual(saved.skill_id, "github_hot_repos_digest")
+            saved = store.get("github_trending_digest_2325")
+            self.assertEqual(saved.skill_id, "github_trending_digest")
             self.assertEqual(saved.schedule_expr, "23:25")
 
     def test_register_automation_tool_accepts_task_name_trigger_time_and_6field_daily_cron(self) -> None:
@@ -186,7 +186,7 @@ class ToolTests(unittest.TestCase):
 
             result = run_register_automation_tool(
                 {
-                    "task_name": "GitHub Top10 推送",
+                    "task_name": "GitHub热榜推荐 推送",
                     "app_id": "example_assistant",
                     "agent_id": "assistant",
                     "schedule_kind": "cron",
@@ -194,20 +194,20 @@ class ToolTests(unittest.TestCase):
                     "timezone": "Asia/Shanghai",
                     "delivery_channel": "feishu",
                     "delivery_target": "oc_test_chat",
-                    "skill_id": "github_hot_repos_digest",
+                    "skill_id": "github_trending_digest",
                 },
                 store,
                 adapter,
             )
 
             self.assertTrue(result["ok"])
-            self.assertEqual(result["name"], "GitHub Top10 推送")
+            self.assertEqual(result["name"], "GitHub热榜推荐 推送")
             self.assertEqual(result["schedule_kind"], "daily")
             self.assertEqual(result["schedule_expr"], "21:10")
             self.assertEqual(result["schedule_text"], "每天 21:10")
 
             created = store.get(result["automation_id"])
-            self.assertEqual(created.name, "GitHub Top10 推送")
+            self.assertEqual(created.name, "GitHub热榜推荐 推送")
             self.assertEqual(created.schedule_expr, "21:10")
 
     def test_list_automations_tool_returns_public_jobs_via_adapter(self) -> None:
@@ -226,7 +226,7 @@ class ToolTests(unittest.TestCase):
                     "session_target": "isolated",
                     "delivery_channel": "feishu",
                     "delivery_target": "oc_test_chat",
-                    "skill_id": "github_hot_repos_digest",
+                    "skill_id": "github_trending_digest",
                 },
                 store,
                 adapter,
@@ -258,6 +258,34 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(result["items"][0]["name"], "Daily GitHub Hot Repos")
         self.assertEqual(result["items"][0]["schedule_text"], "每天 09:30")
         self.assertNotIn("delivery_target", result["items"][0])
+
+    def test_automation_family_tool_defaults_empty_payload_to_list_for_read_queries(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            adapter, store = self._build_adapter(tmpdir)
+            run_register_automation_tool(
+                {
+                    "automation_id": "daily_hot",
+                    "name": "Daily GitHub Hot Repos",
+                    "app_id": "example_assistant",
+                    "agent_id": "assistant",
+                    "prompt_template": "Summarize today's hot repositories.",
+                    "schedule_kind": "daily",
+                    "schedule_expr": "09:30",
+                    "timezone": "Asia/Shanghai",
+                    "session_target": "isolated",
+                    "delivery_channel": "feishu",
+                    "delivery_target": "oc_test_chat",
+                    "skill_id": "github_trending_digest",
+                },
+                store,
+                adapter,
+            )
+
+            result = run_automation_tool({}, store, adapter)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "list")
+        self.assertEqual(result["count"], 1)
         self.assertNotIn("delivery_channel", result["items"][0])
 
     def test_list_automations_tool_normalizes_legacy_skill_named_job_for_display(self) -> None:
@@ -265,8 +293,8 @@ class ToolTests(unittest.TestCase):
             adapter, store = self._build_adapter(tmpdir)
             store.save(
                 AutomationJob(
-                    automation_id="github_hot_repos_digest_0102",
-                    name="github_hot_repos_digest_0102",
+                    automation_id="github_trending_digest_0102",
+                    name="github_trending_digest_0102",
                     app_id="example_assistant",
                     agent_id="assistant",
                     prompt_template="",
@@ -276,7 +304,7 @@ class ToolTests(unittest.TestCase):
                     session_target="isolated",
                     delivery_channel="feishu",
                     delivery_target="oc_test_chat",
-                    skill_id="github_hot_repos_digest",
+                    skill_id="github_trending_digest",
                     enabled=True,
                     internal=False,
                 )
@@ -286,10 +314,68 @@ class ToolTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["count"], 1)
-        self.assertEqual(result["items"][0]["automation_id"], "github_hot_repos_digest_0102")
-        self.assertEqual(result["items"][0]["name"], "GitHub Top10")
+        self.assertEqual(result["items"][0]["automation_id"], "github_trending_digest_0102")
+        self.assertEqual(result["items"][0]["name"], "GitHub热榜推荐")
         self.assertEqual(result["items"][0]["schedule_expr"], "21:10")
         self.assertEqual(result["items"][0]["schedule_text"], "每天 21:10")
+
+    def test_list_automations_tool_normalizes_canonical_skill_named_job_for_display(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            adapter, store = self._build_adapter(tmpdir)
+            store.save(
+                AutomationJob(
+                    automation_id="github_trending_digest_0102",
+                    name="github_trending_digest_0102",
+                    app_id="example_assistant",
+                    agent_id="assistant",
+                    prompt_template="",
+                    schedule_kind="daily",
+                    schedule_expr="0 10 21 * * *",
+                    timezone="Asia/Shanghai",
+                    session_target="isolated",
+                    delivery_channel="feishu",
+                    delivery_target="oc_test_chat",
+                    skill_id="github_trending_digest",
+                    enabled=True,
+                    internal=False,
+                )
+            )
+
+            result = run_list_automations_tool({"delivery_channel": "feishu"}, adapter)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["items"][0]["automation_id"], "github_trending_digest_0102")
+        self.assertEqual(result["items"][0]["name"], "GitHub热榜推荐")
+
+    def test_list_automations_tool_normalizes_legacy_default_github_name_for_display(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            adapter, store = self._build_adapter(tmpdir)
+            store.save(
+                AutomationJob(
+                    automation_id="github_digest_daily",
+                    name="GitHub热榜推荐",
+                    app_id="example_assistant",
+                    agent_id="assistant",
+                    prompt_template="",
+                    schedule_kind="daily",
+                    schedule_expr="23:30",
+                    timezone="Asia/Shanghai",
+                    session_target="isolated",
+                    delivery_channel="feishu",
+                    delivery_target="oc_test_chat",
+                    skill_id="github_trending_digest",
+                    enabled=False,
+                    internal=False,
+                )
+            )
+
+            result = run_list_automations_tool({"delivery_channel": "feishu", "include_disabled": True}, adapter)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["items"][0]["automation_id"], "github_digest_daily")
+        self.assertEqual(result["items"][0]["name"], "GitHub热榜推荐")
 
     def test_list_automations_tool_can_include_disabled_public_jobs(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -307,7 +393,7 @@ class ToolTests(unittest.TestCase):
                     "session_target": "isolated",
                     "delivery_channel": "feishu",
                     "delivery_target": "oc_test_chat",
-                    "skill_id": "github_hot_repos_digest",
+                    "skill_id": "github_trending_digest",
                 },
                 store,
                 adapter,
@@ -320,6 +406,112 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(default_result["count"], 0)
         self.assertEqual(disabled_result["count"], 1)
         self.assertFalse(disabled_result["items"][0]["enabled"])
+
+    def test_list_automations_tool_sorts_by_normalized_schedule_time_ascending(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            adapter, store = self._build_adapter(tmpdir)
+            store.save(
+                AutomationJob(
+                    automation_id="job_2330",
+                    name="GitHub热榜推荐",
+                    app_id="example_assistant",
+                    agent_id="assistant",
+                    prompt_template="",
+                    schedule_kind="daily",
+                    schedule_expr="23:30",
+                    timezone="Asia/Shanghai",
+                    session_target="isolated",
+                    delivery_channel="feishu",
+                    delivery_target="oc_test_chat",
+                    skill_id="github_trending_digest",
+                    enabled=False,
+                    internal=False,
+                )
+            )
+            store.save(
+                AutomationJob(
+                    automation_id="job_2220",
+                    name="github_trending_digest",
+                    app_id="example_assistant",
+                    agent_id="assistant",
+                    prompt_template="",
+                    schedule_kind="daily",
+                    schedule_expr="22:20",
+                    timezone="Asia/Shanghai",
+                    session_target="isolated",
+                    delivery_channel="feishu",
+                    delivery_target="oc_test_chat",
+                    skill_id="github_trending_digest",
+                    enabled=True,
+                    internal=False,
+                )
+            )
+            store.save(
+                AutomationJob(
+                    automation_id="job_2110",
+                    name="github_trending_digest",
+                    app_id="example_assistant",
+                    agent_id="assistant",
+                    prompt_template="",
+                    schedule_kind="daily",
+                    schedule_expr="0 10 21 * * *",
+                    timezone="Asia/Shanghai",
+                    session_target="isolated",
+                    delivery_channel="feishu",
+                    delivery_target="oc_test_chat",
+                    skill_id="github_trending_digest",
+                    enabled=True,
+                    internal=False,
+                )
+            )
+            store.save(
+                AutomationJob(
+                    automation_id="job_2200",
+                    name="GitHub热榜推荐",
+                    app_id="example_assistant",
+                    agent_id="assistant",
+                    prompt_template="",
+                    schedule_kind="daily",
+                    schedule_expr="22:00",
+                    timezone="Asia/Shanghai",
+                    session_target="isolated",
+                    delivery_channel="feishu",
+                    delivery_target="oc_test_chat",
+                    skill_id="github_trending_digest",
+                    enabled=True,
+                    internal=False,
+                )
+            )
+            store.save(
+                AutomationJob(
+                    automation_id="job_2230",
+                    name="GitHub热榜推荐",
+                    app_id="example_assistant",
+                    agent_id="assistant",
+                    prompt_template="",
+                    schedule_kind="daily",
+                    schedule_expr="22:30",
+                    timezone="Asia/Shanghai",
+                    session_target="isolated",
+                    delivery_channel="feishu",
+                    delivery_target="oc_test_chat",
+                    skill_id="github_trending_digest",
+                    enabled=True,
+                    internal=False,
+                )
+            )
+
+            result = run_list_automations_tool({"delivery_channel": "feishu", "include_disabled": True}, adapter)
+
+        self.assertEqual(result["count"], 5)
+        self.assertEqual(
+            [item["schedule_expr"] for item in result["items"]],
+            ["21:10", "22:00", "22:20", "22:30", "23:30"],
+        )
+        self.assertEqual(
+            [item["name"] for item in result["items"]],
+            ["GitHub热榜推荐", "GitHub热榜推荐", "GitHub热榜推荐", "GitHub热榜推荐", "GitHub热榜推荐"],
+        )
 
     def test_get_automation_detail_tool_returns_public_job_and_hides_internal(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -337,7 +529,7 @@ class ToolTests(unittest.TestCase):
                     "session_target": "isolated",
                     "delivery_channel": "feishu",
                     "delivery_target": "oc_test_chat",
-                    "skill_id": "github_hot_repos_digest",
+                    "skill_id": "github_trending_digest",
                 },
                 store,
                 adapter,
@@ -387,7 +579,7 @@ class ToolTests(unittest.TestCase):
                     "session_target": "isolated",
                     "delivery_channel": "feishu",
                     "delivery_target": "oc_test_chat",
-                    "skill_id": "github_hot_repos_digest",
+                    "skill_id": "github_trending_digest",
                 },
                 store,
                 adapter,
@@ -415,6 +607,44 @@ class ToolTests(unittest.TestCase):
             self.assertTrue(deleted["ok"])
             self.assertEqual(store.list_all(), [])
 
+    def test_update_automation_tool_canonicalizes_digest_skill_and_recomputes_fingerprint(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            adapter, store = self._build_adapter(tmpdir)
+            run_register_automation_tool(
+                {
+                    "automation_id": "daily_hot",
+                    "name": "Daily GitHub Hot Repos",
+                    "app_id": "example_assistant",
+                    "agent_id": "assistant",
+                    "prompt_template": "Summarize today's hot repositories.",
+                    "schedule_kind": "daily",
+                    "schedule_expr": "09:30",
+                    "timezone": "Asia/Shanghai",
+                    "session_target": "isolated",
+                    "delivery_channel": "feishu",
+                    "delivery_target": "oc_test_chat",
+                    "skill_id": "github_trending_digest",
+                },
+                store,
+                adapter,
+            )
+            before = store.get("daily_hot")
+
+            updated = run_update_automation_tool(
+                {
+                    "automation_id": "daily_hot",
+                    "skill_id": "github_trending_digest",
+                    "schedule_expr": "23:50",
+                },
+                adapter,
+            )
+            after = store.get("daily_hot")
+
+        self.assertTrue(updated["ok"])
+        self.assertEqual(after.skill_id, "github_trending_digest")
+        self.assertEqual(after.schedule_expr, "23:50")
+        self.assertNotEqual(before.semantic_fingerprint, after.semantic_fingerprint)
+
     def test_automation_family_tool_dispatches_register_and_list(self) -> None:
         with TemporaryDirectory() as tmpdir:
             adapter, store = self._build_adapter(tmpdir)
@@ -433,7 +663,7 @@ class ToolTests(unittest.TestCase):
                     "session_target": "isolated",
                     "delivery_channel": "feishu",
                     "delivery_target": "oc_test_chat",
-                    "skill_id": "github_hot_repos_digest",
+                    "skill_id": "github_trending_digest",
                 },
                 store,
                 adapter,
@@ -444,6 +674,36 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(created["ok"])
         self.assertEqual(listed["action"], "list")
         self.assertEqual(listed["count"], 1)
+
+    def test_automation_family_tool_list_includes_paused_jobs_by_default(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            adapter, store = self._build_adapter(tmpdir)
+            run_register_automation_tool(
+                {
+                    "automation_id": "daily_hot",
+                    "name": "Daily GitHub Hot Repos",
+                    "app_id": "example_assistant",
+                    "agent_id": "assistant",
+                    "prompt_template": "Summarize today's hot repositories.",
+                    "schedule_kind": "daily",
+                    "schedule_expr": "09:30",
+                    "timezone": "Asia/Shanghai",
+                    "session_target": "isolated",
+                    "delivery_channel": "feishu",
+                    "delivery_target": "oc_test_chat",
+                    "skill_id": "github_trending_digest",
+                },
+                store,
+                adapter,
+            )
+            store.set_enabled("daily_hot", False)
+
+            listed = run_automation_tool({"action": "list"}, store, adapter)
+
+        self.assertEqual(listed["action"], "list")
+        self.assertTrue(listed["ok"])
+        self.assertEqual(listed["count"], 1)
+        self.assertFalse(listed["items"][0]["enabled"])
 
     def test_self_improve_tools_list_evidence_and_lessons_and_save_candidates(self) -> None:
         with TemporaryDirectory() as tmpdir:

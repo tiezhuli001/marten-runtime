@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from marten_runtime.automation.models import AutomationJob
+from marten_runtime.automation.skill_ids import resolve_automation_runtime_skill_id
 from marten_runtime.config.automations_loader import load_automations
 from marten_runtime.automation.scheduler import Scheduler
 from marten_runtime.automation.store import AutomationStore
@@ -25,7 +26,7 @@ class AutomationTests(unittest.TestCase):
                 session_target="isolated",
                 delivery_channel="feishu",
                 delivery_target="oc_test_chat",
-                skill_id="github_hot_repos_digest",
+                skill_id="github_trending_digest",
                 enabled=True,
             )
         )
@@ -36,7 +37,7 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(enabled[0].schedule_kind, "daily")
         self.assertEqual(enabled[0].schedule_expr, "09:30")
         self.assertEqual(enabled[0].delivery_target, "oc_test_chat")
-        self.assertEqual(enabled[0].skill_id, "github_hot_repos_digest")
+        self.assertEqual(enabled[0].skill_id, "github_trending_digest")
         self.assertTrue(enabled[0].semantic_fingerprint)
 
     def test_loader_supports_seed_data(self) -> None:
@@ -58,7 +59,7 @@ timezone = "Asia/Shanghai"
 session_target = "isolated"
 delivery_channel = "feishu"
 delivery_target = "oc_test_chat"
-skill_id = "github_hot_repos_digest"
+skill_id = "github_trending_digest"
 enabled = true
 """.strip(),
                 encoding="utf-8",
@@ -70,7 +71,7 @@ enabled = true
         self.assertEqual(jobs[0].automation_id, "daily_hot")
         self.assertEqual(jobs[0].schedule_expr, "10:00")
         self.assertEqual(jobs[0].delivery_channel, "feishu")
-        self.assertEqual(jobs[0].skill_id, "github_hot_repos_digest")
+        self.assertEqual(jobs[0].skill_id, "github_trending_digest")
 
     def test_scheduler_creates_dispatch_and_preserves_isolated_target(self) -> None:
         store = AutomationStore()
@@ -85,7 +86,7 @@ enabled = true
                 session_target="isolated",
                 delivery_channel="feishu",
                 delivery_target="oc_test_chat",
-                skill_id="github_hot_repos_digest",
+                skill_id="github_trending_digest",
             )
         )
         scheduler = Scheduler(store)
@@ -95,7 +96,7 @@ enabled = true
         self.assertEqual(len(created), 1)
         self.assertEqual(created[0].session_target, "isolated")
         self.assertEqual(created[0].delivery_target, "oc_test_chat")
-        self.assertEqual(created[0].skill_id, "github_hot_repos_digest")
+        self.assertEqual(created[0].skill_id, "github_trending_digest")
 
     def test_scheduler_includes_internal_self_improve_job(self) -> None:
         store = AutomationStore()
@@ -122,6 +123,11 @@ enabled = true
         self.assertEqual(created[0].skill_id, "self_improve")
         self.assertEqual(created[0].delivery_channel, "http")
         self.assertEqual(created[0].delivery_target, "internal")
+
+    def test_resolve_automation_runtime_skill_id_skips_trending_digest_bridge(self) -> None:
+        self.assertIsNone(resolve_automation_runtime_skill_id("github_trending_digest"))
+        self.assertEqual(resolve_automation_runtime_skill_id("self_improve"), "self_improve")
+        self.assertIsNone(resolve_automation_runtime_skill_id("  "))
 
 
 if __name__ == "__main__":

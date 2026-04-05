@@ -20,6 +20,32 @@ Do not use this file for day-to-day task tracking. Local continuity belongs in a
 
 ## Entries
 
+### 2026-04-05: GitHub Trending Became A Repo-Local MCP Sidecar Instead Of A Skill-Only Approximation
+
+- Change:
+  - added one repo-local stdio MCP sidecar at [github_trending.py](/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/mcp_servers/github_trending.py)
+  - the new sidecar exposes exactly one tool:
+    - `trending_repositories`
+  - registered the sidecar through [mcps.json](/Users/litiezhu/workspace/github/marten-runtime/mcps.json) instead of adding a runtime builtin or GitHub-specific routing branch
+  - the temporary GitHub skill bridge was first narrowed and has now been removed; trending requests now rely on the MCP sidecar plus automation-boundary compatibility instead of a GitHub-specific skill file
+- Why:
+  - the upstream official GitHub MCP surface currently exposes repository search but not a real trending feed
+  - using `search_repositories` plus prompt/skill rules was a semantic approximation and added avoidable LLM/tool turns
+  - the thinner boundary is: model selects MCP → sidecar fetches/parses GitHub Trending → renderer formats result
+- Source of truth:
+  - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
+  - [ADR 0002: Progressive Disclosure Default Surface](./architecture/adr/0002-progressive-disclosure-default-surface.md)
+  - [2026-04-05 GitHub Trending MCP Plan](./archive/plans/2026-04-05-github-trending-mcp-plan.md)
+- Verification:
+  - `PYTHONPATH=src python -m unittest -v`
+    - pass, `269` tests green
+  - live runtime diagnostics now discover `github_trending` with one tool `trending_repositories`
+  - live request `帮我看下今天 github 热门仓库` on run `run_a2d2f279` used:
+    - `mcp.list`
+    - `mcp.call(server_id=github_trending, tool_name=trending_repositories)`
+  - corrected live parse output now preserves canonical repo URLs and sane `stars_total` extraction from GitHub Trending HTML
+  - live GitHub Trending HTML re-check on `2026-04-06` confirmed the returned list follows the official page order rather than a local descending-stars sort
+  - latest Feishu wording now explicitly states `按 GitHub Trending 页面顺序` and avoids repeating fetched time in both the summary and the ordering note
 ### 2026-04-02: Feishu Outbound Rendering Settled On One Generic Renderer + One Thin Always-On Skill
 
 - Change:
@@ -75,7 +101,7 @@ Do not use this file for day-to-day task tracking. Local continuity belongs in a
   - added `apps/example_assistant/SYSTEM_LESSONS.md` to `.gitignore`
   - formalized `SYSTEM_LESSONS.md` as a runtime-managed artifact instead of a repository baseline file
   - introduced `docs/archive/` and moved completed one-off audits and the completed refinement plan out of the primary docs path
-  - added a new active follow-up plan at `docs/plans/2026-04-01-bootstrap-assembly-hygiene-plan.md`
+  - recorded the bootstrap cleanup plan at `docs/archive/plans/2026-04-01-bootstrap-assembly-hygiene-plan.md`
 - Why:
   - runtime-generated files should not keep dirtying the repository after normal live runs
   - completed audits and plans were competing with current source-of-truth docs and active reading paths

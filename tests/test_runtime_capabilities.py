@@ -31,6 +31,18 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
             render_tool_description(declarations["automation"]),
         )
         self.assertIn(
+            "当前有哪些定时任务",
+            render_tool_description(declarations["automation"]),
+        )
+        self.assertIn(
+            "action=list",
+            render_tool_description(declarations["automation"]),
+        )
+        self.assertIn(
+            "不要调用不存在的子工具名",
+            render_tool_description(declarations["automation"]),
+        )
+        self.assertIn(
             "Inspect available MCP servers and tools",
             render_tool_description(declarations["mcp"]),
         )

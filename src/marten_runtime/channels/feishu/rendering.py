@@ -11,7 +11,7 @@ _INLINE_JSON_PREFIX_CHARS = set(" \t\r\n。.!?！？：:;；,，)]）】}\"'」�
 _FEISHU_CARD_BLOCK_RE = re.compile(r"\n*```feishu_card\s*\n(?P<body>[\s\S]*?)\n```\s*$")
 _FEISHU_CARD_JSON_BLOCK_RE = re.compile(r"\n*```json\s*\n(?P<body>[\s\S]*?)\n```\s*$")
 _FEISHU_CARD_INVOKE_RE = re.compile(
-    r"\n*<invoke name=\"feishu_card\">\s*(?P<body>[\s\S]*?)\s*</invoke>\s*(?:</minimax:tool_call>\s*)?$"
+    r"\n*(?:<minimax:tool_call>\s*)?<invoke name=\"feishu_card\">\s*(?P<body>[\s\S]*?)\s*</invoke>\s*(?:</minimax:tool_call>\s*)?$"
 )
 _FEISHU_CARD_BARE_RE = re.compile(r"\n*feishu_card\s*\n(?P<body>\{[\s\S]*\})\s*$")
 _FEISHU_CARD_BARE_JSON_BLOCK_RE = re.compile(r"\n*feishu_card\s*\n```json\s*\n(?P<body>[\s\S]*?)\n```\s*$")
@@ -246,7 +246,7 @@ def _build_generic_card(
         if index > 0 or summary:
             pass
         elements.append(_markdown_div(f"**🗂️ {section_title}**"))
-        elements.append(_markdown_div("\n".join(f"- {item}" for item in section.items)))
+        elements.append(_markdown_div("\n".join(_render_section_item(item) for item in section.items)))
     if note:
         elements.append(_hr())
         elements.append(_markdown_div(f"<font color='grey'>💬 {note}</font>"))
@@ -289,6 +289,7 @@ def _dedupe_visible_text_against_protocol(text: str, protocol: FeishuCardProtoco
     if not text:
         return text
     if any(section.items for section in protocol.sections):
+        text = _strip_visible_markdown_table_blocks(text)
         text = _strip_visible_bullet_lines(text)
     protocol_items = {
         _normalize_bullet_text(item)
@@ -321,7 +322,61 @@ def _strip_visible_bullet_lines(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", stripped).strip()
 
 
+def _strip_visible_markdown_table_blocks(text: str) -> str:
+    lines = text.splitlines()
+    kept_lines: list[str] = []
+    index = 0
+    while index < len(lines):
+        if _is_markdown_table_header(lines, index):
+            index += 2
+            while index < len(lines) and _is_markdown_table_row(lines[index]):
+                index += 1
+            while index < len(lines) and not lines[index].strip():
+                index += 1
+            continue
+        kept_lines.append(lines[index].rstrip())
+        index += 1
+    stripped = "\n".join(kept_lines)
+    return re.sub(r"\n{3,}", "\n\n", stripped).strip()
+
+
+def _is_markdown_table_header(lines: list[str], index: int) -> bool:
+    if index + 1 >= len(lines):
+        return False
+    return _is_markdown_table_row(lines[index]) and _is_markdown_table_divider(lines[index + 1])
+
+
+def _is_markdown_table_row(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return False
+    return stripped.count("|") >= 3
+
+
+def _is_markdown_table_divider(line: str) -> bool:
+    if not _is_markdown_table_row(line):
+        return False
+    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+    if not cells:
+        return False
+    return all(cell and set(cell) <= {"-", ":", " "} for cell in cells)
+
+
 def _normalize_bullet_text(text: str) -> str:
     normalized = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    normalized = normalized.replace("GitHub热榜推荐", "GitHub热榜推荐")
     normalized = re.sub(r"\s+", " ", normalized).strip()
     return normalized
+
+
+def _render_section_item(item: str) -> str:
+    normalized = item.strip()
+    if not normalized:
+        return "-"
+    if _is_ordered_or_bulleted_item(normalized):
+        return normalized
+    return f"- {normalized}"
+
+
+def _is_ordered_or_bulleted_item(text: str) -> bool:
+    return re.match(r"^(?:[-*•]\s+|\d+[.)]\s+|[A-Za-z][.)]\s+)", text) is not None

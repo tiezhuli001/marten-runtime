@@ -127,7 +127,7 @@ def create_app(
     def get_trace(trace_id: str) -> dict[str, object]:
         item = runtime.trace_index.get(
             trace_id,
-            {"run_ids": [], "job_ids": [], "event_ids": [], "external_refs": {"langfuse": None, "langsmith": None}},
+            {"run_ids": [], "job_ids": [], "event_ids": [], "external_refs": {}},
         )
         return {"trace_id": trace_id, **item}
 

@@ -1,0 +1,1 @@
+"""Repo-local MCP sidecars."""

@@ -1,4 +1,5 @@
 from marten_runtime.automation.models import AutomationJob, build_automation_semantic_fingerprint
+from marten_runtime.automation.skill_ids import canonicalize_automation_skill_id
 
 
 class AutomationStore:
@@ -10,7 +11,7 @@ class AutomationStore:
         self._items[job.automation_id] = job
 
     def create_job(self, values: dict[str, object]) -> AutomationJob:
-        job = AutomationJob(**values)
+        job = AutomationJob(**_normalize_automation_values(values))
         self.save(job)
         return job
 
@@ -29,7 +30,8 @@ class AutomationStore:
 
     def update(self, automation_id: str, updates: dict[str, object]) -> AutomationJob:
         current = self.get(automation_id)
-        merged = current.model_copy(update=updates)
+        merged = current.model_copy(update=_normalize_automation_values(updates))
+        merged.semantic_fingerprint = build_automation_semantic_fingerprint(merged)
         self.save(merged)
         return merged
 
@@ -76,3 +78,10 @@ def _is_equivalent_registration(job: AutomationJob, payload: dict[str, str]) -> 
     if not job.enabled:
         return False
     return job.semantic_fingerprint == build_automation_semantic_fingerprint(payload)
+
+
+def _normalize_automation_values(values: dict[str, object]) -> dict[str, object]:
+    normalized = dict(values)
+    if "skill_id" in normalized:
+        normalized["skill_id"] = canonicalize_automation_skill_id(str(normalized["skill_id"]))
+    return normalized

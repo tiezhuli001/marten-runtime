@@ -84,7 +84,7 @@ class DomainDataAdapterTests(unittest.TestCase):
                     "session_target": "chat-1",
                     "delivery_channel": "feishu",
                     "delivery_target": "oc_xxx",
-                    "skill_id": "github_hot_repos_digest",
+                    "skill_id": "github_trending_digest",
                     "enabled": True,
                     "internal": False,
                 },

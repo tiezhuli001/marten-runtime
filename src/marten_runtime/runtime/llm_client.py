@@ -173,7 +173,7 @@ class OpenAIChatLLMClient:
                     "function": {
                         "name": tool_name,
                         "description": request.tool_snapshot.tool_metadata.get(tool_name, {}).get("description", ""),
-                        "parameters": {"type": "object"},
+                        "parameters": _tool_parameters_schema(tool_name),
                     },
                 }
                 for tool_name in request.available_tools
@@ -186,9 +186,7 @@ class OpenAIChatLLMClient:
         is_tool_followup = bool(request.tool_history) or (
             request.tool_result is not None and bool(request.requested_tool_name)
         )
-        include_capability_catalog = bool(request.capability_catalog_text) and not is_tool_followup and not bool(
-            request.available_tools
-        )
+        include_capability_catalog = bool(request.capability_catalog_text) and not is_tool_followup
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
         if request.skill_heads_text and not is_tool_followup:
@@ -301,6 +299,77 @@ def _collapse_system_messages(messages: list[dict]) -> list[dict]:
     return collapsed
 
 
+def _tool_parameters_schema(tool_name: str) -> dict[str, object]:
+    if tool_name == "automation":
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["register", "list", "detail", "update", "delete", "pause", "resume"],
+                },
+                "automation_id": {"type": "string"},
+                "include_disabled": {"type": "boolean"},
+            },
+            "required": ["action"],
+            "additionalProperties": True,
+        }
+    if tool_name == "mcp":
+        return {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["list", "detail", "call"]},
+                "server_id": {"type": "string"},
+                "tool_name": {"type": "string"},
+                "query": {"type": "string"},
+                "arguments": {"type": "object"},
+            },
+            "required": ["action"],
+            "additionalProperties": True,
+        }
+    if tool_name == "self_improve":
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "list_candidates",
+                        "candidate_detail",
+                        "delete_candidate",
+                        "summary",
+                        "list_evidence",
+                        "list_system_lessons",
+                        "save_candidate",
+                    ],
+                },
+                "candidate_id": {"type": "string"},
+            },
+            "required": ["action"],
+            "additionalProperties": True,
+        }
+    if tool_name == "skill":
+        return {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["load"]},
+                "skill_id": {"type": "string"},
+            },
+            "required": ["action", "skill_id"],
+            "additionalProperties": False,
+        }
+    if tool_name == "time":
+        return {
+            "type": "object",
+            "properties": {
+                "timezone": {"type": "string"},
+                "tz": {"type": "string"},
+            },
+            "additionalProperties": False,
+        }
+    return {"type": "object"}
+
+
 def _resolve_base_url(*, profile: ModelProfile, env: Mapping[str, str]) -> str | None:
     api_key_env = profile.api_key_env or "OPENAI_API_KEY"
     if api_key_env.endswith("_API_KEY"):
@@ -319,24 +388,16 @@ def build_llm_client(
     transport: Transport | None = None,
 ) -> LLMClient:
     env = os.environ if env is None else env
-    if profile.provider == "openai":
-        api_key_env = profile.api_key_env or "OPENAI_API_KEY"
-        api_key = env.get(api_key_env)
-        if api_key:
-            return OpenAIChatLLMClient(
-                api_key=api_key,
-                model=profile.model,
-                profile_name=profile_name,
-                base_url=_resolve_base_url(profile=profile, env=env),
-                transport=transport,
-            )
-        return DemoLLMClient(
-            provider_name="demo-fallback",
-            model_name=f"{profile.provider}:{profile.model}",
-            profile_name=profile_name,
-        )
-    return DemoLLMClient(
-        provider_name="demo-fallback",
-        model_name=f"{profile.provider}:{profile.model}",
+    if profile.provider != "openai":
+        raise ValueError(f"unsupported_llm_provider:{profile.provider}")
+    api_key_env = profile.api_key_env or "OPENAI_API_KEY"
+    api_key = env.get(api_key_env)
+    if not api_key:
+        raise ValueError(f"missing_llm_api_key:{api_key_env}")
+    return OpenAIChatLLMClient(
+        api_key=api_key,
+        model=profile.model,
         profile_name=profile_name,
+        base_url=_resolve_base_url(profile=profile, env=env),
+        transport=transport,
     )

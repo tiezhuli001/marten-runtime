@@ -30,7 +30,7 @@ class EnvLoaderTests(unittest.TestCase):
             profile = ModelProfile(
                 provider="openai",
                 model="MiniMax-M2.5",
-                base_url="https://api.minimax.io/v1",
+                base_url="https://api.minimaxi.com/v1",
                 api_key_env="MINIMAX_API_KEY",
             )
 
