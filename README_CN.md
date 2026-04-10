@@ -4,7 +4,7 @@
 
 面向私有 agent 场景的 simplified openclaw-style runtime，聚焦 `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel` 主链。
 
-[English](./README.md) · [文档索引](./docs/README.md) · [Harness 设计](./docs/2026-03-29-private-agent-harness-design.md) · [Conversation Lanes 设计](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md) · [配置面说明](./docs/CONFIG_SURFACES.md)
+[English](./README.md) · [文档索引](./docs/README.md) · [架构演进](./docs/ARCHITECTURE_EVOLUTION_CN.md) · [Harness 设计](./docs/2026-03-29-private-agent-harness-design.md) · [Conversation Lanes 设计](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md) · [配置面说明](./docs/CONFIG_SURFACES.md)
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
@@ -216,6 +216,7 @@ PYTHONPATH=src python -m unittest -v
 建议阅读顺序：
 
 1. [docs/README.md](./docs/README.md)
+2. [docs/ARCHITECTURE_EVOLUTION_CN.md](./docs/ARCHITECTURE_EVOLUTION_CN.md)
 2. [docs/2026-03-29-private-agent-harness-design.md](./docs/2026-03-29-private-agent-harness-design.md)
 3. [docs/2026-03-30-conversation-lanes-provider-resilience-design.md](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md)
 4. [docs/2026-03-30-self-improve-design.md](./docs/2026-03-30-self-improve-design.md)
