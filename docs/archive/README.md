@@ -12,6 +12,9 @@ This directory holds completed plans and one-off audits that remain useful for t
 
 - `2026-03-31-agent-domain-query-adapter-design.md`
 - `2026-03-31-automation-domain-adapter-design.md`
+- `2026-04-06-thin-llm-context-compaction-design.md`
+- `2026-04-07-context-usage-accuracy-design.md`
+- `2026-04-07-llm-tool-episode-summary-design.md`
 - `audits/ARCHITECTURE_AUDIT.md`
 - `audits/2026-03-31-repo-cleanup-audit.md`
 - `plans/2026-03-31-progressive-disclosure-capability-refinement-plan.md`
@@ -20,7 +23,14 @@ This directory holds completed plans and one-off audits that remain useful for t
 - `plans/2026-04-01-feishu-message-pipeline-unification-plan.md`
 - `plans/2026-04-02-feishu-generic-renderer-iteration-plan.md`
 - `plans/2026-04-05-github-trending-mcp-plan.md`
+- `plans/2026-04-07-context-usage-accuracy-plan.md`
+- `plans/2026-04-07-llm-tool-episode-summary-plan.md`
+- `plans/2026-04-07-thin-llm-context-compaction-plan.md`
 - `plans/2026-04-05-delete-github-hot-repos-digest-plan.md`
+- `plans/2026-04-07-tool-outcome-summary-plan.md`
+- `plans/2026-04-09-next-branch-evolution-stage-1-execution-plan.md`
+- `plans/2026-04-09-pre-commit-closure-and-evolution-design.md`
+- `plans/2026-04-09-pre-commit-closure-execution-plan.md`
 
 ## Rules
 

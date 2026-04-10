@@ -16,9 +16,36 @@ def replay_session_messages(
             replayable = replayable[:-1]
     if limit <= 0:
         return []
-    replay = replayable[-limit:]
+    replay = _trim_noisy_tail(replayable, limit)
     if len(replay) == limit and replay and replay[0].role == "assistant":
         start_index = len(replayable) - len(replay)
         if start_index > 0 and replayable[start_index - 1].role == "user":
             replay = [replayable[start_index - 1], *replay[:-1]]
     return replay
+
+
+def _trim_noisy_tail(messages: list[SessionMessage], limit: int) -> list[SessionMessage]:
+    replay: list[SessionMessage] = []
+    skip_previous_user = False
+    for message in reversed(messages):
+        if skip_previous_user and message.role == "user":
+            skip_previous_user = False
+            continue
+        if message.role == "assistant" and _is_noisy_assistant_message(message.content):
+            skip_previous_user = True
+            continue
+        skip_previous_user = False
+        replay.append(message)
+        if len(replay) >= limit:
+            break
+    return list(reversed(replay))
+
+
+def _is_noisy_assistant_message(content: str) -> bool:
+    normalized = content.strip()
+    return (
+        len(normalized) > 240
+        or normalized.count("步骤;") >= 8
+        or normalized.count("\n") >= 8
+        or normalized.count("```") >= 2
+    )

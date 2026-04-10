@@ -41,7 +41,7 @@ This directory contains the public design and operations notes for `marten-runti
 
 ## Notes
 
-- completed plans and one-off audits are moved under `docs/archive/` instead of competing with current source-of-truth and active docs
+- completed plans, completed slice designs, and one-off audits are moved under `docs/archive/` instead of competing with current source-of-truth and active docs
 - tracked `STATUS.md` is no longer part of the repository source of truth; local continuity can still exist in an ignored local `STATUS.md`
 
 ## Current State
@@ -59,4 +59,7 @@ This directory contains the public design and operations notes for `marten-runti
 - stable architecture truth now lives in `docs/architecture/adr/` plus `docs/ARCHITECTURE_CHANGELOG.md`
 - `apps/example_assistant/SYSTEM_LESSONS.md` is a runtime-managed artifact and is intentionally ignored by git
 - durable session persistence is intentionally still pending
+- thin LLM context compaction is now implemented as one thin long-thread continuity slice: only oversized conversation-history prefixes are rewritten, runtime scaffolding remains intact, and HTTP `/messages` persists/reuses compact checkpoints
+- context-usage accuracy is now implemented as the current thin runtime baseline: provider actual usage is normalized first, tokenizer-family preflight estimates are computed from the final outbound payload, and deterministic rough fallback remains last-resort only
+- thin cross-turn tool continuity now uses the LLM-first tool-episode-summary path on the main chain; deterministic extraction remains only as a thin fallback, and the earlier rules-first baseline is archived for traceability
 - Public docs are template-first and avoid local-only paths or secrets

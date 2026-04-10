@@ -18,6 +18,8 @@ def build_test_app():
     )
     runtime = app.state.runtime
     runtime.runtime_loop.llm = DemoLLMClient(provider_name="test-demo", model_name="test-demo", profile_name="test")
+    runtime.llm_client_factory.cache_client("default", runtime.runtime_loop.llm)
+    runtime.llm_client_factory.cache_client("minimax_coding", runtime.runtime_loop.llm)
     runtime.automation_store = AutomationStore()
     runtime.channels_config = runtime.channels_config.model_copy(
         update={

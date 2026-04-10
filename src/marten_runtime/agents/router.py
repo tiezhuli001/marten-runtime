@@ -5,6 +5,12 @@ from marten_runtime.gateway.models import InboundEnvelope
 
 
 class AgentRouter:
+    """Resolve the active main agent with a fixed precedence.
+
+    Precedence is intentionally narrow and stable:
+    requested_agent_id -> binding match -> active_agent_id -> default_agent_id.
+    """
+
     def __init__(
         self,
         registry: AgentRegistry,

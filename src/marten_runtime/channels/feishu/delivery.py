@@ -25,6 +25,7 @@ class FeishuDeliveryPayload(BaseModel):
     visibility: str = "channel"
     text: str
     dedupe_key: str | None = None
+    usage_summary: dict[str, int | None | bool] | None = None
 
 
 Transport = Callable[[str, dict[str, str], dict], dict]
@@ -327,8 +328,11 @@ class FeishuDeliveryClient:
         }
 
     def _render_card(self, payload: FeishuDeliveryPayload) -> str:
+        kwargs: dict[str, object] = {"event_type": payload.event_type}
+        if payload.usage_summary is not None:
+            kwargs["usage_summary"] = payload.usage_summary
         return json.dumps(
-            feishu_rendering.render_final_reply_card(payload.text, event_type=payload.event_type),
+            feishu_rendering.render_final_reply_card(payload.text, **kwargs),
             ensure_ascii=False,
         )
 

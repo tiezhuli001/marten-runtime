@@ -19,7 +19,7 @@ Simplified openclaw-style private agent runtime for `channel -> binding -> agent
 - `LLM + agent + MCP + skill` first
 - `harness-thin, policy-hard, workflow-light`
 - Channel-aware binding and multi-agent routing
-- Runtime context assembly with replayed session context and live skill activation
+- Runtime context assembly with governed replay, compacted working context, and live skill activation
 - OpenAI-compatible provider support with retry/backoff normalization
 - Feishu websocket ingress plus thin HTTP operator surface
 
@@ -102,15 +102,19 @@ Key references:
 
 ## Current Scope
 
-Milestone A from the private harness plan is implemented:
+The current MVP A/B path is implemented:
 
-- gateway binding + multi-agent routing
-- runtime context assembly + live context rehydration
+- multi-main-agent private config loading and stable routing precedence
+- explicit HTTP `requested_agent_id` routing from inbound request to selected agent
+- selected agent identity propagation into live LLM request inputs
+- runtime context assembly with governed replay, compacted working context, and long-dialogue regression coverage
 - skills as first-class runtime inputs
 - provider retry/backoff resilience
 
-Milestone B is intentionally not implemented yet:
+Still intentionally deferred:
 
+- thin per-agent model-profile switching via cached client factory
+- per-agent app manifest / bootstrap prompt switching
 - durable session persistence
 
 Also out of scope for now:

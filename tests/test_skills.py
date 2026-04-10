@@ -21,9 +21,8 @@ def write_skill(root: Path, skill_id: str, body: str) -> None:
 
 class SkillTests(unittest.TestCase):
     def test_repo_feishu_formatting_skill_constrains_trending_order_and_rank_markers(self) -> None:
-        skill_body = Path(
-            "/Users/litiezhu/workspace/github/marten-runtime/skills/feishu_channel_formatting/SKILL.md"
-        ).read_text(encoding="utf-8")
+        repo_root = Path(__file__).resolve().parent.parent
+        skill_body = (repo_root / "skills" / "feishu_channel_formatting" / "SKILL.md").read_text(encoding="utf-8")
 
         self.assertIn("preserve the original repository order returned by the MCP result", skill_body)
         self.assertIn("do not re-rank, sort, or regroup trending items", skill_body)
@@ -591,11 +590,14 @@ class SkillTests(unittest.TestCase):
         self.assertIn("channels: [feishu]", body)
         self.assertIn("Only a one-line direct answer may stay plain text", body)
         self.assertIn("Everything else must end with one trailing `feishu_card`", body)
+        self.assertIn("exactly one trailing fenced `feishu_card` block", body)
+        self.assertIn("do not use ```json", body)
         self.assertIn("2+ lines", body)
         self.assertIn("2+ bullets", body)
         self.assertIn("lists, grouped items, status summaries, checks, candidate sets, ranked results, or multi-record output", body)
         self.assertIn("When you emit `feishu_card`, keep the visible answer to one short summary line", body)
         self.assertIn("Do not keep any visible bullet list or second paragraph outside `feishu_card`", body)
+        self.assertIn("Do not append separators, extra paragraphs, or closing notes after `feishu_card`", body)
         self.assertIn("Do not repeat the same bullet list both in the visible text and in `feishu_card`", body)
         self.assertIn("Never use Markdown tables, HTML, or code fences", body)
         self.assertIn("Prefer 2-5 flat bullets", body)

@@ -1,11 +1,12 @@
 from contextlib import asynccontextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from pydantic import BaseModel
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from marten_runtime.gateway.ingress import ingest_message
@@ -17,6 +18,7 @@ from marten_runtime.interfaces.http.bootstrap import (
     build_http_runtime,
     render_metrics,
 )
+from marten_runtime.runtime.lanes import LaneLease
 
 
 class MessageRequest(BaseModel):
@@ -25,6 +27,7 @@ class MessageRequest(BaseModel):
     conversation_id: str
     message_id: str
     body: str
+    requested_agent_id: str | None = None
 
 
 def create_app(
@@ -88,8 +91,12 @@ def create_app(
             run_id=f"run_{uuid4().hex[:8]}",
             trace_id=envelope.trace_id,
         )
+        envelope.enqueued_at = lease.enqueued_at
+        envelope.started_at = lease.started_at
         try:
-            return _process_inbound_envelope(runtime, envelope)
+            response = _process_inbound_envelope(runtime, envelope)
+            _bind_queue_observation_to_response(runtime, response, lease)
+            return response
         finally:
             runtime.lane_manager.release(
                 channel_id=envelope.channel_id,
@@ -163,7 +170,7 @@ def create_app(
         return runtime.lane_manager.stats()
 
     @app.get("/diagnostics/runtime")
-    def get_runtime() -> dict[str, object]:
+    def get_runtime(request: Request) -> dict[str, object]:
         retry_policy = getattr(runtime.runtime_loop.llm, "retry_policy", None)
         latest_candidate = runtime.self_improve_store.latest_candidate(agent_id=runtime.default_agent.agent_id)
         latest_rejected_candidate = runtime.self_improve_store.latest_candidate(
@@ -173,6 +180,7 @@ def create_app(
         latest_active_lesson = runtime.self_improve_store.latest_active_lesson(
             agent_id=runtime.default_agent.agent_id
         )
+        server_surface = _resolve_runtime_server_surface(runtime, request)
         return {
             "config_snapshot_id": runtime.config_snapshot.config_snapshot_id,
             "app_id": runtime.app_manifest.app_id,
@@ -197,11 +205,7 @@ def create_app(
                 }
                 for server in runtime.mcp_servers
             ],
-            "server": {
-                "host": runtime.platform_config.server.host,
-                "port": runtime.platform_config.server.port,
-                "public_base_url": runtime.platform_config.server.public_base_url,
-            },
+            "server": server_surface,
             "provider_retry_policy": (
                 asdict(retry_policy) if retry_policy is not None and is_dataclass(retry_policy) else None
             ),
@@ -248,3 +252,53 @@ def create_app(
         }
 
     return app
+
+
+def _bind_queue_observation_to_response(
+    runtime: HTTPRuntimeState,
+    response: dict[str, object],
+    lease: LaneLease,
+) -> None:
+    for event in response.get("events", []):
+        if not isinstance(event, dict):
+            continue
+        run_id = str(event.get("run_id", "")).strip()
+        if not run_id:
+            continue
+        runtime.run_history.set_queue_diagnostics(
+            run_id,
+            queue_depth_at_enqueue=lease.queue_depth_at_enqueue,
+            queue_wait_ms=lease.queue_wait_ms,
+        )
+
+
+def _resolve_runtime_server_surface(
+    runtime: HTTPRuntimeState,
+    request: Request,
+) -> dict[str, object]:
+    configured_host = runtime.platform_config.server.host
+    configured_port = runtime.platform_config.server.port
+    configured_public_base_url = runtime.platform_config.server.public_base_url
+    effective_host = configured_host
+    effective_port = configured_port
+    effective_public_base_url = configured_public_base_url
+    observed_base_url = str(request.base_url).rstrip("/")
+    if observed_base_url:
+        split = urlsplit(observed_base_url)
+        if split.hostname:
+            effective_host = split.hostname
+        if split.port is not None:
+            effective_port = split.port
+        elif split.scheme == "https":
+            effective_port = 443
+        elif split.scheme == "http":
+            effective_port = 80
+        effective_public_base_url = observed_base_url
+    return {
+        "host": effective_host,
+        "port": effective_port,
+        "public_base_url": effective_public_base_url,
+        "configured_host": configured_host,
+        "configured_port": configured_port,
+        "configured_public_base_url": configured_public_base_url,
+    }

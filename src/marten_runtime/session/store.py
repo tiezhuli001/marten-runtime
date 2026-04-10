@@ -1,7 +1,10 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from marten_runtime.runtime.usage_models import NormalizedUsage
+from marten_runtime.session.compacted_context import CompactedContext
 from marten_runtime.session.models import SessionMessage, SessionRecord
+from marten_runtime.session.tool_outcome_summary import ToolOutcomeSummary, coerce_tool_outcome_summary
 
 
 class SessionStore:
@@ -65,6 +68,51 @@ class SessionStore:
         record = self._items[session_id]
         record.active_agent_id = agent_id
         return record
+
+    def set_bootstrap_manifest(self, session_id: str, bootstrap_manifest_id: str) -> SessionRecord:
+        record = self._items[session_id]
+        record.bootstrap_manifest_id = bootstrap_manifest_id
+        return record
+
+    def set_compacted_context(self, session_id: str, compacted_context: CompactedContext) -> SessionRecord:
+        record = self._items[session_id]
+        record.latest_compacted_context = compacted_context
+        record.last_compacted_at = compacted_context.created_at
+        record.updated_at = compacted_context.created_at
+        return record
+
+    def set_latest_actual_usage(self, session_id: str, usage: NormalizedUsage) -> SessionRecord:
+        record = self._items[session_id]
+        record.latest_actual_usage = usage
+        if usage.captured_at is not None:
+            record.updated_at = usage.captured_at
+        return record
+
+    def append_tool_outcome_summary(
+        self,
+        session_id: str,
+        summary: ToolOutcomeSummary | dict[str, object],
+        *,
+        max_items: int = 5,
+    ) -> SessionRecord:
+        record = self._items[session_id]
+        item = coerce_tool_outcome_summary(summary)
+        dedupe_key = item.dedupe_key()
+        existing = [current for current in record.recent_tool_outcome_summaries if current.dedupe_key() != dedupe_key]
+        record.recent_tool_outcome_summaries = [*existing, item][-max_items:]
+        record.updated_at = item.created_at
+        return record
+
+    def list_recent_tool_outcome_summaries(
+        self,
+        session_id: str,
+        *,
+        limit: int = 3,
+    ) -> list[ToolOutcomeSummary]:
+        record = self._items[session_id]
+        if limit <= 0:
+            return []
+        return list(record.recent_tool_outcome_summaries[-limit:])
 
     def get(self, session_id: str) -> SessionRecord:
         return self._items[session_id]

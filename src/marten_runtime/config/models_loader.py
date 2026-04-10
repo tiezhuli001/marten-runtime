@@ -10,6 +10,11 @@ class ModelProfile(BaseModel):
     model: str
     base_url: str | None = None
     api_key_env: str | None = None
+    context_window_tokens: int | None = None
+    reserve_output_tokens: int | None = None
+    compact_trigger_ratio: float | None = None
+    tokenizer_family: str | None = None
+    supports_provider_usage: bool | None = None
 
 
 class ModelsConfig(BaseModel):

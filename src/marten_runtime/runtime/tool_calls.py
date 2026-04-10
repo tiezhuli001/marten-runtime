@@ -14,7 +14,13 @@ class ToolExecutionFailed(Exception):
         self.error_code = "TOOL_EXECUTION_FAILED"
 
 
-def resolve_tool_call(reply: LLMReply, registry: ToolRegistry, tool_snapshot: ToolSnapshot) -> dict | None:
+def resolve_tool_call(
+    reply: LLMReply,
+    registry: ToolRegistry,
+    tool_snapshot: ToolSnapshot,
+    *,
+    tool_context: dict | None = None,
+) -> dict | None:
     if not reply.tool_name:
         return None
     if not tool_snapshot.allows(reply.tool_name):
@@ -22,6 +28,6 @@ def resolve_tool_call(reply: LLMReply, registry: ToolRegistry, tool_snapshot: To
     if reply.tool_name not in registry.list():
         raise ToolCallRejected("TOOL_NOT_FOUND")
     try:
-        return registry.call(reply.tool_name, reply.tool_payload)
+        return registry.call(reply.tool_name, reply.tool_payload, tool_context=tool_context)
     except Exception as exc:  # pragma: no cover - covered through runtime tests
         raise ToolExecutionFailed(str(exc)) from exc

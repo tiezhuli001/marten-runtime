@@ -13,9 +13,12 @@ Use these rules for all final Feishu replies.
 - Lead with the direct answer or one short summary line.
 - Only a one-line direct answer may stay plain text.
 - Everything else must end with one trailing `feishu_card` JSON block.
+- For structured replies, end with exactly one trailing fenced `feishu_card` block.
+- The fence info string must be exactly `feishu_card`; do not use ```json, bare JSON, or any other wrapper for the card payload.
 - Treat 2+ lines, 2+ bullets, lists, grouped items, status summaries, checks, candidate sets, ranked results, or multi-record output as structured replies.
 - When you emit `feishu_card`, keep the visible answer to one short summary line.
 - Do not keep any visible bullet list or second paragraph outside `feishu_card`.
+- Do not append separators, extra paragraphs, or closing notes after `feishu_card`.
 - Do not repeat the same bullet list both in the visible text and in `feishu_card`.
 - Avoid Markdown tables in all Feishu replies.
 - Never use Markdown tables, HTML, or code fences in the visible answer text.

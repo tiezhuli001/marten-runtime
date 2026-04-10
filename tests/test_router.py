@@ -167,6 +167,35 @@ class RouterTests(unittest.TestCase):
 
         self.assertEqual(routed.agent_id, "ops")
 
+    def test_router_falls_back_to_binding_when_requested_agent_is_missing(self) -> None:
+        registry = AgentRegistry()
+        registry.register(AgentSpec(agent_id="assistant", role="general_assistant", app_id="example_assistant"))
+        registry.register(AgentSpec(agent_id="ops", role="ops_agent", app_id="example_assistant"))
+        bindings = AgentBindingRegistry(
+            [
+                AgentBinding(
+                    agent_id="ops",
+                    channel_id="feishu",
+                    conversation_id="conv-7",
+                )
+            ]
+        )
+        router = AgentRouter(registry, default_agent_id="assistant", bindings=bindings)
+        envelope = InboundEnvelope(
+            channel_id="feishu",
+            user_id="demo",
+            conversation_id="conv-7",
+            message_id="msg-7",
+            body="hello",
+            received_at=datetime.now(timezone.utc),
+            dedupe_key="dedupe_7",
+            trace_id="trace_7",
+        )
+
+        routed = router.route(envelope, requested_agent_id="missing")
+
+        self.assertEqual(routed.agent_id, "ops")
+
 
 if __name__ == "__main__":
     unittest.main()
