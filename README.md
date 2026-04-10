@@ -4,7 +4,7 @@
 
 Simplified openclaw-style private agent runtime for `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel`.
 
-[中文文档](./README_CN.md) · [Docs Index](./docs/README.md) · [Architecture Changelog](./docs/ARCHITECTURE_CHANGELOG.md) · [ADR Index](./docs/architecture/adr/README.md) · [Harness Design](./docs/2026-03-29-private-agent-harness-design.md) · [Conversation Lanes Design](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md) · [Self-Improve Design](./docs/2026-03-30-self-improve-design.md) · [Config Surfaces](./docs/CONFIG_SURFACES.md)
+[中文文档](./README_CN.md) · [Docs Index](./docs/README.md) · [Architecture Evolution](./docs/ARCHITECTURE_EVOLUTION.md) · [Architecture Changelog](./docs/ARCHITECTURE_CHANGELOG.md) · [ADR Index](./docs/architecture/adr/README.md) · [Harness Design](./docs/2026-03-29-private-agent-harness-design.md) · [Conversation Lanes Design](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md) · [Self-Improve Design](./docs/2026-03-30-self-improve-design.md) · [Config Surfaces](./docs/CONFIG_SURFACES.md)
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
@@ -90,6 +90,7 @@ That path is the project center of gravity. If a change does not make this chain
 
 Key references:
 
+- [Architecture Evolution](./docs/ARCHITECTURE_EVOLUTION.md)
 - [Architecture Changelog](./docs/ARCHITECTURE_CHANGELOG.md)
 - [ADR Index](./docs/architecture/adr/README.md)
 - [Private Agent Harness Design](./docs/2026-03-29-private-agent-harness-design.md)

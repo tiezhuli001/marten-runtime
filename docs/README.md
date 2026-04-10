@@ -5,19 +5,23 @@ This directory contains the public design and operations notes for `marten-runti
 ## Start Here
 
 1. [../README.md](../README.md)
-2. [ARCHITECTURE_CHANGELOG.md](./ARCHITECTURE_CHANGELOG.md)
-3. [architecture/adr/README.md](./architecture/adr/README.md)
-4. [2026-03-29-private-agent-harness-design.md](./2026-03-29-private-agent-harness-design.md)
-5. [2026-03-30-conversation-lanes-provider-resilience-design.md](./2026-03-30-conversation-lanes-provider-resilience-design.md)
-6. [2026-03-30-self-improve-design.md](./2026-03-30-self-improve-design.md)
-7. [2026-03-31-progressive-disclosure-llm-first-capability-design.md](./2026-03-31-progressive-disclosure-llm-first-capability-design.md)
-8. [2026-04-01-feishu-generic-card-protocol-design.md](./2026-04-01-feishu-generic-card-protocol-design.md)
-9. [CONFIG_SURFACES.md](./CONFIG_SURFACES.md)
-10. [LIVE_VERIFICATION_CHECKLIST.md](./LIVE_VERIFICATION_CHECKLIST.md)
-11. [archive/README.md](./archive/README.md)
+2. [ARCHITECTURE_EVOLUTION.md](./ARCHITECTURE_EVOLUTION.md)
+3. [ARCHITECTURE_EVOLUTION_CN.md](./ARCHITECTURE_EVOLUTION_CN.md)
+4. [ARCHITECTURE_CHANGELOG.md](./ARCHITECTURE_CHANGELOG.md)
+5. [architecture/adr/README.md](./architecture/adr/README.md)
+6. [2026-03-29-private-agent-harness-design.md](./2026-03-29-private-agent-harness-design.md)
+7. [2026-03-30-conversation-lanes-provider-resilience-design.md](./2026-03-30-conversation-lanes-provider-resilience-design.md)
+8. [2026-03-30-self-improve-design.md](./2026-03-30-self-improve-design.md)
+9. [2026-03-31-progressive-disclosure-llm-first-capability-design.md](./2026-03-31-progressive-disclosure-llm-first-capability-design.md)
+10. [2026-04-01-feishu-generic-card-protocol-design.md](./2026-04-01-feishu-generic-card-protocol-design.md)
+11. [CONFIG_SURFACES.md](./CONFIG_SURFACES.md)
+12. [LIVE_VERIFICATION_CHECKLIST.md](./LIVE_VERIFICATION_CHECKLIST.md)
+13. [archive/README.md](./archive/README.md)
 
 ## What Each File Is For
 
+- `ARCHITECTURE_EVOLUTION.md` / `ARCHITECTURE_EVOLUTION_CN.md`
+  - reader-first architecture evolution guides that explain the main runtime spine, stage boundaries, and why the current architecture looks the way it does
 - `ARCHITECTURE_CHANGELOG.md`
   - append-only record of architecture evolution, why the baseline changed, and what verification proved it
 - `architecture/adr/`
