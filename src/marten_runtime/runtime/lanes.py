@@ -20,6 +20,12 @@ class LaneLease:
     trace_id: str
     enqueued_at: datetime
     started_at: datetime
+    queue_depth_at_enqueue: int = 1
+    queue_wait_ms: int = 0
+
+    @property
+    def waited_in_lane(self) -> bool:
+        return self.queue_wait_ms > 0 or self.queue_depth_at_enqueue > 1
 
 
 @dataclass
@@ -56,6 +62,7 @@ class ConversationLaneManager:
         with self._condition:
             queue = self._queues.setdefault(lane_key, deque())
             queue.append(entry)
+            queue_depth_at_enqueue = len(queue)
             if len(queue) > 1:
                 self._last_enqueued_lane = {
                     "channel_id": lane_key.channel_id,
@@ -71,12 +78,18 @@ class ConversationLaneManager:
                 if head is entry:
                     started_at = datetime.now(timezone.utc)
                     entry.started_at = started_at
+                    queue_wait_ms = max(
+                        0,
+                        int((started_at - entry.enqueued_at).total_seconds() * 1000),
+                    )
                     return LaneLease(
                         lane_key=lane_key,
                         run_id=run_id,
                         trace_id=trace_id,
                         enqueued_at=entry.enqueued_at,
                         started_at=started_at,
+                        queue_depth_at_enqueue=queue_depth_at_enqueue,
+                        queue_wait_ms=queue_wait_ms,
                     )
                 self._condition.wait()
 

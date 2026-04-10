@@ -1,1 +1,9 @@
-bindings = []
+[[bindings]]
+agent_id = "assistant"
+channel_id = "http"
+default = true
+
+[[bindings]]
+agent_id = "assistant"
+channel_id = "feishu"
+default = true

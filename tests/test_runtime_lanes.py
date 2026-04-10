@@ -1,4 +1,5 @@
 import threading
+import time
 import unittest
 
 from marten_runtime.runtime.lanes import ConversationLaneManager
@@ -52,6 +53,48 @@ class ConversationLaneManagerTests(unittest.TestCase):
         second_thread.join(timeout=2)
 
         self.assertEqual(started, ["run-1", "run-2"])
+
+    def test_same_lane_lease_records_queue_wait_observation(self) -> None:
+        manager = ConversationLaneManager()
+        first_started = threading.Event()
+        release_first = threading.Event()
+        second_lease = {}
+
+        def first() -> None:
+            lease = manager.acquire(
+                channel_id="http",
+                conversation_id="conv-1",
+                run_id="run-1",
+                trace_id="trace-1",
+            )
+            first_started.set()
+            release_first.wait(timeout=2)
+            manager.release(channel_id="http", conversation_id="conv-1", run_id=lease.run_id)
+
+        def second() -> None:
+            lease = manager.acquire(
+                channel_id="http",
+                conversation_id="conv-1",
+                run_id="run-2",
+                trace_id="trace-2",
+            )
+            second_lease["value"] = lease
+            manager.release(channel_id="http", conversation_id="conv-1", run_id=lease.run_id)
+
+        first_thread = threading.Thread(target=first)
+        second_thread = threading.Thread(target=second)
+        first_thread.start()
+        self.assertTrue(first_started.wait(timeout=2))
+        second_thread.start()
+        time.sleep(0.05)
+        release_first.set()
+        first_thread.join(timeout=2)
+        second_thread.join(timeout=2)
+
+        lease = second_lease["value"]
+        self.assertEqual(lease.queue_depth_at_enqueue, 2)
+        self.assertGreaterEqual(lease.queue_wait_ms, 1)
+        self.assertTrue(lease.waited_in_lane)
 
     def test_release_advances_next_waiter_on_same_lane(self) -> None:
         manager = ConversationLaneManager()

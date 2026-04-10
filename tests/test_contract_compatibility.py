@@ -1,4 +1,5 @@
 import threading
+import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,8 @@ from marten_runtime.channels.delivery_retry import DeliveryRetryPolicy
 from marten_runtime.channels.feishu.delivery import FeishuDeliveryClient, FeishuDeliveryPayload
 from marten_runtime.channels.feishu.delivery_session import InMemoryFeishuDeliverySessionStore
 from marten_runtime.channels.receipts import InMemoryReceiptStore
+from marten_runtime.mcp.loader import load_mcp_servers
+from marten_runtime.mcp.models import MCPServerSpec, MCPToolSpec
 from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.self_improve.models import FailureEvent, LessonCandidate, SystemLesson
@@ -20,6 +23,7 @@ from marten_runtime.self_improve.recorder import SelfImproveRecorder
 from marten_runtime.self_improve.service import SelfImproveService, make_default_judge
 from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
 from marten_runtime.session.compaction import compact_context
+from marten_runtime.skills.service import SkillService
 from marten_runtime.skills.service import SkillRuntimeView
 from marten_runtime.skills.snapshot import SkillSnapshot
 from tests.http_app_support import build_test_app
@@ -33,11 +37,20 @@ class FailingLLMClient:
         raise RuntimeError("provider_transport_error:connection reset")
 
 
+class AuthFailingLLMClient:
+    provider_name = "auth-failing"
+    model_name = "auth-failing-local"
+
+    def complete(self, request):  # noqa: ANN001
+        raise RuntimeError("provider_http_error:401:unauthorized")
+
+
 class ContractCompatibilityTests(unittest.TestCase):
     def test_runtime_bootstrap_registers_automation_tool(self) -> None:
         app = build_test_app()
 
         self.assertIn("skill", app.state.runtime.tool_registry.list())
+        self.assertIn("runtime", app.state.runtime.tool_registry.list())
         self.assertIn("mcp", app.state.runtime.tool_registry.list())
         self.assertNotIn("mock_search", app.state.runtime.tool_registry.list())
         self.assertIn("automation", app.state.runtime.tool_registry.list())
@@ -54,12 +67,13 @@ class ContractCompatibilityTests(unittest.TestCase):
         self.assertIn("mcp", assistant.allowed_tools)
         self.assertIn("automation", assistant.allowed_tools)
         self.assertIn("self_improve", assistant.allowed_tools)
+        self.assertIn("runtime", assistant.allowed_tools)
         self.assertIn("time", assistant.allowed_tools)
         self.assertNotIn("register_automation", assistant.allowed_tools)
         self.assertNotIn("list_lesson_candidates", assistant.allowed_tools)
         self.assertEqual(
             assistant.allowed_tools,
-            ["automation", "mcp", "self_improve", "skill", "time"],
+            ["automation", "mcp", "runtime", "self_improve", "skill", "time"],
         )
 
     def test_mcp_family_tool_is_the_only_model_visible_mcp_entrypoint(self) -> None:
@@ -73,15 +87,27 @@ class ContractCompatibilityTests(unittest.TestCase):
     def test_runtime_bootstrap_uses_capability_catalog_and_descriptions(self) -> None:
         app = build_test_app()
         runtime = app.state.runtime
-        snapshot = runtime.tool_registry.build_snapshot(["automation", "mcp", "self_improve", "skill", "time"])
+        snapshot = runtime.tool_registry.build_snapshot(["automation", "mcp", "runtime", "self_improve", "skill", "time"])
+        automation_description = snapshot.tool_metadata["automation"]["description"]
+        mcp_description = snapshot.tool_metadata["mcp"]["description"]
+        runtime_description = snapshot.tool_metadata["runtime"]["description"]
 
         self.assertIn("Capability catalog:", runtime.capability_catalog_text or "")
         self.assertIn("automation", runtime.capability_catalog_text or "")
         self.assertIn("mcp", runtime.capability_catalog_text or "")
+        self.assertIn("runtime", runtime.capability_catalog_text or "")
         self.assertNotIn("mock_search", runtime.capability_catalog_text or "")
         self.assertNotIn("search_repositories", runtime.capability_catalog_text or "")
-        self.assertIn("action=register/list/detail/update/delete/pause/resume", snapshot.tool_metadata["automation"]["description"])
-        self.assertIn("Inspect available MCP servers and tools", snapshot.tool_metadata["mcp"]["description"])
+        self.assertTrue(automation_description)
+        self.assertTrue(mcp_description)
+        self.assertTrue(runtime_description)
+        self.assertIn("automation", automation_description.lower())
+        self.assertIn("github", mcp_description.lower())
+        self.assertNotIn("search_repositories", mcp_description)
+        self.assertNotIn("list_commits", mcp_description)
+        self.assertTrue(
+            "runtime" in runtime_description.lower() or "上下文" in runtime_description
+        )
 
     def test_internal_self_improve_automation_is_not_exposed_in_operator_listing(self) -> None:
         app = build_test_app()
@@ -255,6 +281,51 @@ class ContractCompatibilityTests(unittest.TestCase):
         self.assertIn("timings", body["items"][0])
         self.assertIn("total_ms", body["items"][0]["timings"])
 
+    def test_http_messages_can_query_runtime_context_status_through_family_tool(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
+            ]
+        )
+        runtime.runtime_loop.llm = llm
+        runtime.llm_client_factory.cache_client("default", llm)
+        runtime.llm_client_factory.cache_client("minimax_coding", llm)
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "runtime-status",
+                    "message_id": "runtime-1",
+                    "body": "当前上下文窗口多大？",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        final_text = response.json()["events"][-1]["payload"]["text"]
+        self.assertIn("当前上下文使用详情", final_text)
+        self.assertIn("下一次请求预计输入", final_text)
+        self.assertEqual(len(llm.requests), 1)
+        run_id = response.json()["events"][-1]["run_id"]
+        tool_result = runtime.run_history.get(run_id).tool_calls[0]["tool_result"]
+        self.assertTrue(tool_result["ok"])
+        self.assertEqual(tool_result["action"], "context_status")
+        self.assertEqual(tool_result["model_profile"], "minimax_coding")
+        self.assertIn("summary", tool_result)
+        self.assertIn("usage_percent", tool_result)
+        self.assertIn("effective_window", tool_result)
+        self.assertIn("estimate_source", tool_result)
+        self.assertIn("next_request_estimate", tool_result)
+        self.assertIn("last_actual_usage", tool_result)
+        self.assertEqual(
+            tool_result["next_request_estimate"]["input_tokens_estimate"],
+            tool_result["estimated_usage"],
+        )
+
     def test_plain_chat_turn_does_not_expose_full_tool_surface(self) -> None:
         app = build_test_app()
         runtime = app.state.runtime
@@ -274,7 +345,7 @@ class ContractCompatibilityTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(llm.requests[0].available_tools, ["automation", "mcp", "self_improve", "skill", "time"])
+        self.assertEqual(llm.requests[0].available_tools, ["automation", "mcp", "runtime", "self_improve", "skill", "time"])
 
     def test_github_schedule_turn_keeps_family_tool_surface(self) -> None:
         app = build_test_app()
@@ -295,7 +366,7 @@ class ContractCompatibilityTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(llm.requests[0].available_tools, ["automation", "mcp", "self_improve", "skill", "time"])
+        self.assertEqual(llm.requests[0].available_tools, ["automation", "mcp", "runtime", "self_improve", "skill", "time"])
 
     def test_search_turn_keeps_mcp_family_tool_without_restoring_full_surface(self) -> None:
         app = build_test_app()
@@ -316,7 +387,7 @@ class ContractCompatibilityTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(llm.requests[0].available_tools, ["automation", "mcp", "self_improve", "skill", "time"])
+        self.assertEqual(llm.requests[0].available_tools, ["automation", "mcp", "runtime", "self_improve", "skill", "time"])
         self.assertNotIn("mock_search", llm.requests[0].available_tools)
 
     def test_feishu_inbound_registration_resolves_current_target_and_daily_schedule(self) -> None:
@@ -420,13 +491,101 @@ class ContractCompatibilityTests(unittest.TestCase):
         self.assertIn("latest_rejected_lesson_summary", runtime_diag.json()["self_improve"])
         self.assertIn("websocket", runtime_diag.json()["channels"]["feishu"])
         self.assertIn("mcp_servers", runtime_diag.json())
-        mock_search = next(
-            item for item in runtime_diag.json()["mcp_servers"] if item["server_id"] == "mock-search"
+        self.assertGreaterEqual(len(runtime_diag.json()["mcp_servers"]), 1)
+        configured_server = runtime_diag.json()["mcp_servers"][0]
+        self.assertIn("server_id", configured_server)
+        self.assertIn("source_layers", configured_server)
+
+    def test_github_stdio_mcp_config_includes_required_stdio_subcommand(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        github_server = next(
+            server
+            for server in load_mcp_servers(str(repo_root / "config/mcp.toml"), str(repo_root / "mcps.json"))
+            if server.server_id == "github"
         )
-        self.assertIn("source_layers", mock_search)
+
+        self.assertEqual(github_server.transport, "stdio")
+        self.assertGreaterEqual(len(github_server.args), 1)
+        self.assertEqual(github_server.command, "docker")
+        self.assertIn("stdio", github_server.args)
+        self.assertEqual(github_server.args[-1], "stdio")
         self.assertTrue(
-            any(layer in {"config/mcp.toml", "config/mcp.example.toml"} for layer in mock_search["source_layers"])
+            any(layer in {"mcps.json"} for layer in github_server.source_layers)
         )
+
+    def test_runtime_diagnostics_heal_stale_github_discovery_after_successful_call(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        server = MCPServerSpec(server_id="github", transport="stdio", backend_id="github", tools=[])
+        runtime.mcp_servers = [server]
+        runtime.mcp_discovery = {"github": {"state": "unavailable", "tool_count": 0, "error": "startup EOF"}}
+
+        class RecoveringClient:
+            def list_tools(self, server_id: str) -> list[MCPToolSpec]:
+                return [MCPToolSpec(name="list_commits", description="List GitHub commits.")]
+
+            def call_tool(self, server_id: str, tool_name: str, payload: dict) -> dict:
+                return {
+                    "server_id": server_id,
+                    "tool_name": tool_name,
+                    "payload": payload,
+                    "result_text": (
+                        '[{"sha":"0a1f49","html_url":"https://github.com/CloudWide851/easy-agent/commit/0a1f49",'
+                        '"commit":{"message":"release ok","author":{"date":"2026-04-01T02:24:49Z"}}}]'
+                    ),
+                    "ok": True,
+                    "is_error": False,
+                }
+
+        runtime.mcp_client = RecoveringClient()  # type: ignore[assignment]
+        runtime.tool_registry.register(
+            "mcp",
+            lambda payload, runtime_state=runtime: __import__("marten_runtime.tools.builtins.mcp_tool", fromlist=["run_mcp_tool"]).run_mcp_tool(
+                payload,
+                runtime_state.mcp_servers,
+                runtime_state.mcp_client,
+                runtime_state.mcp_discovery,
+            ),
+            description=runtime.tool_registry._descriptors["mcp"].description,  # type: ignore[attr-defined]
+        )
+        runtime.runtime_loop.llm = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="mcp",
+                    tool_payload={
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "list_commits",
+                        "arguments": {"owner": "CloudWide851", "repo": "easy-agent", "perPage": 1},
+                    },
+                ),
+                LLMReply(final_text="最新提交已返回。"),
+            ]
+        )
+        runtime.llm_client_factory.cache_client("default", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_coding", runtime.runtime_loop.llm)
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "heal-stale-github-discovery",
+                    "message_id": "heal-stale-github-discovery-1",
+                    "body": "latest commit of CloudWide851/easy-agent",
+                },
+            )
+            runtime_diag = client.get("/diagnostics/runtime")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["events"][-1]["event_type"], "final")
+        github_entry = next(item for item in runtime_diag.json()["mcp_servers"] if item["server_id"] == "github")
+        self.assertEqual(github_entry["discovery"]["state"], "discovered")
+        self.assertEqual(github_entry["discovery"]["tool_count"], 1)
+        self.assertEqual(github_entry["discovery"]["error"], None)
+        self.assertEqual(github_entry["tool_count"], 1)
+        self.assertEqual(github_entry["tool_names"], ["list_commits"])
 
     def test_http_messages_return_provider_specific_error_event_instead_of_500_when_llm_fails(self) -> None:
         app = build_test_app()
@@ -450,6 +609,163 @@ class ContractCompatibilityTests(unittest.TestCase):
         self.assertEqual(body["events"][-1]["payload"]["code"], "PROVIDER_TRANSPORT_ERROR")
         self.assertEqual(body["events"][-1]["payload"]["text"], "暂时没有生成可见回复，请重试。")
 
+    def test_http_messages_return_provider_auth_error_when_provider_auth_fails(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        runtime.runtime_loop.llm = AuthFailingLLMClient()
+        runtime.llm_client_factory.cache_client("default", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_coding", runtime.runtime_loop.llm)
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "compat-auth-fail-plain",
+                    "message_id": "auth-fail-plain-1",
+                    "body": "hello",
+                },
+            )
+            run_id = response.json()["events"][-1]["run_id"]
+            run_diag = client.get(f"/diagnostics/run/{run_id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["events"][-1]["event_type"], "error")
+        self.assertEqual(response.json()["events"][-1]["payload"]["code"], "PROVIDER_AUTH_ERROR")
+        self.assertEqual(run_diag.status_code, 200)
+        self.assertEqual(run_diag.json()["status"], "failed")
+        self.assertEqual(run_diag.json()["llm_request_count"], 1)
+
+    def test_http_messages_return_provider_auth_error_for_skill_load_when_provider_auth_fails(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            skills_root = Path(tmpdir) / "skills"
+            skill_dir = skills_root / "example_time"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                (
+                    "---\n"
+                    "skill_id: example_time\n"
+                    "name: Example Time\n"
+                    "description: Return current time guidance\n"
+                    "enabled: true\n"
+                    "agents: [assistant]\n"
+                    "channels: [http]\n"
+                    "---\n"
+                    "Use the time tool when the user asks for the current time.\n"
+                ),
+                encoding="utf-8",
+            )
+            app = build_test_app()
+            runtime = app.state.runtime
+            runtime.runtime_loop.llm = AuthFailingLLMClient()
+            runtime.llm_client_factory.cache_client("default", runtime.runtime_loop.llm)
+            runtime.llm_client_factory.cache_client("minimax_coding", runtime.runtime_loop.llm)
+            runtime.skill_service = SkillService([str(skills_root)])
+
+            with TestClient(app) as client:
+                response = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": "compat-auth-fail-skill",
+                        "message_id": "auth-fail-skill-1",
+                        "body": "请读取 example_time 这个 skill 并简单概括它的用途",
+                    },
+                )
+                run_id = response.json()["events"][-1]["run_id"]
+                run_diag = client.get(f"/diagnostics/run/{run_id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["events"][-1]["event_type"], "error")
+        self.assertEqual(response.json()["events"][-1]["payload"]["code"], "PROVIDER_AUTH_ERROR")
+        self.assertEqual(run_diag.status_code, 200)
+        self.assertEqual(run_diag.json()["status"], "failed")
+        self.assertEqual(run_diag.json()["llm_request_count"], 1)
+
+    def test_http_messages_return_provider_auth_error_for_explicit_github_commit_query_when_provider_auth_fails(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        runtime.runtime_loop.llm = AuthFailingLLMClient()
+        runtime.llm_client_factory.cache_client("default", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_coding", runtime.runtime_loop.llm)
+        runtime.tool_registry.register(
+            "mcp",
+            lambda payload: {
+                "action": "call",
+                "server_id": payload["server_id"],
+                "tool_name": payload["tool_name"],
+                "arguments": payload["arguments"],
+                "result_text": '[{"sha":"abc","commit":{"author":{"date":"2026-04-01T02:24:49Z"},"message":"chore(release): 发布0.3.3版本"}}]',
+                "ok": True,
+                "is_error": False,
+            },
+        )
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "compat-auth-fail-commit",
+                    "message_id": "auth-fail-commit-1",
+                    "body": "GitHub - CloudWide851/easy-agent 这个github仓库最近一次提交是什么时候",
+                },
+            )
+            run_id = response.json()["events"][-1]["run_id"]
+            run_diag = client.get(f"/diagnostics/run/{run_id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["events"][-1]["event_type"], "error")
+        self.assertEqual(response.json()["events"][-1]["payload"]["code"], "PROVIDER_AUTH_ERROR")
+        self.assertEqual(run_diag.status_code, 200)
+        self.assertEqual(run_diag.json()["status"], "failed")
+        self.assertEqual(run_diag.json()["llm_request_count"], 1)
+        self.assertEqual(run_diag.json()["tool_calls"], [])
+
+    def test_http_messages_return_provider_auth_error_for_english_explicit_github_commit_query_when_provider_auth_fails(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        runtime.runtime_loop.llm = AuthFailingLLMClient()
+        runtime.llm_client_factory.cache_client("default", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_coding", runtime.runtime_loop.llm)
+        runtime.tool_registry.register(
+            "mcp",
+            lambda payload: {
+                "action": "call",
+                "server_id": payload["server_id"],
+                "tool_name": payload["tool_name"],
+                "arguments": payload["arguments"],
+                "result_text": '[{"sha":"abc","commit":{"author":{"date":"2026-04-01T02:24:49Z"},"message":"chore(release): 发布0.3.3版本"}}]',
+                "ok": True,
+                "is_error": False,
+            },
+        )
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "compat-auth-fail-commit-en",
+                    "message_id": "auth-fail-commit-en-1",
+                    "body": "latest commit of CloudWide851/easy-agent",
+                },
+            )
+            run_id = response.json()["events"][-1]["run_id"]
+            run_diag = client.get(f"/diagnostics/run/{run_id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["events"][-1]["event_type"], "error")
+        self.assertEqual(response.json()["events"][-1]["payload"]["code"], "PROVIDER_AUTH_ERROR")
+        self.assertEqual(run_diag.status_code, 200)
+        self.assertEqual(run_diag.json()["status"], "failed")
+        self.assertEqual(run_diag.json()["llm_request_count"], 1)
+        self.assertEqual(run_diag.json()["tool_calls"], [])
+
     def test_http_overlap_is_queued_and_keeps_normal_response_contract(self) -> None:
         app = build_test_app()
         runtime = app.state.runtime
@@ -463,6 +779,15 @@ class ContractCompatibilityTests(unittest.TestCase):
                 first_started.set()
                 release_first.wait(timeout=2)
             run_id = f"run_{len(seen_messages)}"
+            record = runtime.run_history.start(
+                session_id=session_id,
+                trace_id=trace_id or "trace_missing",
+                config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
+                bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            )
+            original_run_id = record.run_id
+            record.run_id = run_id
+            runtime.run_history._items[run_id] = runtime.run_history._items.pop(original_run_id)
             return [
                 OutboundEvent(
                     session_id=session_id,
@@ -507,6 +832,9 @@ class ContractCompatibilityTests(unittest.TestCase):
             first_thread.start()
             self.assertTrue(first_started.wait(timeout=2))
             second_thread.start()
+            deadline = time.time() + 2
+            while runtime.lane_manager.stats()["queued_lane_count"] != 1 and time.time() < deadline:
+                time.sleep(0.01)
             release_first.set()
             first_thread.join(timeout=2)
             second_thread.join(timeout=2)
@@ -520,6 +848,9 @@ class ContractCompatibilityTests(unittest.TestCase):
         self.assertEqual(seen_messages, ["hello-1", "hello-2"])
         self.assertEqual(first.json()["events"][-1]["payload"]["text"], "hello-1")
         self.assertEqual(second.json()["events"][-1]["payload"]["text"], "hello-2")
+        second_run = runtime.run_history.get("run_2")
+        self.assertEqual(second_run.queue.queue_depth_at_enqueue, 2)
+        self.assertTrue(second_run.queue.waited_in_lane)
 
     def test_automations_endpoint_includes_paused_jobs(self) -> None:
         app = build_test_app()
@@ -916,6 +1247,8 @@ class ContractCompatibilityTests(unittest.TestCase):
         self.assertEqual(runtime.runtime_loop.llm.requests[0].always_on_skill_text is not None, True)
         self.assertIn("Avoid Markdown tables", runtime.runtime_loop.llm.requests[0].always_on_skill_text or "")
         self.assertEqual(runtime.runtime_loop.llm.requests[1].always_on_skill_text, None)
+        self.assertIn("feishu_card", runtime.runtime_loop.llm.requests[0].channel_protocol_instruction_text or "")
+        self.assertIsNone(runtime.runtime_loop.llm.requests[1].channel_protocol_instruction_text)
 
     def test_runtime_diagnostics_redact_feishu_websocket_endpoint_secrets(self) -> None:
         app = build_test_app()
@@ -938,6 +1271,20 @@ class ContractCompatibilityTests(unittest.TestCase):
             websocket["endpoint_url"],
             "wss://msg-frontier.feishu.cn/ws/v2?device_id=123&access_key=REDACTED&service_id=456&ticket=REDACTED",
         )
+
+    def test_runtime_diagnostics_reports_effective_request_server_surface(self) -> None:
+        app = build_test_app()
+
+        with TestClient(app, base_url="http://127.0.0.1:8001") as client:
+            runtime_diag = client.get("/diagnostics/runtime")
+
+        self.assertEqual(runtime_diag.status_code, 200)
+        server = runtime_diag.json()["server"]
+        self.assertEqual(server["host"], "127.0.0.1")
+        self.assertEqual(server["port"], 8001)
+        self.assertEqual(server["public_base_url"], "http://127.0.0.1:8001")
+        self.assertEqual(server["configured_port"], 8000)
+        self.assertEqual(server["configured_public_base_url"], "http://127.0.0.1:8000")
 
 
 if __name__ == "__main__":

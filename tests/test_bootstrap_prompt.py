@@ -32,8 +32,19 @@ class BootstrapPromptTests(unittest.TestCase):
         self.assertIn("先阅读当前可见的 skill summaries", prompt)
         self.assertIn("只在某个 skill 明显适用且 summary 不足时，再调用 `skill`", prompt)
         self.assertIn("不要一次加载多个 skill 正文", prompt)
-        self.assertIn("对 MCP 能力先用 `mcp` 查看 list/detail", prompt)
-        self.assertIn("不要假设所有 MCP 工具细节已经默认展开", prompt)
+        self.assertIn("只有在 server、tool 或参数仍不明确时", prompt)
+        self.assertIn("如果 capability catalog 已经暴露了精确的 server_id、tool_name 和参数形状", prompt)
+        self.assertIn("直接使用匹配的 `mcp` 调用", prompt)
+
+    def test_bootstrap_prompt_keeps_mcp_guidance_contract_based_instead_of_github_route(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        manifest = load_app_manifest(str(repo_root / "apps/example_assistant/app.toml"))
+
+        prompt = load_bootstrap_prompt(repo_root=repo_root, manifest=manifest)
+
+        self.assertNotIn("GitHub repo URL", prompt)
+        self.assertNotIn("owner/repo", prompt)
+        self.assertNotIn("直接 `mcp.call`", prompt)
 
     def test_bootstrap_prompt_appends_runtime_learned_lessons_when_present(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]

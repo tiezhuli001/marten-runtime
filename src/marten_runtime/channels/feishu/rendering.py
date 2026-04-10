@@ -6,9 +6,11 @@ import re
 
 from pydantic import BaseModel
 
+from marten_runtime.channels.feishu.usage import format_usage_summary
+
 logger = logging.getLogger(__name__)
 _INLINE_JSON_PREFIX_CHARS = set(" \t\r\n。.!?！？：:;；,，)]）】}\"'」』")
-_FEISHU_CARD_BLOCK_RE = re.compile(r"\n*```feishu_card\s*\n(?P<body>[\s\S]*?)\n```\s*$")
+_FEISHU_CARD_BLOCK_RE = re.compile(r"\n*```feishu_card\s*\n(?P<body>[\s\S]*?)\n```(?P<trailing>[\s\S]*)$")
 _FEISHU_CARD_JSON_BLOCK_RE = re.compile(r"\n*```json\s*\n(?P<body>[\s\S]*?)\n```\s*$")
 _FEISHU_CARD_INVOKE_RE = re.compile(
     r"\n*(?:<minimax:tool_call>\s*)?<invoke name=\"feishu_card\">\s*(?P<body>[\s\S]*?)\s*</invoke>\s*(?:</minimax:tool_call>\s*)?$"
@@ -32,6 +34,16 @@ class FeishuCardProtocol(BaseModel):
     sections: list[FeishuCardSection] = []
 
 
+
+
+def build_feishu_card_protocol_guard_instruction() -> str:
+    return (
+        "当前回合需要遵守 Feishu 结构化回复协议。若最终答案不是单行直接回答，"
+        "必须以且仅以一个尾部 fenced `feishu_card` block 结束；"
+        "代码围栏标识必须是 `feishu_card`，不要使用 `json` 或其他围栏；"
+        "可见正文只保留一行摘要，且 `feishu_card` 后不要再追加任何文字。"
+    )
+
 def parse_feishu_card_protocol(text: str) -> tuple[str, FeishuCardProtocol | None]:
     try:
         visible_text, payload = _extract_protocol_payload(text)
@@ -47,7 +59,9 @@ def parse_feishu_card_protocol(text: str) -> tuple[str, FeishuCardProtocol | Non
 def _extract_protocol_payload(text: str) -> tuple[str, dict[str, object] | None]:
     fenced = _FEISHU_CARD_BLOCK_RE.search(text)
     if fenced:
-        visible_text = text[: fenced.start()].rstrip()
+        prefix = text[: fenced.start()].rstrip()
+        trailing = (fenced.group("trailing") or "").strip()
+        visible_text = prefix if not trailing else "\n\n".join(part for part in [prefix, trailing] if part)
         payload = json.loads(fenced.group("body"))
         return visible_text, payload
 
@@ -160,26 +174,41 @@ def _validate_protocol_payload(payload: object) -> FeishuCardProtocol:
     return FeishuCardProtocol.model_validate(payload)
 
 
-def render_final_reply_card(text: str, *, event_type: str = "final") -> dict[str, object]:
+def render_final_reply_card(
+    text: str,
+    *,
+    event_type: str = "final",
+    usage_summary: dict[str, int] | None = None,
+) -> dict[str, object]:
     visible_text, protocol = parse_feishu_card_protocol(text)
     if protocol is not None:
         visible_text = _dedupe_visible_text_against_protocol(visible_text, protocol)
     if protocol is None:
-        fallback_card = _render_fallback_structured_card(visible_text, event_type=event_type)
+        fallback_card = _render_fallback_structured_card(
+            visible_text,
+            event_type=event_type,
+            usage_summary=usage_summary,
+        )
         if fallback_card is not None:
             return fallback_card
     sections = protocol.sections if protocol is not None else []
     return _build_generic_card(
-        title=protocol.title if protocol is not None else _default_card_title(event_type),
+        title=protocol.title if protocol is not None else _derive_plain_title(visible_text, event_type=event_type),
         visible_text=visible_text,
         summary=protocol.summary if protocol is not None else None,
         sections=sections,
         fallback_text=text,
         header_template=_default_card_template(event_type),
+        usage_summary=usage_summary,
     )
 
 
-def _render_fallback_structured_card(text: str, *, event_type: str = "final") -> dict[str, object] | None:
+def _render_fallback_structured_card(
+    text: str,
+    *,
+    event_type: str = "final",
+    usage_summary: dict[str, int] | None = None,
+) -> dict[str, object] | None:
     lines = [line.rstrip() for line in text.splitlines()]
     bullet_indexes = [index for index, line in enumerate(lines) if line.lstrip().startswith("- ")]
     if len(bullet_indexes) < 2:
@@ -198,6 +227,7 @@ def _render_fallback_structured_card(text: str, *, event_type: str = "final") ->
         note=trailing or None,
         fallback_text=text,
         header_template=_default_card_template(event_type),
+        usage_summary=usage_summary,
     )
 
 
@@ -231,6 +261,7 @@ def _build_generic_card(
     note: str | None = None,
     fallback_text: str | None = None,
     header_template: str = "indigo",
+    usage_summary: dict[str, int] | None = None,
 ) -> dict[str, object]:
     elements: list[dict[str, object]] = []
     lead = (visible_text or "").strip()
@@ -241,15 +272,17 @@ def _build_generic_card(
             elements.append(_hr())
         elements.append(_markdown_div(f"**📌 {summary}**"))
     normalized_sections = [section for section in sections if section.items]
-    for index, section in enumerate(normalized_sections):
+    for section in normalized_sections:
         section_title = section.title or "详情"
-        if index > 0 or summary:
-            pass
         elements.append(_markdown_div(f"**🗂️ {section_title}**"))
         elements.append(_markdown_div("\n".join(_render_section_item(item) for item in section.items)))
     if note:
         elements.append(_hr())
         elements.append(_markdown_div(f"<font color='grey'>💬 {note}</font>"))
+    usage_text = format_usage_summary(usage_summary)
+    if usage_text:
+        elements.append(_hr())
+        elements.append(_markdown_div(f"<font color='grey'>{usage_text}</font>"))
     if not elements:
         elements.append(_markdown_div(fallback_text or ""))
     card: dict[str, object] = {
@@ -277,6 +310,70 @@ def _default_card_title(event_type: str) -> str:
     if event_type == "error":
         return "处理失败"
     return "处理结果"
+
+
+def _derive_plain_title(text: str, *, event_type: str) -> str:
+    if event_type == "error":
+        return _default_card_title(event_type)
+    cleaned_lines = [re.sub(r"\*\*(.*?)\*\*", r"\1", line).strip() for line in text.splitlines() if line.strip()]
+    if not cleaned_lines:
+        return _default_card_title(event_type)
+    first = cleaned_lines[0].rstrip("：:。!！")
+    if re.match(r"^(当前|现在).*(北京时间|时间)", first):
+        return "当前时间"
+    if re.match(r"^现在是(?:[A-Za-z_./+-]+)?\s*\d{4}年\d{1,2}月\d{1,2}日", first):
+        return "当前时间"
+    commit_title = _derive_commit_title(first)
+    if commit_title is not None:
+        return commit_title
+    candidates = [first]
+    if "，" in first:
+        _, tail = first.split("，", 1)
+        candidates.insert(0, tail.strip())
+    for candidate in candidates:
+        normalized = candidate
+        normalized = re.sub(r"^(查到了|好的|可以|已为你|已经)\s*", "", normalized).strip()
+        normalized = re.sub(r"如下$", "", normalized).strip()
+        normalized = normalized.rstrip("：:。!！")
+        if _looks_like_semantic_title(normalized):
+            return normalized
+    return _default_card_title(event_type)
+
+
+def _derive_commit_title(text: str) -> str | None:
+    if "提交" not in text:
+        return None
+    if "最近提交" not in text and "最近一次提交" not in text:
+        return None
+    repo_match = re.search(r"\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\b", text)
+    if repo_match is not None:
+        return f"{repo_match.group(1)} 最近提交"
+    return "仓库最近提交"
+
+
+def _looks_like_semantic_title(text: str) -> bool:
+    if not text or not (2 <= len(text) <= 18):
+        return False
+    if re.fullmatch(r"[A-Za-z0-9_./:+-]+", text):
+        return False
+    if not re.search(r"[\u4e00-\u9fff]", text):
+        return False
+    title_markers = (
+        "详情",
+        "概览",
+        "列表",
+        "状态",
+        "信息",
+        "结果",
+        "时间",
+        "窗口",
+        "摘要",
+        "总结",
+        "任务",
+        "仓库",
+        "提交",
+    )
+    return any(marker in text for marker in title_markers)
 
 
 def _default_card_template(event_type: str) -> str:

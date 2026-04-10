@@ -24,8 +24,9 @@ def load_bootstrap_prompt(*, repo_root: Path, manifest: AppManifest) -> str:
             "- 先阅读当前可见的 skill summaries，再决定是否需要更多展开\n"
             "- 只在某个 skill 明显适用且 summary 不足时，再调用 `skill` 加载该 skill 正文\n"
             "- 不要一次加载多个 skill 正文，也不要预先展开所有 skill\n"
-            "- 对 MCP 能力先用 `mcp` 查看 list/detail，再按需 call\n"
-            "- 不要假设所有 MCP 工具细节已经默认展开；需要时再逐步查看"
+            "- 只有在 server、tool 或参数仍不明确时，才先用 `mcp` 查看 list/detail\n"
+            "- 如果 capability catalog 已经暴露了精确的 server_id、tool_name 和参数形状，并且用户目标对象已经足够明确，可以直接使用匹配的 `mcp` 调用\n"
+            "- 不要假设所有 MCP 工具细节已经默认展开；但也不要在 exact server/tool surface 已经明确时，先做无意义的 list/detail 试探"
         ),
     ]
     for title, relative_path in (

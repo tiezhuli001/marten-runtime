@@ -19,7 +19,7 @@
 - `LLM + agent + MCP + skill` first
 - `harness-thin, policy-hard, workflow-light`
 - 支持 channel/user/conversation 级绑定与多 agent 路由
-- 支持 runtime context assembly 与会话回放
+- 支持受治理的 runtime context assembly、会话回放与 working context 压缩
 - skills 作为运行时一等输入，而不是静态文件摆设
 - 支持 OpenAI-compatible provider，并带最小 retry/backoff 韧性
 - 提供 Feishu websocket 接入和轻量 HTTP operator surface
@@ -59,15 +59,19 @@ flowchart LR
 
 ## Current Scope
 
-当前已经完成 private harness 计划中的 Milestone A：
+当前 MVP 的 A/B 主线已经实现：
 
-- gateway binding + multi-agent routing
-- runtime context assembly + live context rehydration
+- 多主 agent 私有配置加载与稳定路由优先级
+- HTTP 入站 `requested_agent_id` 已能真实命中选中的 agent
+- selected agent 身份已真实下沉到 LLM request
+- runtime context assembly 已具备受治理 replay、working context 压缩和长对话回归测试
 - skills first-class runtime integration
 - provider retry/backoff resilience
 
-当前明确没有进入 Milestone B：
+当前仍然明确 deferred：
 
+- 薄 per-agent model-profile 动态切换
+- per-agent app manifest / bootstrap prompt 切换
 - durable session persistence
 
 同样明确暂不做：

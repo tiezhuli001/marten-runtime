@@ -8,6 +8,9 @@ class CapabilityDeclaration(BaseModel):
     summary: str
     actions: list[str] = Field(default_factory=list)
     usage_rules: list[str] = Field(default_factory=list)
+    parameters_schema: dict[str, object] = Field(
+        default_factory=lambda: {"type": "object"}
+    )
 
 
 def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
@@ -15,14 +18,80 @@ def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
         "automation": CapabilityDeclaration(
             name="automation",
             summary="Manage recurring automations and inspect scheduled jobs.",
-            actions=["register", "list", "detail", "update", "delete", "pause", "resume"],
-            usage_rules=["Use this when the user wants to create or manage scheduled tasks."],
+            actions=[
+                "register",
+                "list",
+                "detail",
+                "update",
+                "delete",
+                "pause",
+                "resume",
+            ],
+            usage_rules=[
+                "Use this for creating, listing, inspecting, updating, pausing, resuming, or deleting scheduled tasks."
+            ],
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "register",
+                            "list",
+                            "detail",
+                            "update",
+                            "delete",
+                            "pause",
+                            "resume",
+                        ],
+                    },
+                    "automation_id": {"type": "string"},
+                    "include_disabled": {"type": "boolean"},
+                },
+                "required": ["action"],
+                "additionalProperties": True,
+            },
         ),
         "mcp": CapabilityDeclaration(
             name="mcp",
-            summary="Inspect MCP server capabilities progressively and call one tool when needed.",
+            summary=(
+                "One family tool that fronts configured MCP servers and returns live structured facts "
+                "from external systems."
+            ),
             actions=["list", "detail", "call"],
-            usage_rules=["Inspect servers first, then detail, then call one tool with explicit arguments."],
+            usage_rules=[
+                "Use action=list to inspect available servers, action=detail with an exact server_id to inspect that server, and action=call with an exact server_id, exact tool_name, and an object arguments payload.",
+                "When making action=call, copy server_id and tool_name exactly from the MCP capability catalog or a prior mcp detail/list result; do not invent aliases or renamed subtools.",
+                "Can answer GitHub repository questions and other MCP-backed live facts exposed by configured servers.",
+            ],
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "detail", "call"]},
+                    "server_id": {"type": "string"},
+                    "tool_name": {"type": "string"},
+                    "query": {"type": "string"},
+                    "arguments": {"type": "object"},
+                },
+                "required": ["action"],
+                "additionalProperties": True,
+            },
+        ),
+        "runtime": CapabilityDeclaration(
+            name="runtime",
+            summary="Inspect the current runtime context status in a user-readable way.",
+            actions=["context_status"],
+            usage_rules=[
+                "Use this when the user asks about current context window usage, compression status, or conversation context health.",
+                "Returns live runtime context data for the current session.",
+            ],
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["context_status"]},
+                },
+                "additionalProperties": False,
+            },
         ),
         "self_improve": CapabilityDeclaration(
             name="self_improve",
@@ -36,13 +105,46 @@ def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
                 "list_system_lessons",
                 "save_candidate",
             ],
-            usage_rules=["Use this only for self-improve evidence and candidate management."],
+            usage_rules=[
+                "Use this only for self-improve evidence and candidate management."
+            ],
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "list_candidates",
+                            "candidate_detail",
+                            "delete_candidate",
+                            "summary",
+                            "list_evidence",
+                            "list_system_lessons",
+                            "save_candidate",
+                        ],
+                    },
+                    "candidate_id": {"type": "string"},
+                },
+                "required": ["action"],
+                "additionalProperties": True,
+            },
         ),
         "skill": CapabilityDeclaration(
             name="skill",
             summary="Load one skill body on demand when the visible summary is not enough.",
             actions=["load"],
-            usage_rules=["Read visible skill summaries first and load only the one that clearly applies."],
+            usage_rules=[
+                "Read visible skill summaries first and load only the one that clearly applies."
+            ],
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["load"]},
+                    "skill_id": {"type": "string"},
+                },
+                "required": ["action", "skill_id"],
+                "additionalProperties": False,
+            },
         ),
         "time": CapabilityDeclaration(
             name="time",
@@ -53,8 +155,16 @@ def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
             actions=[],
             usage_rules=[
                 "Use this when the user asks for the current time, date, datetime, or a timezone-specific current time.",
-                "For queries like 现在几点 / 当前时间 / what time is it, 先调用 `time`，不要直接猜当前时间，也不要依赖上下文或记忆回答。",
+                "Returns live clock data rather than remembered or inferred time values.",
             ],
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "timezone": {"type": "string"},
+                    "tz": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
         ),
     }
 
@@ -68,9 +178,19 @@ def render_capability_catalog(
         return None
     lines = ["Capability catalog:"]
     for name, declaration in declarations.items():
-        action_text = f" Actions: {', '.join(declaration.actions)}." if declaration.actions else ""
-        usage_text = f" Rules: {' '.join(declaration.usage_rules)}" if declaration.usage_rules else ""
-        lines.append(f"- {name}: {declaration.summary}{action_text}{usage_text}".strip())
+        action_text = (
+            f" Actions: {', '.join(declaration.actions)}."
+            if declaration.actions
+            else ""
+        )
+        usage_text = (
+            f" Rules: {' '.join(declaration.usage_rules)}"
+            if declaration.usage_rules
+            else ""
+        )
+        lines.append(
+            f"- {name}: {declaration.summary}{action_text}{usage_text}".strip()
+        )
     if mcp_catalog_text:
         lines.append("")
         lines.append(mcp_catalog_text)
@@ -78,32 +198,13 @@ def render_capability_catalog(
 
 
 def render_tool_description(declaration: CapabilityDeclaration) -> str:
-    if declaration.name == "automation":
-        return (
-            "Manage recurring automations with action=register/list/detail/update/delete/pause/resume. "
-            "Use this when the user wants to create or manage scheduled tasks. "
-            "For requests like 当前有哪些定时任务 / 列出定时任务 / 查看任务列表, call the family tool with action=list. "
-            "Stay inside the automation family contract and 不要调用不存在的子工具名."
-        )
-    if declaration.name == "mcp":
-        return (
-            "Inspect available MCP servers and tools, then call one tool by server_id and tool_name when "
-            "realtime external capabilities are needed."
-        )
-    if declaration.name == "self_improve":
-        return (
-            "Inspect self-improve candidates, evidence, active lessons, and internal candidate persistence "
-            "with action=list_candidates/candidate_detail/delete_candidate/summary/list_evidence/"
-            "list_system_lessons/save_candidate."
-        )
-    if declaration.name == "skill":
-        return (
-            "Load one skill body by skill_id when the summary is not enough and more detailed instructions "
-            "are needed before continuing."
-        )
-    if declaration.name == "time":
-        return (
-            "Read the live current time for a requested timezone or UTC offset. For questions like 现在几点, "
-            "当前时间, or what time is it, 先调用这个工具，不要直接猜当前时间，也不要依赖上下文或记忆回答。"
-        )
-    return declaration.summary
+    segments = [declaration.summary]
+    if declaration.actions:
+        segments.append(f"Actions: {', '.join(declaration.actions)}.")
+    if declaration.usage_rules:
+        segments.append(f"Rules: {' '.join(declaration.usage_rules)}")
+    return " ".join(segment.strip() for segment in segments if segment.strip())
+
+
+def get_parameters_schema(declaration: CapabilityDeclaration) -> dict[str, object]:
+    return dict(declaration.parameters_schema)

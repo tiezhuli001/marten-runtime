@@ -66,6 +66,38 @@ class _FakeDeliveryClient:
         }
 
 
+class _BlockingDeliveryClient:
+    def __init__(self) -> None:
+        self.payloads: list[FeishuDeliveryPayload] = []
+        self.first_delivery_started = threading.Event()
+        self.release_first_delivery = threading.Event()
+        self.second_delivery_started = threading.Event()
+
+    def deliver(self, payload: FeishuDeliveryPayload) -> dict[str, object]:
+        if payload.run_id == "run_1":
+            self.first_delivery_started.set()
+            self.release_first_delivery.wait(timeout=2)
+        else:
+            self.second_delivery_started.set()
+        self.payloads.append(payload)
+        return {
+            "ok": True,
+            "message_id": f"om_blocking_{len(self.payloads)}",
+            "event_id": payload.event_id,
+            "event_type": payload.event_type,
+            "run_id": payload.run_id,
+            "trace_id": payload.trace_id,
+            "sequence": payload.sequence,
+        }
+
+    def add_reaction(self, message_id: str, emoji_type: str = "OnIt") -> dict[str, object]:
+        return {
+            "ok": True,
+            "message_id": message_id,
+            "emoji_type": emoji_type,
+        }
+
+
 class _RecordingDeliveryTransport:
     def __init__(self) -> None:
         self.sent: list[tuple[str, dict[str, str], dict]] = []
@@ -286,6 +318,20 @@ class FeishuTests(unittest.TestCase):
             ["GitHub热榜推荐｜已启用｜22:20", "GitHub热榜推荐｜已启用｜22:30"],
         )
 
+    def test_parse_feishu_card_protocol_accepts_fenced_block_with_trailing_note(self) -> None:
+        visible, protocol = parse_feishu_card_protocol(
+            "✅ 工具状态检查完成\n\n"
+            "```feishu_card\n"
+            '{"title":"工具状态","summary":"共 3 项","sections":[{"items":["普通对话正常","builtin 工具正常","mcp 工具正常"]}]}\n'
+            "```\n\n"
+            "接下来继续做 live 验证。"
+        )
+
+        self.assertEqual(visible, "✅ 工具状态检查完成\n\n接下来继续做 live 验证。")
+        self.assertIsInstance(protocol, FeishuCardProtocol)
+        self.assertEqual(protocol.title, "工具状态")
+        self.assertEqual(protocol.summary, "共 3 项")
+
     def test_parse_feishu_card_protocol_accepts_inline_trailing_protocol_json(self) -> None:
         visible, protocol = parse_feishu_card_protocol(
             "当前共有 **3 个定时任务**，都是 GitHub 热门仓库推送：\n\n"
@@ -452,6 +498,154 @@ class FeishuTests(unittest.TestCase):
         self.assertEqual(elements[3]["tag"], "hr")
         self.assertEqual(elements[4]["content"], "<font color='grey'>💬 两者都推送到同一个飞书会话。</font>")
 
+    def test_render_final_reply_card_uses_runtime_heading_for_context_status_text(self) -> None:
+        card = render_final_reply_card(
+            "当前上下文使用详情\n"
+            "- 下一次请求预计输入：3673 tokens（tokenizer）\n"
+            "- 本轮首发请求：3604 tokens；本轮 actual-peak：3280 tokens（输入 3198 + 输出 82，峰值主要来自工具结果注入后的 follow-up 模型调用）\n"
+            "- 上一轮模型调用：模型输入：3198｜模型输出：82｜总计：3280"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "当前上下文使用详情")
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "**🗂️ 详情**")
+        self.assertIn("下一次请求预计输入", elements[1]["content"])
+
+    def test_render_final_reply_card_uses_runtime_heading_when_actual_peak_is_unavailable(self) -> None:
+        card = render_final_reply_card(
+            "当前上下文使用详情\n"
+            "- 下一次请求预计输入：3838 tokens（tokenizer）\n"
+            "- 本轮 actual-peak：无（本轮未发生模型调用）\n"
+            "- 本轮首发请求：3838 tokens；本轮峰值输入上下文：3838 tokens"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "当前上下文使用详情")
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "**🗂️ 详情**")
+        self.assertIn("本轮 actual-peak：无", elements[1]["content"])
+
+    def test_render_final_reply_card_derives_trending_title_from_plain_bullets(self) -> None:
+        card = render_final_reply_card(
+            "GitHub 今日热榜，按官方 Trending 排序（2026-04-08 16:42 抓取，共 2 个项目）\n"
+            "- 1. google-ai-edge/gallery（Kotlin，+897★）\n"
+            "- 2. google-ai-edge/LiteRT-LM（C++，+528★）"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "GitHub 今日热榜")
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "**📌 按官方 Trending 排序（2026-04-08 16:42 抓取，共 2 个项目）**")
+        self.assertEqual(elements[1]["content"], "**🗂️ 详情**")
+        self.assertIn("1. google-ai-edge/gallery", elements[2]["content"])
+
+    def test_render_final_reply_card_derives_plain_title_from_intro_line(self) -> None:
+        card = render_final_reply_card(
+            "查到了，仓库基本信息如下：\n\n"
+            "| 项目 | 信息 |\n"
+            "|------|------|\n"
+            "| 默认分支 | main |"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "仓库基本信息")
+
+    def test_render_final_reply_card_uses_protocol_title_when_fenced_block_has_trailing_note(self) -> None:
+        card = render_final_reply_card(
+            "✅ 工具状态检查完成\n\n"
+            "```feishu_card\n"
+            '{"title":"工具状态","summary":"共 3 项","sections":[{"items":["普通对话正常","builtin 工具正常","mcp 工具正常"]}]}\n'
+            "```\n\n"
+            "接下来继续做 live 验证。"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "工具状态")
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "✅ 工具状态检查完成\n\n接下来继续做 live 验证。")
+        self.assertEqual(elements[2]["content"], "**📌 共 3 项**")
+
+    def test_render_final_reply_card_appends_usage_footer_when_summary_present(self) -> None:
+        card = render_final_reply_card(
+            "处理完成。",
+            usage_summary={"input_tokens": 3198, "output_tokens": 82, "peak_tokens": 3280},
+        )
+
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[-2]["tag"], "hr")
+        self.assertEqual(
+            elements[-1]["content"],
+            "<font color='grey'>本轮模型 token：输入 3198｜输出 82｜峰值 3280</font>",
+        )
+
+    def test_render_final_reply_card_omits_usage_footer_when_summary_absent(self) -> None:
+        card = render_final_reply_card("处理完成。")
+
+        contents = [element.get("content", "") for element in card["body"]["elements"]]
+        self.assertFalse(any("本轮模型 token：" in content for content in contents))
+
+    def test_delivery_final_rendering_passes_usage_summary_to_renderer(self) -> None:
+        captured: list[tuple[str, dict[str, str], dict]] = []
+
+        def fake_post(url: str, headers: dict[str, str], body: dict) -> dict:
+            captured.append((url, headers, body))
+            if url.endswith("/open-apis/auth/v3/tenant_access_token/internal"):
+                return {"code": 0, "tenant_access_token": "tenant-token", "expire": 7200}
+            return {"code": 0, "data": {"message_id": "om_message_usage"}}
+
+        client = FeishuDeliveryClient(
+            env={"FEISHU_APP_ID": "app-id", "FEISHU_APP_SECRET": "app-secret"},
+            transport=fake_post,
+        )
+        payload = FeishuDeliveryPayload(
+            chat_id="chat_usage_1",
+            event_type="final",
+            event_id="evt_usage_1",
+            run_id="run_usage_1",
+            trace_id="trace_usage_1",
+            sequence=1,
+            text="usage delegated",
+            usage_summary={"input_tokens": 11, "output_tokens": 7, "peak_tokens": 18},
+        )
+
+        with patch(
+            "marten_runtime.channels.feishu.delivery.feishu_rendering.render_final_reply_card",
+            return_value={"config": {"wide_screen_mode": True}, "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": "delegated"}}]},
+        ) as render_mock:
+            client.send(payload)
+
+        render_mock.assert_called_once_with(
+            "usage delegated",
+            event_type="final",
+            usage_summary={"input_tokens": 11, "output_tokens": 7, "peak_tokens": 18},
+        )
+
+    def test_render_final_reply_card_derives_time_title_for_current_time_reply(self) -> None:
+        card = render_final_reply_card("当前北京时间是 2026年4月7日 23:27:56。")
+
+        self.assertEqual(card["header"]["title"]["content"], "当前时间")
+
+    def test_render_final_reply_card_derives_commit_title_without_repo_slug(self) -> None:
+        card = render_final_reply_card(
+            "最近一次提交于 **2026-04-05 13:48:45 UTC**，提交信息为 `release: v2.7.2`，提交者是 leemac。"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "仓库最近提交")
+
+    def test_render_final_reply_card_derives_commit_title_with_repo_slug(self) -> None:
+        card = render_final_reply_card(
+            "llt22/talkio 最近一次提交是 **2026-04-05 21:48:45**（北京时间），提交信息为 `release: v2.7.2`。"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "llt22/talkio 最近提交")
+
+    def test_render_final_reply_card_uses_default_title_for_short_literal_reply(self) -> None:
+        card = render_final_reply_card("main")
+
+        self.assertEqual(card["header"]["title"]["content"], "处理结果")
+        self.assertEqual(card["body"]["elements"][0]["content"], "main")
+
+    def test_render_final_reply_card_derives_time_title_for_timezone_prefixed_time_reply(self) -> None:
+        card = render_final_reply_card("现在是Asia/Shanghai 2026年4月8日 14:07")
+
+        self.assertEqual(card["header"]["title"]["content"], "当前时间")
+
     def test_delivery_final_rendering_delegates_to_generic_renderer(self) -> None:
         captured: list[tuple[str, dict[str, str], dict]] = []
 
@@ -489,6 +683,7 @@ class FeishuTests(unittest.TestCase):
         delivery = _FakeDeliveryClient()
         calls: list[str] = []
         lane_manager = ConversationLaneManager()
+        run_history = InMemoryRunHistory()
         first_started = threading.Event()
         release_first = threading.Event()
 
@@ -497,6 +692,15 @@ class FeishuTests(unittest.TestCase):
             if len(calls) == 1:
                 first_started.set()
                 release_first.wait(timeout=2)
+            record = run_history.start(
+                session_id="sess_busy",
+                trace_id=envelope.trace_id,
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+            )
+            original_run_id = record.run_id
+            record.run_id = f"run_{len(calls)}"
+            run_history._items[record.run_id] = run_history._items.pop(original_run_id)
             return {
                 "status": "accepted",
                 "session_id": "sess_busy",
@@ -505,7 +709,7 @@ class FeishuTests(unittest.TestCase):
                     {
                         "event_type": "final",
                         "event_id": "evt_final_busy",
-                        "run_id": "run_busy",
+                        "run_id": record.run_id,
                         "trace_id": envelope.trace_id,
                         "sequence": 1,
                         "payload": {"text": "done"},
@@ -522,6 +726,7 @@ class FeishuTests(unittest.TestCase):
             runtime_handler=runtime_handler,
             delivery_client=delivery,
             lane_manager=lane_manager,
+            run_history=run_history,
         )
         results: dict[str, object] = {}
 
@@ -586,6 +791,113 @@ class FeishuTests(unittest.TestCase):
         self.assertEqual(results["second"].status, "accepted")
         self.assertEqual(calls, ["msg_busy_1", "msg_busy_2"])
         self.assertEqual(len(delivery.payloads), 2)
+        second_run = run_history.get("run_2")
+        self.assertEqual(second_run.queue.queue_depth_at_enqueue, 2)
+        self.assertTrue(second_run.queue.waited_in_lane)
+
+    def test_feishu_same_chat_serializes_delivery_until_prior_turn_is_sent(self) -> None:
+        delivery = _BlockingDeliveryClient()
+        lane_manager = ConversationLaneManager()
+        results: dict[str, object] = {}
+        finished: dict[str, threading.Event] = {
+            "first": threading.Event(),
+            "second": threading.Event(),
+        }
+        call_count = 0
+
+        def runtime_handler(envelope: object) -> dict[str, object]:
+            nonlocal call_count
+            call_count += 1
+            return {
+                "status": "accepted",
+                "session_id": "sess_delivery_order",
+                "trace_id": envelope.trace_id,
+                "events": [
+                    {
+                        "event_type": "final",
+                        "event_id": f"evt_final_{call_count}",
+                        "run_id": f"run_{call_count}",
+                        "trace_id": envelope.trace_id,
+                        "sequence": 1,
+                        "payload": {"text": f"done_{call_count}"},
+                    }
+                ],
+            }
+
+        service = FeishuWebsocketService(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            receipt_store=InMemoryReceiptStore(),
+            runtime_handler=runtime_handler,
+            delivery_client=delivery,
+            lane_manager=lane_manager,
+        )
+
+        first_payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_delivery_1",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {"user_id": "user_delivery"},
+                },
+                "message": {
+                    "message_id": "msg_delivery_1",
+                    "chat_id": "chat_delivery",
+                    "content": json.dumps({"text": "hello delivery 1"}),
+                },
+            },
+        }
+        second_payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_delivery_2",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {"user_id": "user_delivery"},
+                },
+                "message": {
+                    "message_id": "msg_delivery_2",
+                    "chat_id": "chat_delivery",
+                    "content": json.dumps({"text": "hello delivery 2"}),
+                },
+            },
+        }
+
+        def handle(name: str, payload: dict[str, object]) -> None:
+            results[name] = service.handle_event_payload(payload)
+            finished[name].set()
+
+        first_thread = threading.Thread(target=handle, args=("first", first_payload))
+        second_thread = threading.Thread(target=handle, args=("second", second_payload))
+        first_thread.start()
+        self.assertTrue(delivery.first_delivery_started.wait(timeout=2))
+
+        second_thread.start()
+        self.assertFalse(
+            delivery.second_delivery_started.wait(timeout=0.2),
+            "second same-chat turn must not start delivery before prior delivery completes",
+        )
+        self.assertFalse(
+            finished["second"].wait(timeout=0.2),
+            "second same-chat turn must stay blocked until prior delivery is released",
+        )
+
+        delivery.release_first_delivery.set()
+        first_thread.join(timeout=2)
+        second_thread.join(timeout=2)
+
+        self.assertEqual([payload.run_id for payload in delivery.payloads], ["run_1", "run_2"])
+        self.assertEqual(results["first"].status, "accepted")
+        self.assertEqual(results["second"].status, "accepted")
 
     def test_feishu_different_chat_still_runs_when_another_lane_is_busy(self) -> None:
         delivery = _FakeDeliveryClient()
@@ -2195,6 +2507,100 @@ class FeishuTests(unittest.TestCase):
         self.assertEqual(len(delivery_results), 2)
         self.assertEqual(history.get(run.run_id).timings.outbound_ms, 199)
         self.assertEqual(history.get(run.run_id).timings.total_ms, 199)
+
+    def test_build_delivery_payload_uses_actual_peak_usage_summary(self) -> None:
+        history = InMemoryRunHistory()
+        run = history.start(
+            session_id="sess_usage_actual",
+            trace_id="trace_usage_actual",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        run.actual_peak_input_tokens = 3198
+        run.actual_peak_output_tokens = 82
+        run.actual_peak_total_tokens = 3280
+
+        service = FeishuWebsocketService(
+            receipt_store=InMemoryReceiptStore(),
+            runtime_handler=lambda envelope: {"status": "accepted", "events": []},
+            delivery_client=_FakeDeliveryClient(),
+            run_history=history,
+        )
+        event = FeishuInboundEvent(
+            event_id="evt_usage_actual",
+            message_id="msg_usage_actual",
+            chat_id="chat_usage_actual",
+            user_id="user_usage_actual",
+            text="hello",
+        )
+        envelope = to_inbound_envelope(event)
+
+        payload = service._build_delivery_payload(
+            event=event,
+            envelope=envelope,
+            event_payload={
+                "event_type": "final",
+                "event_id": "evt_final_usage_actual",
+                "run_id": run.run_id,
+                "trace_id": run.trace_id,
+                "sequence": 1,
+                "payload": {"text": "done"},
+            },
+        )
+
+        self.assertEqual(
+            payload.usage_summary,
+            {
+                "input_tokens": 3198,
+                "output_tokens": 82,
+                "peak_tokens": 3280,
+                "estimated_only": False,
+            },
+        )
+
+    def test_build_delivery_payload_falls_back_to_preflight_usage_summary(self) -> None:
+        history = InMemoryRunHistory()
+        run = history.start(
+            session_id="sess_usage_preflight",
+            trace_id="trace_usage_preflight",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        run.initial_preflight_input_tokens_estimate = 3838
+        run.peak_preflight_input_tokens_estimate = 3980
+
+        service = FeishuWebsocketService(
+            receipt_store=InMemoryReceiptStore(),
+            runtime_handler=lambda envelope: {"status": "accepted", "events": []},
+            delivery_client=_FakeDeliveryClient(),
+            run_history=history,
+        )
+        event = FeishuInboundEvent(
+            event_id="evt_usage_preflight",
+            message_id="msg_usage_preflight",
+            chat_id="chat_usage_preflight",
+            user_id="user_usage_preflight",
+            text="hello",
+        )
+        envelope = to_inbound_envelope(event)
+
+        payload = service._build_delivery_payload(
+            event=event,
+            envelope=envelope,
+            event_payload={
+                "event_type": "final",
+                "event_id": "evt_final_usage_preflight",
+                "run_id": run.run_id,
+                "trace_id": run.trace_id,
+                "sequence": 1,
+                "payload": {"text": "done"},
+            },
+        )
+
+        self.assertEqual(
+            payload.usage_summary,
+            {"input_tokens": 3838, "output_tokens": None, "peak_tokens": 3980, "estimated_only": True},
+        )
 
     def test_automation_final_delivery_suppresses_duplicate_window(self) -> None:
         transport = _RecordingDeliveryTransport()

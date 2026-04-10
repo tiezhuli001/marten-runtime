@@ -27,6 +27,7 @@ from lark_oapi.ws.enum import FrameType, MessageType
 from lark_oapi.ws.pb.pbbp2_pb2 import Frame
 
 from marten_runtime.channels.feishu.delivery import FeishuDeliveryPayload
+from marten_runtime.channels.feishu.usage import build_usage_summary_from_history
 from marten_runtime.channels.feishu.inbound import parse_feishu_callback, to_inbound_envelope
 from marten_runtime.channels.feishu.models import (
     FeishuDispatchResult,
@@ -249,43 +250,49 @@ class FeishuWebsocketService:
             self.state.last_event_at = datetime.now(timezone.utc)
             return semantic_duplicate
         self._add_ack_reaction(event.message_id)
+        lane_lease = self._acquire_lane_lease(envelope)
         try:
-            body = self._run_runtime_handler(envelope)
-        except Exception as exc:
-            logger.exception("feishu runtime handler failed")
+            try:
+                body = self.runtime_handler(envelope)
+            except Exception as exc:
+                logger.exception("feishu runtime handler failed")
+                self.state.last_event_id = event.message_id or event.event_id
+                self.state.last_event_at = datetime.now(timezone.utc)
+                self.state.last_error = f"{exc.__class__.__name__}:{exc}"
+                return FeishuDispatchResult(
+                    status="error",
+                    body={
+                        "status": "error",
+                        "error_code": "RUNTIME_HANDLER_FAILED",
+                        "message": str(exc),
+                        "message_id": event.message_id,
+                        "event_id": event.event_id,
+                        "chat_id": event.chat_id,
+                    },
+                    envelope=envelope,
+                    event=event,
+                )
+            if lane_lease is not None:
+                self._bind_queue_observation_to_body(body, lane_lease)
+            self.state.last_session_id = str(body.get("session_id", "")).strip() or None
+            last_run_id, delivery_results = self._deliver_runtime_events(
+                event=event,
+                envelope=envelope,
+                body=body,
+            )
+            self.state.last_run_id = last_run_id
+            self.state.last_runtime_trace_id = envelope.trace_id
             self.state.last_event_id = event.message_id or event.event_id
             self.state.last_event_at = datetime.now(timezone.utc)
-            self.state.last_error = f"{exc.__class__.__name__}:{exc}"
             return FeishuDispatchResult(
-                status="error",
-                body={
-                    "status": "error",
-                    "error_code": "RUNTIME_HANDLER_FAILED",
-                    "message": str(exc),
-                    "message_id": event.message_id,
-                    "event_id": event.event_id,
-                    "chat_id": event.chat_id,
-                },
+                status="accepted",
+                body=body,
                 envelope=envelope,
                 event=event,
+                delivery_results=delivery_results,
             )
-        self.state.last_session_id = str(body.get("session_id", "")).strip() or None
-        last_run_id, delivery_results = self._deliver_runtime_events(
-            event=event,
-            envelope=envelope,
-            body=body,
-        )
-        self.state.last_run_id = last_run_id
-        self.state.last_runtime_trace_id = envelope.trace_id
-        self.state.last_event_id = event.message_id or event.event_id
-        self.state.last_event_at = datetime.now(timezone.utc)
-        return FeishuDispatchResult(
-            status="accepted",
-            body=body,
-            envelope=envelope,
-            event=event,
-            delivery_results=delivery_results,
-        )
+        finally:
+            self._release_lane_lease(envelope, lane_lease)
 
     def _guardrail_result(self, event: FeishuInboundEvent) -> FeishuDispatchResult | None:
         if _is_self_message(event):
@@ -338,7 +345,7 @@ class FeishuWebsocketService:
             event=event,
         )
 
-    def _run_runtime_handler(self, envelope: InboundEnvelope) -> dict[str, object]:
+    def _acquire_lane_lease(self, envelope: InboundEnvelope):
         lane_lease = None
         if self.lane_manager is not None:
             lane_lease = self.lane_manager.acquire(
@@ -349,15 +356,37 @@ class FeishuWebsocketService:
             )
             current_stats = self.lane_manager.stats()
             self._last_enqueued_lane = current_stats.get("last_enqueued_lane")
-        try:
-            return self.runtime_handler(envelope)
-        finally:
-            if lane_lease is not None:
-                self.lane_manager.release(
-                    channel_id=envelope.channel_id,
-                    conversation_id=envelope.conversation_id,
-                    run_id=lane_lease.run_id,
-                )
+            envelope.enqueued_at = lane_lease.enqueued_at
+            envelope.started_at = lane_lease.started_at
+        return lane_lease
+
+    def _release_lane_lease(self, envelope: InboundEnvelope, lane_lease) -> None:
+        if lane_lease is None or self.lane_manager is None:
+            return
+        self.lane_manager.release(
+            channel_id=envelope.channel_id,
+            conversation_id=envelope.conversation_id,
+            run_id=lane_lease.run_id,
+        )
+
+    def _bind_queue_observation_to_body(
+        self,
+        body: Mapping[str, object],
+        lane_lease,
+    ) -> None:
+        if self.run_history is None:
+            return
+        for event in body.get("events", []):
+            if not isinstance(event, Mapping):
+                continue
+            run_id = str(event.get("run_id", "")).strip()
+            if not run_id:
+                continue
+            self.run_history.set_queue_diagnostics(
+                run_id,
+                queue_depth_at_enqueue=lane_lease.queue_depth_at_enqueue,
+                queue_wait_ms=lane_lease.queue_wait_ms,
+            )
 
     def _deliver_runtime_events(
         self,
@@ -406,15 +435,21 @@ class FeishuWebsocketService:
         text = ""
         if isinstance(payload_body, Mapping):
             text = str(payload_body.get("text", ""))
+        run_id = str(event_payload["run_id"])
         return FeishuDeliveryPayload(
             chat_id=event.chat_id,
             event_type=event_type,
             event_id=str(event_payload["event_id"]),
-            run_id=str(event_payload["run_id"]),
+            run_id=run_id,
             trace_id=str(event_payload["trace_id"]),
             sequence=int(event_payload["sequence"]),
             text=text,
             dedupe_key=envelope.dedupe_key if event_type in {"final", "error"} else None,
+            usage_summary=(
+                build_usage_summary_from_history(self.run_history, run_id)
+                if event_type in {"final", "error"}
+                else None
+            ),
         )
 
     def stats(self) -> dict[str, object]:
