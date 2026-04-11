@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import json
-import inspect
 import os
 import re
-import time
 from collections.abc import Callable, Mapping
 from typing import Protocol
 from urllib import error, request as urllib_request
@@ -31,6 +29,10 @@ from marten_runtime.runtime.provider_retry import (
     RetryPolicy,
     normalize_provider_error,
     with_retry,
+)
+from marten_runtime.runtime.llm_message_support import build_openai_chat_payload
+from marten_runtime.runtime.llm_transport_support import (
+    invoke_transport as _invoke_transport,
 )
 from marten_runtime.runtime.token_estimator import estimate_payload_tokens
 from marten_runtime.runtime.tool_episode_summary_prompt import (
@@ -274,134 +276,17 @@ class OpenAIChatLLMClient:
         timeout_seconds: int,
         attempts: list[ProviderCallAttempt],
     ) -> dict:
-        started_at = time.perf_counter()
-        try:
-            result = self._call_transport(
-                f"{self.base_url}/chat/completions",
-                {
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                self._build_payload(request),
-                timeout_seconds=timeout_seconds,
-            )
-            attempts.append(
-                ProviderCallAttempt(
-                    attempt=len(attempts) + 1,
-                    elapsed_ms=_elapsed_ms(started_at),
-                    ok=True,
-                    error_code=None,
-                    error_detail=None,
-                    retryable=False,
-                )
-            )
-            return result
-        except Exception as exc:
-            from marten_runtime.runtime.provider_retry import normalize_provider_error
-
-            normalized = normalize_provider_error(exc)
-            attempts.append(
-                ProviderCallAttempt(
-                    attempt=len(attempts) + 1,
-                    elapsed_ms=_elapsed_ms(started_at),
-                    ok=False,
-                    error_code=normalized.error_code,
-                    error_detail=normalized.detail,
-                    retryable=normalized.retryable,
-                )
-            )
-            raise
-
-    def _call_transport(
-        self,
-        url: str,
-        headers: dict[str, str],
-        body: dict,
-        *,
-        timeout_seconds: int,
-    ) -> dict:
-        if len(inspect.signature(self.transport).parameters) >= 4:
-            return self.transport(url, headers, body, timeout_seconds)
-        return self.transport(url, headers, body)
-
-    @staticmethod
-    def _build_messages(request: LLMRequest) -> list[dict]:
-        messages: list[dict] = []
-        is_tool_followup = bool(request.tool_history) or (
-            request.tool_result is not None and bool(request.requested_tool_name)
+        return _invoke_transport(
+            transport=self.transport,
+            url=f"{self.base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            body=self._build_payload(request),
+            timeout_seconds=timeout_seconds,
+            attempts=attempts,
         )
-        include_capability_catalog = (
-            bool(request.capability_catalog_text) and not is_tool_followup
-        )
-        if request.system_prompt:
-            messages.append({"role": "system", "content": request.system_prompt})
-        if request.skill_heads_text and not is_tool_followup:
-            messages.append({"role": "system", "content": request.skill_heads_text})
-        if include_capability_catalog:
-            messages.append(
-                {"role": "system", "content": request.capability_catalog_text}
-            )
-        if request.always_on_skill_text:
-            messages.append({"role": "system", "content": request.always_on_skill_text})
-        if request.compact_summary_text:
-            messages.append({"role": "system", "content": request.compact_summary_text})
-        if request.tool_outcome_summary_text:
-            messages.append(
-                {"role": "system", "content": request.tool_outcome_summary_text}
-            )
-        if request.working_context_text:
-            messages.append({"role": "system", "content": request.working_context_text})
-        request_specific_instruction = _request_specific_instruction(request)
-        if request_specific_instruction:
-            messages.append({"role": "system", "content": request_specific_instruction})
-        followup_instruction = _tool_followup_instruction(request.requested_tool_name)
-        if followup_instruction:
-            messages.append({"role": "system", "content": followup_instruction})
-        for body in request.activated_skill_bodies:
-            messages.append({"role": "system", "content": body})
-        for item in request.conversation_messages:
-            messages.append({"role": item.role, "content": item.content})
-        messages.append({"role": "user", "content": request.message})
-        tool_history = list(request.tool_history)
-        if (
-            not tool_history
-            and request.tool_result is not None
-            and request.requested_tool_name
-        ):
-            tool_history.append(
-                ToolExchange(
-                    tool_name=request.requested_tool_name,
-                    tool_payload=request.requested_tool_payload,
-                    tool_result=request.tool_result,
-                )
-            )
-        for index, item in enumerate(tool_history, start=1):
-            call_id = f"call_{index}"
-            messages.append(
-                {
-                    "role": "assistant",
-                    "tool_calls": [
-                        {
-                            "id": call_id,
-                            "type": "function",
-                            "function": {
-                                "name": item.tool_name,
-                                "arguments": json.dumps(
-                                    item.tool_payload, ensure_ascii=True
-                                ),
-                            },
-                        }
-                    ],
-                }
-            )
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": json.dumps(item.tool_result, ensure_ascii=True),
-                }
-            )
-        return _collapse_system_messages(messages)
 
     def _parse_reply(self, payload: dict) -> LLMReply:
         message = payload["choices"][0]["message"]
@@ -451,33 +336,6 @@ def estimate_request_tokens(request: LLMRequest) -> int:
 def estimate_request_usage(request: LLMRequest):
     payload = build_openai_chat_payload(request.model_name or "estimate", request)
     return estimate_payload_tokens(payload, tokenizer_family=request.tokenizer_family)
-
-
-def build_openai_chat_payload(
-    model_name: str, request: LLMRequest
-) -> dict[str, object]:
-    body: dict[str, object] = {
-        "model": model_name,
-        "messages": OpenAIChatLLMClient._build_messages(request),
-    }
-    if request.available_tools:
-        body["tools"] = [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool_name,
-                    "description": request.tool_snapshot.tool_metadata.get(
-                        tool_name, {}
-                    ).get("description", ""),
-                    "parameters": _resolve_parameters_schema(
-                        tool_name, request.tool_snapshot
-                    ),
-                },
-            }
-            for tool_name in request.available_tools
-        ]
-        body["tool_choice"] = "auto"
-    return body
 
 
 def build_llm_client(

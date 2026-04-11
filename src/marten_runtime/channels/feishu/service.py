@@ -26,10 +26,11 @@ from lark_oapi.ws.enum import FrameType, MessageType
 from lark_oapi.ws.pb.pbbp2_pb2 import Frame
 
 from marten_runtime.channels.feishu.delivery import FeishuDeliveryPayload
-from marten_runtime.channels.feishu.usage import build_usage_summary_from_history
 from marten_runtime.channels.feishu.inbound import parse_feishu_callback, to_inbound_envelope
 from marten_runtime.channels.feishu.service_support import (
     coerce_payload,
+    bind_queue_observation_to_body,
+    build_delivery_payload,
     default_endpoint_transport,
     elapsed_ms,
     first_value,
@@ -384,19 +385,11 @@ class FeishuWebsocketService:
         body: Mapping[str, object],
         lane_lease,
     ) -> None:
-        if self.run_history is None:
-            return
-        for event in body.get("events", []):
-            if not isinstance(event, Mapping):
-                continue
-            run_id = str(event.get("run_id", "")).strip()
-            if not run_id:
-                continue
-            self.run_history.set_queue_diagnostics(
-                run_id,
-                queue_depth_at_enqueue=lane_lease.queue_depth_at_enqueue,
-                queue_wait_ms=lane_lease.queue_wait_ms,
-            )
+        bind_queue_observation_to_body(
+            run_history=self.run_history,
+            body=body,
+            lane_lease=lane_lease,
+        )
 
     def _deliver_runtime_events(
         self,
@@ -440,26 +433,11 @@ class FeishuWebsocketService:
         envelope: InboundEnvelope,
         event_payload: Mapping[str, object],
     ) -> FeishuDeliveryPayload:
-        event_type = str(event_payload["event_type"])
-        payload_body = event_payload.get("payload")
-        text = ""
-        if isinstance(payload_body, Mapping):
-            text = str(payload_body.get("text", ""))
-        run_id = str(event_payload["run_id"])
-        return FeishuDeliveryPayload(
-            chat_id=event.chat_id,
-            event_type=event_type,
-            event_id=str(event_payload["event_id"]),
-            run_id=run_id,
-            trace_id=str(event_payload["trace_id"]),
-            sequence=int(event_payload["sequence"]),
-            text=text,
-            dedupe_key=envelope.dedupe_key if event_type in {"final", "error"} else None,
-            usage_summary=(
-                build_usage_summary_from_history(self.run_history, run_id)
-                if event_type in {"final", "error"}
-                else None
-            ),
+        return build_delivery_payload(
+            event=event,
+            envelope=envelope,
+            event_payload=event_payload,
+            run_history=self.run_history,
         )
 
     def stats(self) -> dict[str, object]:
