@@ -32,8 +32,17 @@ This directory holds completed plans and one-off audits that remain useful for t
 - `plans/2026-04-09-pre-commit-closure-and-evolution-design.md`
 - `plans/2026-04-09-pre-commit-closure-execution-plan.md`
 
+## Archive Groups
+
+- `branch-evolution/`
+  - 2026-04-09 next-branch evolution design / blueprint evidence that remained after the redundant execution-only docs were deleted
+  - 2026-04-09 fast-path inventory / exit strategy, preserved as branch-phase decision evidence rather than an active architecture entry doc
+
 ## Rules
 
 - Do not treat archive docs as the current source of truth.
 - Stable architecture truth lives in `docs/architecture/adr/` and `docs/ARCHITECTURE_CHANGELOG.md`.
+- Archive is intentionally small; move docs here only when they still carry unique traceability value after summary-first consolidation.
 - If a future cleanup or implementation plan is reopened, it should return to `docs/plans/`; otherwise completed plans stay archived here.
+
+- some historical design docs were removed instead of archived once their durable truth was absorbed into ADRs and `docs/ARCHITECTURE_CHANGELOG.md`

@@ -4,7 +4,7 @@
 
 面向私有 agent 场景的 simplified openclaw-style runtime，聚焦 `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel` 主链。
 
-[English](./README.md) · [文档索引](./docs/README.md) · [架构演进](./docs/ARCHITECTURE_EVOLUTION_CN.md) · [Harness 设计](./docs/2026-03-29-private-agent-harness-design.md) · [Conversation Lanes 设计](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md) · [配置面说明](./docs/CONFIG_SURFACES.md)
+[English](./README.md) · [文档索引](./docs/README.md) · [架构演进](./docs/ARCHITECTURE_EVOLUTION_CN.md) · [架构时间线](./docs/ARCHITECTURE_CHANGELOG.md) · [ADR 索引](./docs/architecture/adr/README.md) · [配置面说明](./docs/CONFIG_SURFACES.md)
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
@@ -200,7 +200,21 @@ PYTHONPATH=src python -m marten_runtime.interfaces.http.serve
 Milestone A 重点回归：
 
 ```bash
-PYTHONPATH=src python -m unittest tests.test_bindings tests.test_router tests.test_runtime_context tests.test_skills tests.test_runtime_loop tests.test_provider_retry tests.test_feishu -v
+PYTHONPATH=src python -m unittest \
+  tests.test_bindings \
+  tests.test_router \
+  tests.test_runtime_context \
+  tests.test_skills \
+  tests.test_provider_retry \
+  tests.runtime_loop.test_forced_routes \
+  tests.runtime_loop.test_direct_rendering_paths \
+  tests.runtime_loop.test_tool_followup_and_recovery \
+  tests.runtime_loop.test_context_status_and_usage \
+  tests.runtime_loop.test_automation_and_trending_routes \
+  tests.feishu.test_rendering \
+  tests.feishu.test_delivery \
+  tests.feishu.test_websocket_service \
+  -v
 ```
 
 全量测试：
@@ -217,8 +231,8 @@ PYTHONPATH=src python -m unittest -v
 
 1. [docs/README.md](./docs/README.md)
 2. [docs/ARCHITECTURE_EVOLUTION_CN.md](./docs/ARCHITECTURE_EVOLUTION_CN.md)
-2. [docs/2026-03-29-private-agent-harness-design.md](./docs/2026-03-29-private-agent-harness-design.md)
-3. [docs/2026-03-30-conversation-lanes-provider-resilience-design.md](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md)
-4. [docs/2026-03-30-self-improve-design.md](./docs/2026-03-30-self-improve-design.md)
-5. [docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md](./docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md)
-6. [docs/CONFIG_SURFACES.md](./docs/CONFIG_SURFACES.md)
+3. [docs/ARCHITECTURE_CHANGELOG.md](./docs/ARCHITECTURE_CHANGELOG.md)
+4. [docs/architecture/adr/README.md](./docs/architecture/adr/README.md)
+5. [docs/CONFIG_SURFACES.md](./docs/CONFIG_SURFACES.md)
+6. [docs/LIVE_VERIFICATION_CHECKLIST.md](./docs/LIVE_VERIFICATION_CHECKLIST.md)
+7. [docs/archive/README.md](./docs/archive/README.md)

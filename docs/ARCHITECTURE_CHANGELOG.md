@@ -11,6 +11,10 @@ Use it to answer:
 
 Do not use this file for day-to-day task tracking. Local continuity belongs in a local-only `STATUS.md`.
 
+Historical verification commands in older entries may still reference pre-2026-04-11 mega-file test modules such as `tests.test_feishu` or `tests.test_runtime_loop`. For current runnable verification entrypoints, follow the active README / docs index / slimming plans instead of replaying those historical command blocks verbatim.
+
+For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of architecture timeline truth. Historical design or execution docs should be summarized here before they are archived or removed.
+
 ## Source Of Truth Rules
 
 - Stable architectural decisions live in `docs/architecture/adr/`.
@@ -19,6 +23,95 @@ Do not use this file for day-to-day task tracking. Local continuity belongs in a
 - If a change updates the runtime boundary, default capability surface, or long-lived subsystem role, add an entry here.
 
 ## Entries
+
+### 2026-04-11: Repo Slimming Shifted Test Surface Into Shards, Archived One More Branch Doc, And Started Core Seam Extraction
+
+- Change:
+  - the five legacy mega test modules were removed from the active suite:
+    - `tests/test_runtime_loop.py`
+    - `tests/test_feishu.py`
+    - `tests/test_tools.py`
+    - `tests/test_contract_compatibility.py`
+    - `tests/test_runtime_mcp.py`
+  - their coverage now lives under runtime-aligned shard directories:
+    - `tests/runtime_loop/`
+    - `tests/feishu/`
+    - `tests/tools/`
+    - `tests/contracts/`
+    - `tests/runtime_mcp/`
+  - `runtime/loop.py` shed one more pure summary-fallback seam:
+    - fallback tool-outcome summary assembly now lives in `src/marten_runtime/runtime/tool_outcome_flow.py`
+    - `loop.py` no longer carries the inline rule-based summary/fallback summary helpers
+    - draft+fallback summary merge logic also now lives in `src/marten_runtime/runtime/tool_outcome_flow.py`
+  - `src/marten_runtime/interfaces/http/bootstrap_runtime.py` removed duplicate family-tool registrations for:
+    - `mcp`
+    - `automation`
+    - `runtime`
+    - `self_improve`
+  - default runtime asset truth is now thinner and shared:
+    - added `src/marten_runtime/apps/runtime_defaults.py`
+    - `bootstrap_runtime.py` and `config/agents_loader.py` now resolve the current default runtime asset from one shared module instead of repeating `example_assistant` path/default literals inline
+  - `src/marten_runtime/runtime/llm_client.py` moved request-specific/tool-followup instruction assembly into:
+    - `src/marten_runtime/runtime/llm_request_instructions.py`
+  - `interfaces/http` moved serializer/provider seams out of the route/bootstrap files:
+    - `src/marten_runtime/interfaces/http/channel_event_serialization.py`
+    - `src/marten_runtime/interfaces/http/runtime_diagnostics.py`
+    - `src/marten_runtime/interfaces/http/feishu_runtime_services.py`
+  - `channels/feishu/service.py` shed one more pure helper cluster into:
+    - `src/marten_runtime/channels/feishu/service_support.py`
+  - `channels/feishu/rendering.py` shed title/text-cleanup helpers into:
+    - `src/marten_runtime/channels/feishu/rendering_support.py`
+  - `runtime/llm_client.py` shed provider/payload helpers into:
+    - `src/marten_runtime/runtime/llm_provider_support.py`
+  - active docs were trimmed again by moving:
+    - `docs/2026-04-09-fast-path-inventory-and-exit-strategy.md`
+    - to `docs/archive/branch-evolution/2026-04-09-fast-path-inventory-and-exit-strategy.md`
+  - archive was reduced again by deleting redundant branch-execution docs:
+    - `docs/archive/branch-evolution/2026-04-09-next-branch-evolution-execution-plan.md`
+    - `docs/archive/branch-evolution/2026-04-09-next-branch-evolution-stage-2-execution-plan.md`
+  - two more absorbed historical design docs were deleted instead of archived:
+    - `docs/2026-03-30-conversation-lanes-provider-resilience-design.md`
+    - `docs/2026-03-30-self-improve-design.md`
+- Why:
+  - test sharding makes the repo smaller and easier to evolve without changing runtime behavior
+  - the new core seam continues the approved “pure helper out, orchestration stays in `RuntimeLoop`” direction
+  - duplicate family-tool registration was unnecessary bootstrap noise and was also stripping richer parameter schemas off the family tools
+  - the fast-path inventory remained useful as branch-history evidence, but no longer deserved to stay on the active docs surface
+- Source of truth:
+  - `docs/superpowers/plans/2026-04-11-repo-slimming-master-plan.md`
+  - `docs/superpowers/plans/2026-04-11-core-module-slimming-plan.md`
+  - `docs/superpowers/plans/2026-04-11-test-suite-slimming-plan.md`
+  - `docs/superpowers/plans/2026-04-11-documentation-slimming-plan.md`
+  - `src/marten_runtime/runtime/tool_outcome_flow.py`
+  - `src/marten_runtime/interfaces/http/bootstrap_runtime.py`
+  - `src/marten_runtime/apps/runtime_defaults.py`
+  - `src/marten_runtime/channels/feishu/service_support.py`
+  - `src/marten_runtime/channels/feishu/rendering_support.py`
+  - `src/marten_runtime/runtime/llm_provider_support.py`
+- Verification:
+  - full unit suite:
+    - `PYTHONPATH=src python -m unittest -v`
+      - pass, `503` tests green after the documentation cleanup plus Feishu/LLM helper follow-up slices
+  - core baseline / focused regression:
+    - `PYTHONPATH=src python -m unittest -v tests.test_query_hardening tests.test_direct_rendering tests.test_recovery_flow tests.test_llm_client tests.runtime_loop.test_forced_routes tests.runtime_loop.test_direct_rendering_paths tests.runtime_loop.test_tool_followup_and_recovery tests.runtime_loop.test_context_status_and_usage tests.runtime_loop.test_automation_and_trending_routes tests.runtime_mcp.test_github_shortcuts tests.runtime_mcp.test_followup_recovery tests.feishu.test_rendering tests.feishu.test_delivery tests.feishu.test_websocket_service tests.test_gateway tests.tools.test_automation_tool tests.tools.test_runtime_and_skill_tools tests.tools.test_self_improve_tool tests.contracts.test_gateway_contracts tests.contracts.test_runtime_contracts tests.test_acceptance`
+      - pass, `285` tests green
+  - summary-fallback seam regression:
+    - `PYTHONPATH=src python -m unittest -v tests.test_tool_outcome_flow tests.runtime_loop.test_tool_followup_and_recovery`
+      - pass, `26` tests green
+  - bootstrap dedupe regression:
+    - `PYTHONPATH=src python -m unittest -v tests.contracts.test_runtime_contracts.RuntimeContractTests.test_runtime_bootstrap_preserves_family_tool_parameter_schemas tests.test_gateway tests.tools.test_automation_tool tests.tools.test_runtime_and_skill_tools tests.tools.test_self_improve_tool tests.contracts.test_gateway_contracts tests.contracts.test_runtime_contracts`
+      - pass, `88` tests green
+  - live `/messages` verification against updated local services:
+    - plain chat: final reply succeeded
+    - builtin time: final reply succeeded and used `time`
+    - builtin runtime: final reply succeeded and used `runtime`
+    - GitHub MCP `get_me`: final reply succeeded and used `mcp`
+    - skill load `example_time`: final reply succeeded and used `skill`
+    - artifacts:
+      - `/Users/litiezhu/workspace/github/marten-runtime/.logs/local_feishu_simulation_20260411.json`
+      - `/Users/litiezhu/workspace/github/marten-runtime/.logs/local_feishu_simulation_20260411_port8002.json`
+      - `/Users/litiezhu/workspace/github/marten-runtime/.logs/local_feishu_simulation_20260411_port8003.json`
+      - `/Users/litiezhu/workspace/github/marten-runtime/.logs/local_feishu_simulation_20260411_port8004.json`
 
 ### 2026-04-10: Automation Family Direct Render Was Unified Behind One Thin Follow-Up Seam
 
@@ -75,9 +168,9 @@ Do not use this file for day-to-day task tracking. Local continuity belongs in a
     - which `runtime/loop.py` seams are real versus only superficially separable
 - Source of truth:
   - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
-  - [2026-04-09 Next-Branch Evolution Design](./2026-04-09-next-branch-evolution-design.md)
-  - [2026-04-09 Fast-Path Inventory And Exit Strategy](./2026-04-09-fast-path-inventory-and-exit-strategy.md)
-  - [2026-04-09 Next-Branch Evolution Stage 2 Blueprint](./2026-04-09-next-branch-evolution-stage-2-blueprint.md)
+  - [2026-04-09 Next-Branch Evolution Design](./archive/branch-evolution/2026-04-09-next-branch-evolution-design.md)
+  - [2026-04-09 Fast-Path Inventory And Exit Strategy](./archive/branch-evolution/2026-04-09-fast-path-inventory-and-exit-strategy.md)
+  - [2026-04-09 Next-Branch Evolution Stage 2 Blueprint](./archive/branch-evolution/2026-04-09-next-branch-evolution-stage-2-blueprint.md)
 - Verification:
   - documentation consistency checks:
     - confirmed the fast-path inventory no longer contains `pending-stage-2-decision` rows
@@ -455,8 +548,6 @@ Do not use this file for day-to-day task tracking. Local continuity belongs in a
   - [ADR 0003: Self-Improve Is Runtime Learning, Not Architecture Memory](./architecture/adr/0003-self-improve-runtime-learning-not-architecture-memory.md)
 - Supporting design docs:
   - [Private Agent Harness Design](./2026-03-29-private-agent-harness-design.md)
-  - [Conversation Lanes And Provider Resilience Design](./2026-03-30-conversation-lanes-provider-resilience-design.md)
-  - [Self-Improve Design](./2026-03-30-self-improve-design.md)
   - [Progressive Disclosure Capability Design](./2026-03-31-progressive-disclosure-llm-first-capability-design.md)
 - Verification:
   - `PYTHONPATH=src python -m unittest -v`
@@ -492,7 +583,7 @@ Do not use this file for day-to-day task tracking. Local continuity belongs in a
 - Source of truth:
   - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
 - Supporting design docs:
-  - [Conversation Lanes And Provider Resilience Design](./2026-03-30-conversation-lanes-provider-resilience-design.md)
+  - timeline truth absorbed into ADR 0001 + this changelog; the original conversation-lanes/provider-resilience design doc was removed during repo slimming
 - Verification:
   - `PYTHONPATH=src python -m unittest tests.test_runtime_lanes tests.test_gateway tests.test_feishu tests.test_provider_retry tests.test_runtime_loop tests.test_contract_compatibility -v`
   - `/diagnostics/queue` now returns live lane stats instead of placeholder output
@@ -507,6 +598,6 @@ Do not use this file for day-to-day task tracking. Local continuity belongs in a
 - Source of truth:
   - [ADR 0003: Self-Improve Is Runtime Learning, Not Architecture Memory](./architecture/adr/0003-self-improve-runtime-learning-not-architecture-memory.md)
 - Supporting design docs:
-  - [Self-Improve Design](./2026-03-30-self-improve-design.md)
+  - timeline truth absorbed into ADR 0003 + this changelog; the original self-improve design doc was removed during repo slimming
 - Verification:
   - self-improve tests and live runtime summary paths remain green

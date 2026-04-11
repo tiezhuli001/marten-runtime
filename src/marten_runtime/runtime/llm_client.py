@@ -12,20 +12,30 @@ from urllib import error, request as urllib_request
 from pydantic import BaseModel, Field
 
 from marten_runtime.config.models_loader import ModelProfile
+from marten_runtime.runtime.llm_request_instructions import (
+    is_tool_followup_request as _is_tool_followup_request,
+    request_specific_instruction as _request_specific_instruction,
+    tool_followup_instruction as _tool_followup_instruction,
+)
+from marten_runtime.runtime.llm_provider_support import (
+    collapse_system_messages as _collapse_system_messages,
+    elapsed_ms as _elapsed_ms,
+    extract_openai_usage as _extract_openai_usage,
+    parse_tool_arguments as _parse_tool_arguments,
+    resolve_base_url as _resolve_base_url,
+    resolve_parameters_schema as _resolve_parameters_schema,
+    strip_hidden_reasoning as _strip_hidden_reasoning,
+)
 from marten_runtime.runtime.provider_retry import (
     ProviderTransportError,
     RetryPolicy,
+    normalize_provider_error,
     with_retry,
-)
-from marten_runtime.runtime.query_hardening import (
-    is_runtime_context_query,
-    is_time_query,
 )
 from marten_runtime.runtime.token_estimator import estimate_payload_tokens
 from marten_runtime.runtime.tool_episode_summary_prompt import (
     ToolEpisodeSummaryDraft,
     extract_tool_episode_summary_block,
-    render_tool_followup_summary_instruction,
 )
 from marten_runtime.runtime.usage_models import NormalizedUsage
 from marten_runtime.runtime.usage_models import (
@@ -214,10 +224,6 @@ class OpenAIChatLLMClient:
         except Exception as exc:
             normalized = exc if isinstance(exc, ProviderTransportError) else None
             if normalized is None:
-                from marten_runtime.runtime.provider_retry import (
-                    normalize_provider_error,
-                )
-
                 normalized = normalize_provider_error(exc)
             self.last_call_diagnostics = ProviderCallDiagnostics(
                 request_kind=request.request_kind,
@@ -435,51 +441,6 @@ class OpenAIChatLLMClient:
         )
 
 
-def _strip_hidden_reasoning(text: str) -> str:
-    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
-    return cleaned.strip()
-
-
-def _extract_openai_usage(
-    payload: dict,
-    *,
-    provider_name: str,
-    model_name: str,
-) -> NormalizedUsage | None:
-    usage = payload.get("usage")
-    if not isinstance(usage, dict):
-        return None
-    prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
-    completion_tokens = int(usage.get("completion_tokens", 0) or 0)
-    total_tokens = int(
-        usage.get("total_tokens", prompt_tokens + completion_tokens) or 0
-    )
-    prompt_details = usage.get("prompt_tokens_details")
-    completion_details = usage.get("completion_tokens_details")
-    cached_tokens = None
-    if (
-        isinstance(prompt_details, dict)
-        and prompt_details.get("cached_tokens") is not None
-    ):
-        cached_tokens = int(prompt_details.get("cached_tokens", 0) or 0)
-    reasoning_tokens = None
-    if (
-        isinstance(completion_details, dict)
-        and completion_details.get("reasoning_tokens") is not None
-    ):
-        reasoning_tokens = int(completion_details.get("reasoning_tokens", 0) or 0)
-    return NormalizedUsage(
-        input_tokens=prompt_tokens,
-        output_tokens=completion_tokens,
-        total_tokens=total_tokens,
-        cached_input_tokens=cached_tokens,
-        reasoning_output_tokens=reasoning_tokens,
-        provider_name=provider_name,
-        model_name=model_name,
-        raw_usage_payload=usage,
-    )
-
-
 def estimate_request_tokens(request: LLMRequest) -> int:
     payload = build_openai_chat_payload(request.model_name or "estimate", request)
     return estimate_payload_tokens(
@@ -490,26 +451,6 @@ def estimate_request_tokens(request: LLMRequest) -> int:
 def estimate_request_usage(request: LLMRequest):
     payload = build_openai_chat_payload(request.model_name or "estimate", request)
     return estimate_payload_tokens(payload, tokenizer_family=request.tokenizer_family)
-
-
-def _parse_tool_arguments(arguments: object) -> dict:
-    if arguments is None:
-        return {}
-    if isinstance(arguments, dict):
-        return arguments
-    if not isinstance(arguments, str):
-        raise ValueError("tool_arguments_invalid_type")
-    normalized = arguments.strip()
-    if not normalized:
-        return {}
-    fenced = re.match(
-        r"^```(?:json)?\s*(.*?)\s*```$", normalized, flags=re.DOTALL | re.IGNORECASE
-    )
-    if fenced is not None:
-        normalized = fenced.group(1).strip()
-    if not normalized:
-        return {}
-    return json.loads(normalized)
 
 
 def build_openai_chat_payload(
@@ -537,99 +478,6 @@ def build_openai_chat_payload(
         ]
         body["tool_choice"] = "auto"
     return body
-
-
-def _collapse_system_messages(messages: list[dict]) -> list[dict]:
-    system_chunks: list[str] = []
-    collapsed: list[dict] = []
-    flushed = False
-
-    for item in messages:
-        if item.get("role") == "system":
-            content = item.get("content")
-            if isinstance(content, str) and content.strip():
-                system_chunks.append(content)
-            continue
-        if system_chunks and not flushed:
-            collapsed.append({"role": "system", "content": "\n\n".join(system_chunks)})
-            flushed = True
-        collapsed.append(item)
-    if system_chunks and not flushed:
-        collapsed.append({"role": "system", "content": "\n\n".join(system_chunks)})
-    return collapsed
-
-
-def _elapsed_ms(started_at: float) -> int:
-    return int((time.perf_counter() - started_at) * 1000)
-
-
-def _resolve_parameters_schema(
-    tool_name: str, tool_snapshot: ToolSnapshot
-) -> dict[str, object]:
-    schema = tool_snapshot.tool_metadata.get(tool_name, {}).get("parameters_schema")
-    if isinstance(schema, dict) and schema:
-        return schema
-    from marten_runtime.runtime.capabilities import get_capability_declarations
-
-    declarations = get_capability_declarations()
-    if tool_name in declarations:
-        return dict(declarations[tool_name].parameters_schema)
-    return {"type": "object"}
-
-
-def _tool_followup_instruction(tool_name: str | None) -> str | None:
-    if tool_name == "runtime":
-        return (
-            "仅根据刚刚返回的 runtime 工具结果回答当前这一个上下文/压缩状态问题。"
-            "不要重述无关的旧任务结果，不要继续展开之前的话题，也不要补做用户当前没有要求的工具查询。"
-        )
-    if tool_name == "mcp":
-        return (
-            "如果你要继续发起 mcp family 调用，必须沿用刚刚看到的精确 server_id 和精确 tool_name，"
-            "保持 action 为 list/detail/call 三者之一，并让 arguments 始终是一个对象。"
-            "不要自造别名、不要重命名子工具。\n\n"
-            + render_tool_followup_summary_instruction()
-        )
-    if tool_name:
-        return render_tool_followup_summary_instruction()
-    return None
-
-
-def _is_tool_followup_request(request: LLMRequest) -> bool:
-    return bool(request.tool_history) or (
-        request.tool_result is not None and bool(request.requested_tool_name)
-    )
-
-
-def _request_specific_instruction(request: LLMRequest) -> str | None:
-    message = request.message or ""
-    available = set(request.available_tools)
-    instructions: list[str] = []
-    if "runtime" in available and is_runtime_context_query(message):
-        instructions.append(
-            "这是当前会话的实时上下文查询。请先读取当前 runtime 状态，"
-            "不要直接复用上一轮记忆里的上下文数字。"
-        )
-    if "time" in available and is_time_query(message):
-        instructions.append(
-            "这是实时当前时间查询。请先读取当前时间，"
-            "不要根据记忆或上下文猜测当前时间。"
-        )
-    if request.channel_protocol_instruction_text:
-        instructions.append(request.channel_protocol_instruction_text)
-    if not instructions:
-        return None
-    return "\n".join(instructions)
-
-
-def _resolve_base_url(*, profile: ModelProfile, env: Mapping[str, str]) -> str | None:
-    api_key_env = profile.api_key_env or "OPENAI_API_KEY"
-    if api_key_env.endswith("_API_KEY"):
-        base_env = f"{api_key_env.removesuffix('_API_KEY')}_API_BASE"
-        override = env.get(base_env)
-        if override:
-            return override
-    return profile.base_url
 
 
 def build_llm_client(

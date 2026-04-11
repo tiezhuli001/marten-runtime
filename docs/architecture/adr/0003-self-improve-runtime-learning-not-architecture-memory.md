@@ -45,5 +45,4 @@ Long-lived architecture truth moves to:
 
 ## References
 
-- [Self-Improve Design](../../2026-03-30-self-improve-design.md)
 - [Architecture Changelog](../../ARCHITECTURE_CHANGELOG.md)

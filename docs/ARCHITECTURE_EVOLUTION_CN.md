@@ -6,7 +6,7 @@
 
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)：按时间追加的架构变更记录
 - [`architecture/adr/README.md`](./architecture/adr/README.md)：稳定架构决策的归档位置
-- 各阶段 design / plan 文档：用于解释每一轮收敛背后的细节推理
+- 少量保留下来的历史 design 文档：当 changelog 摘要仍不足时，用来补充关键阶段的细节推理
 
 这份文档要回答的是一个更直接的问题：
 
@@ -218,9 +218,9 @@ flowchart LR
 
 ### 关键引用
 
-- [`2026-03-30-conversation-lanes-provider-resilience-design.md`](./2026-03-30-conversation-lanes-provider-resilience-design.md)
-- [`2026-03-30-self-improve-design.md`](./2026-03-30-self-improve-design.md)
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
+- [`architecture/adr/0001-thin-harness-boundary.md`](./architecture/adr/0001-thin-harness-boundary.md)
+- [`architecture/adr/0003-self-improve-runtime-learning-not-architecture-memory.md`](./architecture/adr/0003-self-improve-runtime-learning-not-architecture-memory.md)
 
 ## 第 4 阶段：Capability Surface 围绕 Progressive Disclosure 收敛
 
@@ -447,7 +447,7 @@ Narrow Adapters"] -.-> F
 - [`archive/2026-04-07-llm-tool-episode-summary-design.md`](./archive/2026-04-07-llm-tool-episode-summary-design.md)
 - [`archive/plans/2026-04-07-llm-tool-episode-summary-plan.md`](./archive/plans/2026-04-07-llm-tool-episode-summary-plan.md)
 - [`archive/plans/2026-04-05-github-trending-mcp-plan.md`](./archive/plans/2026-04-05-github-trending-mcp-plan.md)
-- [`2026-04-09-fast-path-inventory-and-exit-strategy.md`](./2026-04-09-fast-path-inventory-and-exit-strategy.md)
+- [`2026-04-09-fast-path-inventory-and-exit-strategy.md`](./archive/branch-evolution/2026-04-09-fast-path-inventory-and-exit-strategy.md)
 
 ## 明确未构建的能力
 

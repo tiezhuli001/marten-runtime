@@ -49,5 +49,4 @@ The host must not become:
 ## References
 
 - [Private Agent Harness Design](../../2026-03-29-private-agent-harness-design.md)
-- [Conversation Lanes And Provider Resilience Design](../../2026-03-30-conversation-lanes-provider-resilience-design.md)
 - [Architecture Changelog](../../ARCHITECTURE_CHANGELOG.md)

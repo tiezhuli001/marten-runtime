@@ -10,10 +10,9 @@ from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
-import httpx
 import websockets
 from lark_oapi.ws.const import (
     HEADER_BIZ_RT,
@@ -29,6 +28,17 @@ from lark_oapi.ws.pb.pbbp2_pb2 import Frame
 from marten_runtime.channels.feishu.delivery import FeishuDeliveryPayload
 from marten_runtime.channels.feishu.usage import build_usage_summary_from_history
 from marten_runtime.channels.feishu.inbound import parse_feishu_callback, to_inbound_envelope
+from marten_runtime.channels.feishu.service_support import (
+    coerce_payload,
+    default_endpoint_transport,
+    elapsed_ms,
+    first_value,
+    headers_to_dict,
+    is_self_message,
+    normalize_message_text,
+    redact_endpoint_url,
+    to_client_config,
+)
 from marten_runtime.channels.feishu.models import (
     FeishuDispatchResult,
     FeishuInboundEvent,
@@ -69,7 +79,7 @@ class FeishuWebsocketService:
         self.delivery_client = delivery_client
         self.allowed_chat_types = {item for item in (allowed_chat_types or []) if item}
         self.allowed_chat_ids = {item for item in (allowed_chat_ids or []) if item}
-        self.endpoint_transport = endpoint_transport or _default_endpoint_transport
+        self.endpoint_transport = endpoint_transport or default_endpoint_transport
         self.connector = connector or websockets.connect
         self.client_config = client_config or FeishuWebsocketClientConfig()
         self.lane_manager = lane_manager
@@ -107,7 +117,7 @@ class FeishuWebsocketService:
             raise RuntimeError("FEISHU_WS_ENDPOINT_INVALID")
         endpoint = FeishuWebsocketEndpoint(
             url=str(data["URL"]),
-            client_config=_to_client_config(data.get("ClientConfig", {})),
+            client_config=to_client_config(data.get("ClientConfig", {})),
         )
         self.client_config = endpoint.client_config
         return endpoint
@@ -193,7 +203,7 @@ class FeishuWebsocketService:
         payload = self._resolve_payload(frame)
         if payload is None:
             return None
-        headers = _headers_to_dict(frame)
+        headers = headers_to_dict(frame)
         message_type = headers.get(HEADER_TYPE)
         if message_type != MessageType.EVENT.value:
             return self._build_ack_frame(frame, {"code": 200})
@@ -208,7 +218,7 @@ class FeishuWebsocketService:
         return self._build_ack_frame(frame, {"code": 200})
 
     def handle_event_payload(self, payload: dict[str, object] | bytes | str) -> FeishuDispatchResult:
-        payload_dict = _coerce_payload(payload)
+        payload_dict = coerce_payload(payload)
         event_type = str(payload_dict.get("header", {}).get("event_type") or "")
         if event_type and event_type != "im.message.receive_v1":
             return FeishuDispatchResult(
@@ -295,7 +305,7 @@ class FeishuWebsocketService:
             self._release_lane_lease(envelope, lane_lease)
 
     def _guardrail_result(self, event: FeishuInboundEvent) -> FeishuDispatchResult | None:
-        if _is_self_message(event):
+        if is_self_message(event):
             return self._ignored_event_result(
                 event,
                 reason="self_message",
@@ -419,7 +429,7 @@ class FeishuWebsocketService:
             ):
                 self.run_history.add_outbound_timing(
                     candidate,
-                    elapsed_ms=_elapsed_ms(delivery_started_at),
+                    elapsed_ms=elapsed_ms(delivery_started_at),
                 )
         return last_run_id, delivery_results
 
@@ -457,7 +467,7 @@ class FeishuWebsocketService:
             "running": self.state.running,
             "connected": self.state.connected,
             "lock_acquired": self.state.lock_acquired,
-            "endpoint_url": _redact_endpoint_url(self.state.endpoint_url),
+            "endpoint_url": redact_endpoint_url(self.state.endpoint_url),
             "service_id": self.state.service_id,
             "connection_id": self.state.connection_id,
             "reconnect_attempts": self.state.reconnect_attempts,
@@ -564,14 +574,14 @@ class FeishuWebsocketService:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     def _handle_control_frame(self, frame: Frame) -> None:
-        headers = _headers_to_dict(frame)
+        headers = headers_to_dict(frame)
         message_type = headers.get(HEADER_TYPE)
         if message_type != MessageType.PONG.value or not frame.payload:
             return
-        self.client_config = _to_client_config(json.loads(frame.payload.decode("utf-8")))
+        self.client_config = to_client_config(json.loads(frame.payload.decode("utf-8")))
 
     def _resolve_payload(self, frame: Frame) -> bytes | None:
-        headers = _headers_to_dict(frame)
+        headers = headers_to_dict(frame)
         message_id = headers.get(HEADER_MESSAGE_ID)
         total = int(headers.get(HEADER_SUM, "1"))
         seq = int(headers.get(HEADER_SEQ, "0"))
@@ -598,8 +608,8 @@ class FeishuWebsocketService:
     def _update_endpoint_state(self, url: str) -> None:
         self.state.endpoint_url = url
         query = parse_qs(urlparse(url).query)
-        self.state.connection_id = _first_value(query.get("device_id"))
-        self.state.service_id = _first_value(query.get("service_id"))
+        self.state.connection_id = first_value(query.get("device_id"))
+        self.state.service_id = first_value(query.get("service_id"))
 
     def _is_allowed_chat(self, event: FeishuInboundEvent) -> bool:
         if self.allowed_chat_types and event.chat_type not in self.allowed_chat_types:
@@ -619,7 +629,7 @@ class FeishuWebsocketService:
         return reason not in {"duplicate", "duplicate_semantic"}
 
     def _claim_semantic_replay(self, event: FeishuInboundEvent) -> FeishuDispatchResult | None:
-        normalized_text = _normalize_message_text(event.text)
+        normalized_text = normalize_message_text(event.text)
         if not normalized_text:
             return None
         now = datetime.now(timezone.utc)
@@ -664,60 +674,3 @@ class FeishuWebsocketService:
             add_reaction(message_id, "OnIt")
         except Exception:
             logger.exception("feishu add reaction failed")
-
-
-def _default_endpoint_transport(url: str, headers: dict[str, str], body: dict[str, str]) -> dict[str, object]:
-    response = httpx.post(url, headers=headers, json=body, timeout=30)
-    response.raise_for_status()
-    return response.json()
-
-
-def _redact_endpoint_url(url: str | None) -> str | None:
-    if not url:
-        return url
-    parsed = urlparse(url)
-    query = parse_qs(parsed.query, keep_blank_values=True)
-    for key in ("access_key", "ticket"):
-        if key in query:
-            query[key] = ["REDACTED"]
-    return urlunparse(parsed._replace(query=urlencode(query, doseq=True)))
-
-
-def _headers_to_dict(frame: Frame) -> dict[str, str]:
-    return {item.key: item.value for item in frame.headers}
-
-
-def _coerce_payload(payload: dict[str, object] | bytes | str) -> dict[str, object]:
-    if isinstance(payload, dict):
-        return payload
-    if isinstance(payload, bytes):
-        return json.loads(payload.decode("utf-8"))
-    return json.loads(payload)
-
-
-def _to_client_config(payload: Mapping[str, object]) -> FeishuWebsocketClientConfig:
-    return FeishuWebsocketClientConfig(
-        reconnect_count=int(payload.get("ReconnectCount", payload.get("reconnect_count", -1))),
-        reconnect_interval_s=int(payload.get("ReconnectInterval", payload.get("reconnect_interval_s", 5))),
-        reconnect_nonce_s=int(payload.get("ReconnectNonce", payload.get("reconnect_nonce_s", 0))),
-        ping_interval_s=int(payload.get("PingInterval", payload.get("ping_interval_s", 120))),
-        auto_reconnect=bool(payload.get("AutoReconnect", payload.get("auto_reconnect", True))),
-    )
-
-
-def _is_self_message(event: FeishuInboundEvent) -> bool:
-    return event.sender_type.lower() == "app"
-
-
-def _first_value(values: list[str] | None) -> str | None:
-    if not values:
-        return None
-    return values[0]
-
-
-def _normalize_message_text(text: str) -> str:
-    return " ".join(text.strip().lower().split())
-
-
-def _elapsed_ms(started_at: float) -> int:
-    return max(0, int((time.perf_counter() - started_at) * 1000))

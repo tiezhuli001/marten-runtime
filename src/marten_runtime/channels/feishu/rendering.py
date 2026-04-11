@@ -6,6 +6,13 @@ import re
 
 from pydantic import BaseModel
 
+from marten_runtime.channels.feishu.rendering_support import (
+    dedupe_visible_text_against_protocol,
+    default_card_template,
+    default_card_title,
+    derive_plain_title,
+    render_section_item,
+)
 from marten_runtime.channels.feishu.usage import format_usage_summary
 
 logger = logging.getLogger(__name__)
@@ -182,7 +189,7 @@ def render_final_reply_card(
 ) -> dict[str, object]:
     visible_text, protocol = parse_feishu_card_protocol(text)
     if protocol is not None:
-        visible_text = _dedupe_visible_text_against_protocol(visible_text, protocol)
+        visible_text = dedupe_visible_text_against_protocol(visible_text, protocol)
     if protocol is None:
         fallback_card = _render_fallback_structured_card(
             visible_text,
@@ -193,12 +200,12 @@ def render_final_reply_card(
             return fallback_card
     sections = protocol.sections if protocol is not None else []
     return _build_generic_card(
-        title=protocol.title if protocol is not None else _derive_plain_title(visible_text, event_type=event_type),
+        title=protocol.title if protocol is not None else derive_plain_title(visible_text, event_type=event_type),
         visible_text=visible_text,
         summary=protocol.summary if protocol is not None else None,
         sections=sections,
         fallback_text=text,
-        header_template=_default_card_template(event_type),
+        header_template=default_card_template(event_type),
         usage_summary=usage_summary,
     )
 
@@ -220,13 +227,13 @@ def _render_fallback_structured_card(
     trailing = "\n".join(line.strip() for line in lines[last_bullet + 1 :]).strip()
     title, summary = _derive_fallback_heading(leading)
     return _build_generic_card(
-        title=title or _default_card_title(event_type),
+        title=title or default_card_title(event_type),
         visible_text=None,
         summary=summary,
         sections=[FeishuCardSection(title=None, items=bullets)],
         note=trailing or None,
         fallback_text=text,
-        header_template=_default_card_template(event_type),
+        header_template=default_card_template(event_type),
         usage_summary=usage_summary,
     )
 
@@ -275,7 +282,7 @@ def _build_generic_card(
     for section in normalized_sections:
         section_title = section.title or "详情"
         elements.append(_markdown_div(f"**🗂️ {section_title}**"))
-        elements.append(_markdown_div("\n".join(_render_section_item(item) for item in section.items)))
+        elements.append(_markdown_div("\n".join(render_section_item(item) for item in section.items)))
     if note:
         elements.append(_hr())
         elements.append(_markdown_div(f"<font color='grey'>💬 {note}</font>"))
@@ -304,176 +311,3 @@ def _build_generic_card(
             "template": header_template,
         }
     return card
-
-
-def _default_card_title(event_type: str) -> str:
-    if event_type == "error":
-        return "处理失败"
-    return "处理结果"
-
-
-def _derive_plain_title(text: str, *, event_type: str) -> str:
-    if event_type == "error":
-        return _default_card_title(event_type)
-    cleaned_lines = [re.sub(r"\*\*(.*?)\*\*", r"\1", line).strip() for line in text.splitlines() if line.strip()]
-    if not cleaned_lines:
-        return _default_card_title(event_type)
-    first = cleaned_lines[0].rstrip("：:。!！")
-    if re.match(r"^(当前|现在).*(北京时间|时间)", first):
-        return "当前时间"
-    if re.match(r"^现在是(?:[A-Za-z_./+-]+)?\s*\d{4}年\d{1,2}月\d{1,2}日", first):
-        return "当前时间"
-    commit_title = _derive_commit_title(first)
-    if commit_title is not None:
-        return commit_title
-    candidates = [first]
-    if "，" in first:
-        _, tail = first.split("，", 1)
-        candidates.insert(0, tail.strip())
-    for candidate in candidates:
-        normalized = candidate
-        normalized = re.sub(r"^(查到了|好的|可以|已为你|已经)\s*", "", normalized).strip()
-        normalized = re.sub(r"如下$", "", normalized).strip()
-        normalized = normalized.rstrip("：:。!！")
-        if _looks_like_semantic_title(normalized):
-            return normalized
-    return _default_card_title(event_type)
-
-
-def _derive_commit_title(text: str) -> str | None:
-    if "提交" not in text:
-        return None
-    if "最近提交" not in text and "最近一次提交" not in text:
-        return None
-    repo_match = re.search(r"\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\b", text)
-    if repo_match is not None:
-        return f"{repo_match.group(1)} 最近提交"
-    return "仓库最近提交"
-
-
-def _looks_like_semantic_title(text: str) -> bool:
-    if not text or not (2 <= len(text) <= 18):
-        return False
-    if re.fullmatch(r"[A-Za-z0-9_./:+-]+", text):
-        return False
-    if not re.search(r"[\u4e00-\u9fff]", text):
-        return False
-    title_markers = (
-        "详情",
-        "概览",
-        "列表",
-        "状态",
-        "信息",
-        "结果",
-        "时间",
-        "窗口",
-        "摘要",
-        "总结",
-        "任务",
-        "仓库",
-        "提交",
-    )
-    return any(marker in text for marker in title_markers)
-
-
-def _default_card_template(event_type: str) -> str:
-    if event_type == "error":
-        return "red"
-    return "indigo"
-
-
-def _dedupe_visible_text_against_protocol(text: str, protocol: FeishuCardProtocol) -> str:
-    if not text:
-        return text
-    if any(section.items for section in protocol.sections):
-        text = _strip_visible_markdown_table_blocks(text)
-        text = _strip_visible_bullet_lines(text)
-    protocol_items = {
-        _normalize_bullet_text(item)
-        for section in protocol.sections
-        for item in section.items
-        if _normalize_bullet_text(item)
-    }
-    if not protocol_items:
-        return text
-    kept_lines: list[str] = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("- "):
-            bullet_body = stripped[2:].strip()
-            if _normalize_bullet_text(bullet_body) in protocol_items:
-                continue
-        kept_lines.append(line.rstrip())
-    deduped = "\n".join(kept_lines)
-    deduped = re.sub(r"\n{3,}", "\n\n", deduped).strip()
-    return deduped
-
-
-def _strip_visible_bullet_lines(text: str) -> str:
-    kept_lines: list[str] = []
-    for line in text.splitlines():
-        if line.strip().startswith("- "):
-            continue
-        kept_lines.append(line.rstrip())
-    stripped = "\n".join(kept_lines)
-    return re.sub(r"\n{3,}", "\n\n", stripped).strip()
-
-
-def _strip_visible_markdown_table_blocks(text: str) -> str:
-    lines = text.splitlines()
-    kept_lines: list[str] = []
-    index = 0
-    while index < len(lines):
-        if _is_markdown_table_header(lines, index):
-            index += 2
-            while index < len(lines) and _is_markdown_table_row(lines[index]):
-                index += 1
-            while index < len(lines) and not lines[index].strip():
-                index += 1
-            continue
-        kept_lines.append(lines[index].rstrip())
-        index += 1
-    stripped = "\n".join(kept_lines)
-    return re.sub(r"\n{3,}", "\n\n", stripped).strip()
-
-
-def _is_markdown_table_header(lines: list[str], index: int) -> bool:
-    if index + 1 >= len(lines):
-        return False
-    return _is_markdown_table_row(lines[index]) and _is_markdown_table_divider(lines[index + 1])
-
-
-def _is_markdown_table_row(line: str) -> bool:
-    stripped = line.strip()
-    if not stripped.startswith("|") or not stripped.endswith("|"):
-        return False
-    return stripped.count("|") >= 3
-
-
-def _is_markdown_table_divider(line: str) -> bool:
-    if not _is_markdown_table_row(line):
-        return False
-    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-    if not cells:
-        return False
-    return all(cell and set(cell) <= {"-", ":", " "} for cell in cells)
-
-
-def _normalize_bullet_text(text: str) -> str:
-    normalized = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
-    normalized = normalized.replace("GitHub热榜推荐", "GitHub热榜推荐")
-    normalized = re.sub(r"\s+", " ", normalized).strip()
-    return normalized
-
-
-def _render_section_item(item: str) -> str:
-    normalized = item.strip()
-    if not normalized:
-        return "-"
-    if _is_ordered_or_bulleted_item(normalized):
-        return normalized
-    return f"- {normalized}"
-
-
-def _is_ordered_or_bulleted_item(text: str) -> bool:
-    return re.match(r"^(?:[-*•]\s+|\d+[.)]\s+|[A-Za-z][.)]\s+)", text) is not None

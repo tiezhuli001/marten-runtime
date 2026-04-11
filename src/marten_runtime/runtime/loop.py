@@ -39,12 +39,9 @@ from marten_runtime.runtime.tool_calls import (
 from marten_runtime.runtime.tool_episode_summary_prompt import (
     ToolEpisodeSummaryDraft,
 )
-from marten_runtime.runtime.tool_outcome_extractor import extract_tool_outcome_summary
 from marten_runtime.runtime.tool_outcome_flow import (
-    collect_structured_hint_facts,
-    infer_episode_source_kind,
-    merge_tool_episode_facts,
-    resolve_summary_volatile_flag,
+    build_combined_tool_episode_summary,
+    build_fallback_tool_episode_summary,
 )
 from marten_runtime.session.compaction_trigger import (
     CompactionDecision,
@@ -942,7 +939,7 @@ class RuntimeLoop:
         tool_snapshot: ToolSnapshot,
     ) -> ToolOutcomeSummary | None:
         try:
-            fallback_summary = self._fallback_tool_episode_summary(
+            fallback_summary = build_fallback_tool_episode_summary(
                 run_id=run_id,
                 history=history,
                 final_text=final_text,
@@ -950,95 +947,20 @@ class RuntimeLoop:
             )
             draft = combined_summary_draft
             if draft is not None and draft.summary.strip():
-                structured_facts = collect_structured_hint_facts(history)
-                fallback_facts = (
-                    list(fallback_summary.facts) if fallback_summary is not None else []
-                )
-                facts = merge_tool_episode_facts(
-                    draft.facts,
-                    [*structured_facts, *fallback_facts]
-                    if structured_facts
-                    else fallback_facts,
-                )
-                volatile = resolve_summary_volatile_flag(
-                    draft_volatile=draft.volatile,
-                    facts=facts,
-                    fallback_summary=fallback_summary,
-                )
-                keep_next_turn = bool(
-                    (
-                        draft.keep_next_turn
-                        or bool(
-                            fallback_summary is not None
-                            and fallback_summary.keep_next_turn
-                        )
-                    )
-                    and not bool(
-                        fallback_summary is not None
-                        and not fallback_summary.keep_next_turn
-                    )
-                    and not volatile
-                )
-                refresh_hint = draft.refresh_hint or (
-                    fallback_summary.refresh_hint
-                    if fallback_summary is not None
-                    else ""
-                )
-                return ToolOutcomeSummary.create(
+                return build_combined_tool_episode_summary(
                     run_id=run_id,
-                    source_kind=infer_episode_source_kind(history, tool_snapshot),
-                    summary_text=draft.summary,
-                    facts=facts,
-                    volatile=volatile,
-                    keep_next_turn=keep_next_turn,
-                    refresh_hint=refresh_hint,
+                    history=history,
+                    tool_snapshot=tool_snapshot,
+                    draft=draft,
+                    fallback_summary=fallback_summary,
                 )
         except Exception:
             logger.debug("tool episode summary extraction failed", exc_info=True)
-        return self._fallback_tool_episode_summary(
+        return build_fallback_tool_episode_summary(
             run_id=run_id,
             history=history,
             final_text=final_text,
             tool_snapshot=tool_snapshot,
-        )
-
-    def _fallback_tool_episode_summary(
-        self,
-        *,
-        run_id: str,
-        history: list[ToolExchange],
-        final_text: str,
-        tool_snapshot: ToolSnapshot,
-    ) -> ToolOutcomeSummary | None:
-        summary = self._extract_rule_based_tool_outcome_summary(
-            run_id=run_id,
-            history=history,
-            tool_snapshot=tool_snapshot,
-        )
-        if summary is not None:
-            return summary
-        if not final_text.strip():
-            return None
-        return ToolOutcomeSummary.create(
-            run_id=run_id,
-            source_kind=infer_episode_source_kind(history, tool_snapshot),
-            summary_text=f"上一轮工具调用完成：{final_text.strip()}",
-        )
-
-    def _extract_rule_based_tool_outcome_summary(
-        self,
-        *,
-        run_id: str,
-        history: list[ToolExchange],
-        tool_snapshot: ToolSnapshot,
-    ) -> ToolOutcomeSummary | None:
-        latest = history[-1]
-        return extract_tool_outcome_summary(
-            run_id=run_id,
-            tool_name=latest.tool_name,
-            tool_payload=latest.tool_payload,
-            tool_result=latest.tool_result,
-            tool_metadata=tool_snapshot.tool_metadata.get(latest.tool_name, {}),
         )
 
 def _is_provider_failure(exc: Exception) -> bool:

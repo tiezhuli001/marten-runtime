@@ -4,7 +4,7 @@
 
 Simplified openclaw-style private agent runtime for `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel`.
 
-[中文文档](./README_CN.md) · [Docs Index](./docs/README.md) · [Architecture Evolution](./docs/ARCHITECTURE_EVOLUTION.md) · [Architecture Changelog](./docs/ARCHITECTURE_CHANGELOG.md) · [ADR Index](./docs/architecture/adr/README.md) · [Harness Design](./docs/2026-03-29-private-agent-harness-design.md) · [Conversation Lanes Design](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md) · [Self-Improve Design](./docs/2026-03-30-self-improve-design.md) · [Config Surfaces](./docs/CONFIG_SURFACES.md)
+[中文文档](./README_CN.md) · [Docs Index](./docs/README.md) · [Architecture Evolution](./docs/ARCHITECTURE_EVOLUTION.md) · [Architecture Changelog](./docs/ARCHITECTURE_CHANGELOG.md) · [ADR Index](./docs/architecture/adr/README.md) · [Config Surfaces](./docs/CONFIG_SURFACES.md)
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
@@ -88,18 +88,16 @@ Latest MVP-facing changes:
 
 That path is the project center of gravity. If a change does not make this chain clearer, safer, or easier to operate, it should be treated as low priority.
 
-Key references:
+Primary reading path:
 
+- [Docs Index](./docs/README.md)
 - [Architecture Evolution](./docs/ARCHITECTURE_EVOLUTION.md)
 - [Architecture Changelog](./docs/ARCHITECTURE_CHANGELOG.md)
 - [ADR Index](./docs/architecture/adr/README.md)
-- [Private Agent Harness Design](./docs/2026-03-29-private-agent-harness-design.md)
-- [Conversation Lanes And Provider Resilience Design](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md)
-- [Self-Improve Design](./docs/2026-03-30-self-improve-design.md)
-- [Progressive Disclosure Capability Design](./docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md)
 - [Config Surfaces](./docs/CONFIG_SURFACES.md)
 - [Live Verification Checklist](./docs/LIVE_VERIFICATION_CHECKLIST.md)
-- [Archive Index](./docs/archive/README.md)
+
+Historical design documents are intentionally secondary. Read them only when the changelog, evolution guide, or ADRs are not enough.
 
 ## Current Scope
 
@@ -236,7 +234,21 @@ Do not treat `channels.feishu.websocket.last_trace_id` as the runtime trace. Tha
 Targeted Milestone A regression suite:
 
 ```bash
-PYTHONPATH=src python -m unittest tests.test_bindings tests.test_router tests.test_runtime_context tests.test_skills tests.test_runtime_loop tests.test_provider_retry tests.test_feishu -v
+PYTHONPATH=src python -m unittest \
+  tests.test_bindings \
+  tests.test_router \
+  tests.test_runtime_context \
+  tests.test_skills \
+  tests.test_provider_retry \
+  tests.runtime_loop.test_forced_routes \
+  tests.runtime_loop.test_direct_rendering_paths \
+  tests.runtime_loop.test_tool_followup_and_recovery \
+  tests.runtime_loop.test_context_status_and_usage \
+  tests.runtime_loop.test_automation_and_trending_routes \
+  tests.feishu.test_rendering \
+  tests.feishu.test_delivery \
+  tests.feishu.test_websocket_service \
+  -v
 ```
 
 Full suite:
@@ -252,12 +264,12 @@ Latest local result: `269` tests green.
 Recommended reading order:
 
 1. [docs/README.md](./docs/README.md)
-2. [docs/2026-03-29-private-agent-harness-design.md](./docs/2026-03-29-private-agent-harness-design.md)
-3. [docs/2026-03-30-conversation-lanes-provider-resilience-design.md](./docs/2026-03-30-conversation-lanes-provider-resilience-design.md)
-4. [docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md](./docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md)
-5. [docs/ARCHITECTURE_CHANGELOG.md](./docs/ARCHITECTURE_CHANGELOG.md)
-6. [docs/archive/plans/2026-04-05-github-trending-mcp-plan.md](./docs/archive/plans/2026-04-05-github-trending-mcp-plan.md)
-7. [docs/CONFIG_SURFACES.md](./docs/CONFIG_SURFACES.md)
+2. [docs/ARCHITECTURE_EVOLUTION.md](./docs/ARCHITECTURE_EVOLUTION.md)
+3. [docs/ARCHITECTURE_CHANGELOG.md](./docs/ARCHITECTURE_CHANGELOG.md)
+4. [docs/architecture/adr/README.md](./docs/architecture/adr/README.md)
+5. [docs/CONFIG_SURFACES.md](./docs/CONFIG_SURFACES.md)
+6. [docs/LIVE_VERIFICATION_CHECKLIST.md](./docs/LIVE_VERIFICATION_CHECKLIST.md)
+7. [docs/archive/README.md](./docs/archive/README.md)
 
 ## Recent Updates
 

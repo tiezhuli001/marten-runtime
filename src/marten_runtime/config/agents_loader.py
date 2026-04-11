@@ -2,6 +2,7 @@ import tomllib
 from pathlib import Path
 
 from marten_runtime.agents.specs import AgentSpec
+from marten_runtime.apps.runtime_defaults import DEFAULT_APP_ID
 
 
 def load_agent_specs(path: str) -> list[AgentSpec]:
@@ -15,7 +16,7 @@ def load_agent_specs(path: str) -> list[AgentSpec]:
 def _normalize_agent_payload(agent_id: str, payload: dict[str, object]) -> dict[str, object]:
     normalized = {
         "agent_id": agent_id,
-        "app_id": "example_assistant",
+        "app_id": DEFAULT_APP_ID,
         "enabled": True,
         "allowed_tools": [],
         "prompt_mode": "full",
