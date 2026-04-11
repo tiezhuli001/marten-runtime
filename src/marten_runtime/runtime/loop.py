@@ -1,18 +1,21 @@
-import json
-import logging
-import re
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from uuid import uuid4
 
-logger = logging.getLogger(__name__)
 
 from marten_runtime.agents.specs import AgentSpec
 from marten_runtime.runtime.context import RuntimeContext, assemble_runtime_context
 from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.history import CompactionDiagnostics, InMemoryRunHistory
-from marten_runtime.runtime.direct_rendering import maybe_render_tool_followup_text
+from marten_runtime.runtime.run_outcome_flow import (
+    elapsed_ms,
+    finish_run_error,
+    finish_run_success,
+    is_provider_failure,
+    record_failure,
+    tool_rejection_text,
+)
 from marten_runtime.runtime.recovery_flow import (
     is_generic_tool_failure_text,
     recover_successful_tool_followup_text,
@@ -27,10 +30,7 @@ from marten_runtime.runtime.llm_client import (
     estimate_request_usage,
     estimate_request_tokens,
 )
-from marten_runtime.runtime.provider_retry import (
-    ProviderTransportError,
-    normalize_provider_error,
-)
+from marten_runtime.runtime.provider_retry import normalize_provider_error
 from marten_runtime.runtime.tool_calls import (
     ToolCallRejected,
     ToolExecutionFailed,
@@ -39,12 +39,10 @@ from marten_runtime.runtime.tool_calls import (
 from marten_runtime.runtime.tool_episode_summary_prompt import (
     ToolEpisodeSummaryDraft,
 )
-from marten_runtime.runtime.tool_outcome_extractor import extract_tool_outcome_summary
-from marten_runtime.runtime.tool_outcome_flow import (
-    collect_structured_hint_facts,
-    infer_episode_source_kind,
-    merge_tool_episode_facts,
-    resolve_summary_volatile_flag,
+from marten_runtime.runtime.tool_followup_support import (
+    append_tool_exchange,
+    build_tool_followup_request,
+    normalize_tool_result_for_followup,
 )
 from marten_runtime.session.compaction_trigger import (
     CompactionDecision,
@@ -56,17 +54,9 @@ from marten_runtime.session.compaction_trigger import (
 from marten_runtime.session.compacted_context import CompactedContext
 from marten_runtime.session.compaction_runner import run_compaction
 from marten_runtime.session.models import SessionMessage
-from marten_runtime.session.tool_outcome_summary import (
-    ToolOutcomeFact,
-    ToolOutcomeSummary,
-)
 from marten_runtime.self_improve.recorder import SelfImproveRecorder
 from marten_runtime.skills.snapshot import SkillSnapshot
 from marten_runtime.tools.registry import ToolRegistry, ToolSnapshot
-from marten_runtime.tools.builtins.runtime_tool import (
-    annotate_runtime_context_status_peak,
-    render_runtime_context_status_text,
-)
 
 
 DEFAULT_ALLOWED_TOOLS = [
@@ -79,15 +69,32 @@ DEFAULT_ALLOWED_TOOLS = [
 ]
 
 
-def _tool_rejection_text(error_code: str) -> str:
-    if error_code == "TOOL_NOT_ALLOWED":
-        return "当前操作未被允许，请换个说法或缩小范围。"
-    if error_code == "TOOL_NOT_FOUND":
-        return "当前所需工具不可用，请稍后重试。"
-    return error_code.lower()
-
 
 class RuntimeLoop:
+
+    def _append_post_turn_summary(
+        self,
+        *,
+        history: InMemoryRunHistory,
+        user_message: str,
+        tool_history: list[ToolExchange],
+        final_text: str,
+        combined_summary_draft: ToolEpisodeSummaryDraft | None,
+        run_id: str,
+        tool_snapshot: ToolSnapshot,
+    ) -> None:
+        from marten_runtime.runtime.run_outcome_flow import append_post_turn_summary
+
+        append_post_turn_summary(
+            history=history,
+            user_message=user_message,
+            tool_history=tool_history,
+            final_text=final_text,
+            combined_summary_draft=combined_summary_draft,
+            run_id=run_id,
+            tool_snapshot=tool_snapshot,
+        )
+
     def __init__(
         self,
         llm: LLMClient,
@@ -407,7 +414,7 @@ class RuntimeLoop:
                 self.history.set_stage_timing(
                     run.run_id,
                     stage="llm_first" if not tool_history else "llm_second",
-                    elapsed_ms=_elapsed_ms(llm_started_at),
+                    elapsed_ms=elapsed_ms(llm_started_at),
                 )
                 try:
                     tool_started_at = time.perf_counter()
@@ -434,13 +441,13 @@ class RuntimeLoop:
                         self.history.set_stage_timing(
                             run.run_id,
                             stage="tool",
-                            elapsed_ms=_elapsed_ms(tool_started_at),
+                            elapsed_ms=elapsed_ms(tool_started_at),
                         )
                 except ToolCallRejected as exc:
                     if tool_history:
                         recovered_text = recover_tool_result_text(tool_history)
                         if recovered_text:
-                            return self._finish_run_success(
+                            return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, 
                                 events=events,
                                 session_id=session_id,
                                 run_id=run.run_id,
@@ -453,7 +460,7 @@ class RuntimeLoop:
                                 tool_history=tool_history,
                                 tool_snapshot=tool_snapshot,
                             )
-                    return self._finish_run_error(
+                    return finish_run_error(history=self.history, 
                         events=events,
                         session_id=session_id,
                         run_id=run.run_id,
@@ -461,10 +468,10 @@ class RuntimeLoop:
                         run_started_at=run_started_at,
                         llm_request_count=llm_request_count,
                         error_code=exc.error_code,
-                        error_text=_tool_rejection_text(exc.error_code),
+                        error_text=tool_rejection_text(exc.error_code),
                     )
                 except ToolExecutionFailed as exc:
-                    self._record_failure(
+                    record_failure(self.self_improve_recorder, 
                         agent_id=resolved_agent.agent_id,
                         run_id=run.run_id,
                         trace_id=trace_id,
@@ -477,9 +484,9 @@ class RuntimeLoop:
                     self.history.set_stage_timing(
                         run.run_id,
                         stage="tool",
-                        elapsed_ms=_elapsed_ms(tool_started_at),
+                        elapsed_ms=elapsed_ms(tool_started_at),
                     )
-                    return self._finish_run_error(
+                    return finish_run_error(history=self.history, 
                         events=events,
                         session_id=session_id,
                         run_id=run.run_id,
@@ -502,9 +509,9 @@ class RuntimeLoop:
                 self.history.set_stage_timing(
                     run.run_id,
                     stage="llm_first" if not tool_history else "llm_second",
-                    elapsed_ms=_elapsed_ms(llm_started_at),
+                    elapsed_ms=elapsed_ms(llm_started_at),
                 )
-                if _is_provider_failure(exc):
+                if is_provider_failure(exc):
                     normalized = normalize_provider_error(exc)
                     if (
                         resolved_compacted_context is None
@@ -575,7 +582,7 @@ class RuntimeLoop:
                     if tool_history:
                         recovered_text = recover_tool_result_text(tool_history)
                         if recovered_text:
-                            return self._finish_run_success(
+                            return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, 
                                 events=events,
                                 session_id=session_id,
                                 run_id=run.run_id,
@@ -588,7 +595,7 @@ class RuntimeLoop:
                                 tool_history=tool_history,
                                 tool_snapshot=tool_snapshot,
                             )
-                    self._record_failure(
+                    record_failure(self.self_improve_recorder, 
                         agent_id=resolved_agent.agent_id,
                         run_id=run.run_id,
                         trace_id=trace_id,
@@ -599,7 +606,7 @@ class RuntimeLoop:
                         summary=str(exc),
                         provider_name=getattr(resolved_llm, "provider_name", None),
                     )
-                    return self._finish_run_error(
+                    return finish_run_error(history=self.history, 
                         events=events,
                         session_id=session_id,
                         run_id=run.run_id,
@@ -609,8 +616,7 @@ class RuntimeLoop:
                         error_code=normalized.error_code,
                         error_text="暂时没有生成可见回复，请重试。",
                     )
-                    return events
-                self._record_failure(
+                record_failure(self.self_improve_recorder, 
                     agent_id=resolved_agent.agent_id,
                     run_id=run.run_id,
                     trace_id=trace_id,
@@ -620,7 +626,7 @@ class RuntimeLoop:
                     message=message,
                     summary=str(exc),
                 )
-                return self._finish_run_error(
+                return finish_run_error(history=self.history, 
                     events=events,
                     session_id=session_id,
                     run_id=run.run_id,
@@ -637,7 +643,7 @@ class RuntimeLoop:
                     if recovered_text:
                         final_text = recovered_text
                 if not final_text:
-                    return self._finish_run_error(
+                    return finish_run_error(history=self.history, 
                         events=events,
                         session_id=session_id,
                         run_id=run.run_id,
@@ -647,7 +653,7 @@ class RuntimeLoop:
                         error_code="EMPTY_FINAL_RESPONSE",
                         error_text="暂时没有生成可见回复，请重试。",
                     )
-                return self._finish_run_success(
+                return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, 
                     events=events,
                     session_id=session_id,
                     run_id=run.run_id,
@@ -661,12 +667,11 @@ class RuntimeLoop:
                     tool_snapshot=tool_snapshot,
                     combined_summary_draft=reply.tool_episode_summary_draft,
                 )
-            tool_history.append(
-                ToolExchange(
-                    tool_name=reply.tool_name or "",
-                    tool_payload=reply.tool_payload,
-                    tool_result=tool_result,
-                )
+            append_tool_exchange(
+                tool_history,
+                tool_name=reply.tool_name or "",
+                tool_payload=reply.tool_payload,
+                tool_result=tool_result,
             )
             self.history.record_tool_call(
                 run.run_id,
@@ -674,44 +679,26 @@ class RuntimeLoop:
                 tool_payload=reply.tool_payload,
                 tool_result=tool_result,
             )
-            if isinstance(tool_result, dict) and (reply.tool_name or "") == "runtime":
-                run_record = self.history.get(run.run_id)
-                tool_result = annotate_runtime_context_status_peak(
-                    tool_result,
-                    peak_input_tokens_estimate=(
-                        run_record.peak_preflight_input_tokens_estimate
-                        or run_record.initial_preflight_input_tokens_estimate
-                        or 0
-                    ),
-                    peak_stage=run_record.peak_preflight_stage or "initial_request",
-                    actual_peak_input_tokens=run_record.actual_peak_input_tokens,
-                    actual_peak_output_tokens=run_record.actual_peak_output_tokens,
-                    actual_peak_total_tokens=run_record.actual_peak_total_tokens,
-                    actual_peak_stage=run_record.actual_peak_stage,
-                )
-                tool_history[-1].tool_result = tool_result
-                rendered_runtime_text = render_runtime_context_status_text(tool_result)
-                if rendered_runtime_text:
-                    return self._finish_run_success(
-                        events=events,
-                        session_id=session_id,
-                        run_id=run.run_id,
-                        trace_id=trace_id,
-                        run_started_at=run_started_at,
-                        llm_request_count=llm_request_count,
-                        message=message,
-                        agent_id=resolved_agent.agent_id,
-                        final_text=rendered_runtime_text,
-                        tool_history=tool_history,
-                        tool_snapshot=tool_snapshot,
-                    )
-            rendered_direct_text = maybe_render_tool_followup_text(
-                reply.tool_name or "",
-                tool_result,
+            run_record = self.history.get(run.run_id)
+            tool_result, rendered_followup_text = normalize_tool_result_for_followup(
+                tool_name=reply.tool_name or "",
                 tool_payload=reply.tool_payload,
+                tool_result=tool_result,
+                peak_input_tokens_estimate=(
+                    run_record.peak_preflight_input_tokens_estimate
+                    or run_record.initial_preflight_input_tokens_estimate
+                    or 0
+                ),
+                peak_stage=run_record.peak_preflight_stage or "initial_request",
+                actual_peak_input_tokens=run_record.actual_peak_input_tokens,
+                actual_peak_output_tokens=run_record.actual_peak_output_tokens,
+                actual_peak_total_tokens=run_record.actual_peak_total_tokens,
+                actual_peak_stage=run_record.actual_peak_stage,
             )
-            if rendered_direct_text:
-                return self._finish_run_success(
+            if isinstance(tool_result, dict):
+                tool_history[-1].tool_result = tool_result
+            if rendered_followup_text:
+                return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, 
                     events=events,
                     session_id=session_id,
                     run_id=run.run_id,
@@ -720,17 +707,16 @@ class RuntimeLoop:
                     llm_request_count=llm_request_count,
                     message=message,
                     agent_id=resolved_agent.agent_id,
-                    final_text=rendered_direct_text,
+                    final_text=rendered_followup_text,
                     tool_history=tool_history,
                     tool_snapshot=tool_snapshot,
                 )
-            provisional_request = first_request.model_copy(
-                update={
-                    "tool_history": list(tool_history),
-                    "tool_result": tool_result,
-                    "requested_tool_name": reply.tool_name,
-                    "requested_tool_payload": reply.tool_payload,
-                }
+            provisional_request = build_tool_followup_request(
+                first_request,
+                tool_history=tool_history,
+                tool_result=tool_result,
+                requested_tool_name=reply.tool_name,
+                requested_tool_payload=reply.tool_payload,
             )
             followup_usage = estimate_request_usage(provisional_request)
             self.history.update_peak_preflight_usage(
@@ -738,15 +724,14 @@ class RuntimeLoop:
                 input_tokens_estimate=followup_usage.input_tokens_estimate,
                 stage="tool_followup",
             )
-            current_request = first_request.model_copy(
-                update={
-                    "tool_history": list(tool_history),
-                    "tool_result": tool_result,
-                    "requested_tool_name": reply.tool_name,
-                    "requested_tool_payload": reply.tool_payload,
-                }
+            current_request = build_tool_followup_request(
+                first_request,
+                tool_history=tool_history,
+                tool_result=tool_result,
+                requested_tool_name=reply.tool_name,
+                requested_tool_payload=reply.tool_payload,
             )
-        self._record_failure(
+        record_failure(self.self_improve_recorder, 
             agent_id=resolved_agent.agent_id,
             run_id=run.run_id,
             trace_id=trace_id,
@@ -756,7 +741,7 @@ class RuntimeLoop:
             message=message,
             summary="tool loop limit exceeded",
         )
-        return self._finish_run_error(
+        return finish_run_error(history=self.history, 
             events=events,
             session_id=session_id,
             run_id=run.run_id,
@@ -767,285 +752,3 @@ class RuntimeLoop:
             error_text="tool_loop_limit_exceeded",
         )
 
-    def _finish_run_success(
-        self,
-        *,
-        events: list[OutboundEvent],
-        session_id: str,
-        run_id: str,
-        trace_id: str,
-        run_started_at: float,
-        llm_request_count: int,
-        message: str,
-        agent_id: str,
-        final_text: str,
-        tool_history: list[ToolExchange],
-        tool_snapshot: ToolSnapshot,
-        combined_summary_draft: ToolEpisodeSummaryDraft | None = None,
-    ) -> list[OutboundEvent]:
-        events.append(
-            OutboundEvent(
-                session_id=session_id,
-                run_id=run_id,
-                event_id=f"evt_{uuid4().hex[:8]}",
-                event_type="final",
-                sequence=2,
-                trace_id=trace_id,
-                payload={"text": final_text},
-                created_at=datetime.now(timezone.utc),
-            )
-        )
-        self._append_post_turn_summary(
-            user_message=message,
-            history=tool_history,
-            final_text=final_text,
-            combined_summary_draft=combined_summary_draft,
-            run_id=run_id,
-            tool_snapshot=tool_snapshot,
-        )
-        self.history.finish(run_id, delivery_status="final")
-        self.history.finalize_total_timing(
-            run_id, elapsed_ms=_elapsed_ms(run_started_at)
-        )
-        self.history.set_llm_request_count(run_id, llm_request_count)
-        self._record_recovery(
-            agent_id=agent_id,
-            run_id=run_id,
-            trace_id=trace_id,
-            message=message,
-        )
-        return events
-
-    def _finish_run_error(
-        self,
-        *,
-        events: list[OutboundEvent],
-        session_id: str,
-        run_id: str,
-        trace_id: str,
-        run_started_at: float,
-        llm_request_count: int,
-        error_code: str,
-        error_text: str,
-    ) -> list[OutboundEvent]:
-        events.append(
-            OutboundEvent(
-                session_id=session_id,
-                run_id=run_id,
-                event_id=f"evt_{uuid4().hex[:8]}",
-                event_type="error",
-                sequence=2,
-                trace_id=trace_id,
-                payload={"code": error_code, "text": error_text},
-                created_at=datetime.now(timezone.utc),
-            )
-        )
-        self.history.fail(run_id, error_code=error_code)
-        self.history.finalize_total_timing(
-            run_id, elapsed_ms=_elapsed_ms(run_started_at)
-        )
-        self.history.set_llm_request_count(run_id, llm_request_count)
-        return events
-
-    def _record_failure(
-        self,
-        *,
-        agent_id: str,
-        run_id: str,
-        trace_id: str,
-        session_id: str,
-        error_code: str,
-        error_stage: str,
-        message: str,
-        summary: str,
-        tool_name: str | None = None,
-        provider_name: str | None = None,
-    ) -> None:
-        if self.self_improve_recorder is None:
-            return
-        self.self_improve_recorder.record_failure(
-            agent_id=agent_id,
-            run_id=run_id,
-            trace_id=trace_id,
-            session_id=session_id,
-            error_code=error_code,
-            error_stage=error_stage,
-            tool_name=tool_name,
-            provider_name=provider_name,
-            summary=summary,
-            message=message,
-        )
-
-    def _record_recovery(
-        self,
-        *,
-        agent_id: str,
-        run_id: str,
-        trace_id: str,
-        message: str,
-    ) -> None:
-        if self.self_improve_recorder is None:
-            return
-        self.self_improve_recorder.record_recovery(
-            agent_id=agent_id,
-            run_id=run_id,
-            trace_id=trace_id,
-            message=message,
-            fix_summary="later successful completion on a compatible request",
-            success_evidence="final reply generated",
-        )
-
-    def _append_post_turn_summary(
-        self,
-        *,
-        user_message: str,
-        history: list[ToolExchange],
-        final_text: str,
-        combined_summary_draft: ToolEpisodeSummaryDraft | None,
-        run_id: str,
-        tool_snapshot: ToolSnapshot,
-    ) -> None:
-        if not history or not final_text.strip():
-            return
-        latest = history[-1]
-        if (
-            latest.tool_name == "runtime"
-            and str(
-                (latest.tool_result or {}).get("action")
-                or (latest.tool_payload or {}).get("action")
-                or ""
-            )
-            == "context_status"
-        ):
-            return
-        if any(item.tool_name in {"self_improve", "automation"} for item in history):
-            return
-        summary = self._summarize_completed_tool_episode(
-            user_message=user_message,
-            history=history,
-            final_text=final_text,
-            combined_summary_draft=combined_summary_draft,
-            run_id=run_id,
-            tool_snapshot=tool_snapshot,
-        )
-        if summary is not None:
-            self.history.append_tool_outcome_summary(run_id, summary)
-
-    def _summarize_completed_tool_episode(
-        self,
-        *,
-        user_message: str,
-        history: list[ToolExchange],
-        final_text: str,
-        combined_summary_draft: ToolEpisodeSummaryDraft | None,
-        run_id: str,
-        tool_snapshot: ToolSnapshot,
-    ) -> ToolOutcomeSummary | None:
-        try:
-            fallback_summary = self._fallback_tool_episode_summary(
-                run_id=run_id,
-                history=history,
-                final_text=final_text,
-                tool_snapshot=tool_snapshot,
-            )
-            draft = combined_summary_draft
-            if draft is not None and draft.summary.strip():
-                structured_facts = collect_structured_hint_facts(history)
-                fallback_facts = (
-                    list(fallback_summary.facts) if fallback_summary is not None else []
-                )
-                facts = merge_tool_episode_facts(
-                    draft.facts,
-                    [*structured_facts, *fallback_facts]
-                    if structured_facts
-                    else fallback_facts,
-                )
-                volatile = resolve_summary_volatile_flag(
-                    draft_volatile=draft.volatile,
-                    facts=facts,
-                    fallback_summary=fallback_summary,
-                )
-                keep_next_turn = bool(
-                    (
-                        draft.keep_next_turn
-                        or bool(
-                            fallback_summary is not None
-                            and fallback_summary.keep_next_turn
-                        )
-                    )
-                    and not bool(
-                        fallback_summary is not None
-                        and not fallback_summary.keep_next_turn
-                    )
-                    and not volatile
-                )
-                refresh_hint = draft.refresh_hint or (
-                    fallback_summary.refresh_hint
-                    if fallback_summary is not None
-                    else ""
-                )
-                return ToolOutcomeSummary.create(
-                    run_id=run_id,
-                    source_kind=infer_episode_source_kind(history, tool_snapshot),
-                    summary_text=draft.summary,
-                    facts=facts,
-                    volatile=volatile,
-                    keep_next_turn=keep_next_turn,
-                    refresh_hint=refresh_hint,
-                )
-        except Exception:
-            logger.debug("tool episode summary extraction failed", exc_info=True)
-        return self._fallback_tool_episode_summary(
-            run_id=run_id,
-            history=history,
-            final_text=final_text,
-            tool_snapshot=tool_snapshot,
-        )
-
-    def _fallback_tool_episode_summary(
-        self,
-        *,
-        run_id: str,
-        history: list[ToolExchange],
-        final_text: str,
-        tool_snapshot: ToolSnapshot,
-    ) -> ToolOutcomeSummary | None:
-        summary = self._extract_rule_based_tool_outcome_summary(
-            run_id=run_id,
-            history=history,
-            tool_snapshot=tool_snapshot,
-        )
-        if summary is not None:
-            return summary
-        if not final_text.strip():
-            return None
-        return ToolOutcomeSummary.create(
-            run_id=run_id,
-            source_kind=infer_episode_source_kind(history, tool_snapshot),
-            summary_text=f"上一轮工具调用完成：{final_text.strip()}",
-        )
-
-    def _extract_rule_based_tool_outcome_summary(
-        self,
-        *,
-        run_id: str,
-        history: list[ToolExchange],
-        tool_snapshot: ToolSnapshot,
-    ) -> ToolOutcomeSummary | None:
-        latest = history[-1]
-        return extract_tool_outcome_summary(
-            run_id=run_id,
-            tool_name=latest.tool_name,
-            tool_payload=latest.tool_payload,
-            tool_result=latest.tool_result,
-            tool_metadata=tool_snapshot.tool_metadata.get(latest.tool_name, {}),
-        )
-
-def _is_provider_failure(exc: Exception) -> bool:
-    if isinstance(exc, (ProviderTransportError, TimeoutError, OSError)):
-        return True
-    return str(exc).startswith("provider_")
-
-
-def _elapsed_ms(started_at: float) -> int:
-    return max(0, int((time.perf_counter() - started_at) * 1000))

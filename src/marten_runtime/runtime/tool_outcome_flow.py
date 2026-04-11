@@ -4,6 +4,8 @@ import json
 import logging
 
 from marten_runtime.runtime.llm_client import ToolExchange
+from marten_runtime.runtime.tool_episode_summary_prompt import ToolEpisodeSummaryDraft
+from marten_runtime.runtime.tool_outcome_extractor import extract_tool_outcome_summary
 
 logger = logging.getLogger(__name__)
 from marten_runtime.session.tool_outcome_summary import (
@@ -148,3 +150,87 @@ def resolve_summary_volatile_flag(
     if any(fact.key in durable_fact_keys for fact in facts):
         return False
     return True
+
+
+def build_fallback_tool_episode_summary(
+    *,
+    run_id: str,
+    history: list[ToolExchange],
+    final_text: str,
+    tool_snapshot: ToolSnapshot,
+) -> ToolOutcomeSummary | None:
+    summary = extract_rule_based_tool_outcome_summary(
+        run_id=run_id,
+        history=history,
+        tool_snapshot=tool_snapshot,
+    )
+    if summary is not None:
+        return summary
+    if not final_text.strip():
+        return None
+    return ToolOutcomeSummary.create(
+        run_id=run_id,
+        source_kind=infer_episode_source_kind(history, tool_snapshot),
+        summary_text=f"上一轮工具调用完成：{final_text.strip()}",
+    )
+
+
+def build_combined_tool_episode_summary(
+    *,
+    run_id: str,
+    history: list[ToolExchange],
+    tool_snapshot: ToolSnapshot,
+    draft: ToolEpisodeSummaryDraft,
+    fallback_summary: ToolOutcomeSummary | None,
+) -> ToolOutcomeSummary:
+    structured_facts = collect_structured_hint_facts(history)
+    fallback_facts = list(fallback_summary.facts) if fallback_summary is not None else []
+    facts = merge_tool_episode_facts(
+        draft.facts,
+        [*structured_facts, *fallback_facts] if structured_facts else fallback_facts,
+    )
+    volatile = resolve_summary_volatile_flag(
+        draft_volatile=draft.volatile,
+        facts=facts,
+        fallback_summary=fallback_summary,
+    )
+    keep_next_turn = bool(
+        (
+            draft.keep_next_turn
+            or bool(fallback_summary is not None and fallback_summary.keep_next_turn)
+        )
+        and not bool(
+            fallback_summary is not None and not fallback_summary.keep_next_turn
+        )
+        and not volatile
+    )
+    refresh_hint = draft.refresh_hint or (
+        fallback_summary.refresh_hint if fallback_summary is not None else ""
+    )
+    return ToolOutcomeSummary.create(
+        run_id=run_id,
+        source_kind=infer_episode_source_kind(history, tool_snapshot),
+        summary_text=draft.summary,
+        facts=facts,
+        volatile=volatile,
+        keep_next_turn=keep_next_turn,
+        refresh_hint=refresh_hint,
+    )
+
+
+def extract_rule_based_tool_outcome_summary(
+    *,
+    run_id: str,
+    history: list[ToolExchange],
+    tool_snapshot: ToolSnapshot,
+) -> ToolOutcomeSummary | None:
+    if not history:
+        return None
+    latest = history[-1]
+    return extract_tool_outcome_summary(
+        run_id=run_id,
+        tool_name=latest.tool_name,
+        tool_payload=latest.tool_payload,
+        tool_result=latest.tool_result,
+        tool_metadata=tool_snapshot.tool_metadata.get(latest.tool_name, {}),
+    )

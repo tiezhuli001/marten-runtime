@@ -3,6 +3,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
+from marten_runtime.apps.runtime_defaults import DEFAULT_APP_ID
 from marten_runtime.config.agents_loader import load_agent_specs
 
 
@@ -40,6 +41,24 @@ class AgentSpecLoadingTests(unittest.TestCase):
             self.assertEqual(specs[1].app_id, "example_assistant")
             self.assertEqual(specs[1].prompt_mode, "full")
             self.assertIsNone(specs[1].model_profile)
+
+    def test_loader_uses_current_default_runtime_asset_for_missing_app_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agents.toml"
+            path.write_text(
+                textwrap.dedent(
+                    """
+                    [agents.assistant]
+                    role = "general_assistant"
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            specs = load_agent_specs(str(path))
+
+            self.assertEqual(specs[0].app_id, DEFAULT_APP_ID)
 
     def test_loader_rejects_agent_missing_role(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

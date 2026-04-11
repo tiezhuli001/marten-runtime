@@ -11,6 +11,12 @@ from marten_runtime.agents.router import AgentRouter
 from marten_runtime.agents.specs import AgentSpec
 from marten_runtime.apps.bootstrap_prompt import load_bootstrap_prompt
 from marten_runtime.apps.manifest import AppManifest, load_app_manifest
+from marten_runtime.apps.runtime_defaults import (
+    DEFAULT_AGENT_ID,
+    DEFAULT_APP_ID,
+    default_app_manifest_path,
+    default_lessons_path,
+)
 from marten_runtime.automation.models import AutomationJob
 from marten_runtime.automation.sqlite_store import SQLiteAutomationStore
 from marten_runtime.automation.store import AutomationStore
@@ -30,16 +36,21 @@ from marten_runtime.config.models_loader import (
     resolve_model_profile,
 )
 from marten_runtime.config.platform_loader import PlatformConfig, load_platform_config
-from marten_runtime.data_access.adapter import DomainDataAdapter
 from marten_runtime.mcp.client import MCPClient
 from marten_runtime.mcp.discovery import discover_mcp_tools
 from marten_runtime.mcp.loader import load_mcp_servers
 from marten_runtime.mcp.models import MCPServerSpec
+from marten_runtime.interfaces.http.feishu_runtime_services import (
+    build_feishu_delivery_client,
+    build_feishu_websocket_service,
+)
+from marten_runtime.interfaces.http.runtime_tool_registration import (
+    register_builtin_time_tool,
+    register_family_tools,
+)
 from marten_runtime.runtime.capabilities import (
     get_capability_declarations,
-    get_parameters_schema,
     render_capability_catalog,
-    render_tool_description,
 )
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.lanes import ConversationLaneManager
@@ -50,15 +61,7 @@ from marten_runtime.self_improve.service import SelfImproveService, make_default
 from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
 from marten_runtime.session.store import SessionStore
 from marten_runtime.skills.service import SkillService
-from marten_runtime.tools.builtins.automation_tool import run_automation_tool
-from marten_runtime.tools.builtins.mcp_tool import (
-    build_mcp_capability_catalog,
-    run_mcp_tool,
-)
-from marten_runtime.tools.builtins.runtime_tool import run_runtime_tool
-from marten_runtime.tools.builtins.self_improve_tool import run_self_improve_tool
-from marten_runtime.tools.builtins.skill_tool import run_skill_tool
-from marten_runtime.tools.builtins.time_tool import run_time_tool
+from marten_runtime.tools.builtins.mcp_tool import build_mcp_capability_catalog
 from marten_runtime.tools.registry import ToolRegistry
 
 TraceIndex = dict[str, dict[str, list[str] | dict[str, str | None]]]
@@ -174,12 +177,7 @@ def build_http_runtime(
     )
     capability_declarations = get_capability_declarations()
     tool_registry = ToolRegistry()
-    tool_registry.register(
-        "time",
-        run_time_tool,
-        description=render_tool_description(capability_declarations["time"]),
-        parameters_schema=get_parameters_schema(capability_declarations["time"]),
-    )
+    register_builtin_time_tool(tool_registry, capability_declarations)
     mcp_client = MCPClient(mcp_servers, env=resolved_env)
     mcp_discovery = discover_mcp_tools(mcp_servers, mcp_client)
     capability_catalog_text = render_capability_catalog(
@@ -187,7 +185,7 @@ def build_http_runtime(
         mcp_catalog_text=build_mcp_capability_catalog(mcp_servers, mcp_discovery),
     )
     default_app_manifest = load_app_manifest(
-        str(resolved_repo_root / "apps/example_assistant/app.toml")
+        str(default_app_manifest_path(resolved_repo_root))
     )
     agent_specs = load_agent_specs(str(resolved_repo_root / "config/agents.toml"))
     app_runtimes = _load_app_runtimes(
@@ -226,22 +224,16 @@ def build_http_runtime(
     )
     self_improve_service = SelfImproveService(
         self_improve_store,
-        lessons_path=resolved_repo_root / "apps/example_assistant/SYSTEM_LESSONS.md",
+        lessons_path=default_lessons_path(resolved_repo_root),
         judge=make_default_judge(
             runtime_loop.llm,
             app_id=app_manifest.app_id,
             agent_id=default_agent.agent_id,
         ),
     )
-    feishu_delivery = FeishuDeliveryClient(
+    feishu_delivery = build_feishu_delivery_client(
         env=resolved_env,
-        retry_policy=DeliveryRetryPolicy(
-            progress_max_retries=channels_config.feishu.retry.progress_max_retries,
-            final_max_retries=channels_config.feishu.retry.final_max_retries,
-            error_max_retries=channels_config.feishu.retry.error_max_retries,
-            base_backoff_seconds=channels_config.feishu.retry.base_backoff_seconds,
-            max_backoff_seconds=channels_config.feishu.retry.max_backoff_seconds,
-        ),
+        channels_config=channels_config,
     )
     feishu_receipts = InMemoryReceiptStore()
     state = HTTPRuntimeState(
@@ -277,21 +269,17 @@ def build_http_runtime(
         app_runtimes=app_runtimes,
         llm_client_factory=llm_client_factory,
     )
-    _register_family_tools(state, capability_declarations)
+    register_family_tools(state, capability_declarations)
     from marten_runtime.interfaces.http.bootstrap_handlers import (
         _process_inbound_envelope,
     )
 
-    state.feishu_socket_service = FeishuWebsocketService(
+    state.feishu_socket_service = build_feishu_websocket_service(
         env=resolved_env,
+        channels_config=channels_config,
         receipt_store=feishu_receipts,
         runtime_handler=lambda envelope: _process_inbound_envelope(state, envelope),
         delivery_client=feishu_delivery,
-        allowed_chat_types=channels_config.feishu.allowed_chat_types,
-        allowed_chat_ids=channels_config.feishu.allowed_chat_ids,
-        client_config=channels_config.feishu.websocket.model_copy(
-            update={"auto_reconnect": channels_config.feishu.websocket.auto_reconnect}
-        ),
         lane_manager=state.lane_manager,
         run_history=state.run_history,
     )
@@ -389,127 +377,6 @@ def _build_stateful_stores(
     return automation_store, self_improve_store
 
 
-def _register_family_tools(
-    state: HTTPRuntimeState,
-    capability_declarations: dict[str, object],
-) -> None:
-    adapter_factory = lambda runtime_state: DomainDataAdapter(
-        self_improve_store=runtime_state.self_improve_store,
-        automation_store=runtime_state.automation_store,
-    )
-    state.tool_registry.register(
-        "skill",
-        lambda payload, runtime_state=state: run_skill_tool(
-            payload, runtime_state.skill_service
-        ),
-        description=render_tool_description(capability_declarations["skill"]),
-        parameters_schema=get_parameters_schema(capability_declarations["skill"]),
-    )
-    state.tool_registry.register(
-        "mcp",
-        lambda payload, runtime_state=state: run_mcp_tool(
-            payload,
-            runtime_state.mcp_servers,
-            runtime_state.mcp_client,
-            runtime_state.mcp_discovery,
-        ),
-        description=render_tool_description(capability_declarations["mcp"]),
-        parameters_schema=get_parameters_schema(capability_declarations["mcp"]),
-    )
-    state.tool_registry.register(
-        "automation",
-        lambda payload, runtime_state=state: run_automation_tool(
-            payload,
-            runtime_state.automation_store,
-            adapter_factory(runtime_state),
-        ),
-        description=render_tool_description(capability_declarations["automation"]),
-        parameters_schema=get_parameters_schema(capability_declarations["automation"]),
-    )
-    state.tool_registry.register(
-        "runtime",
-        lambda payload, runtime_state=state, *, tool_context=None: run_runtime_tool(
-            payload,
-            tool_context=tool_context,
-            runtime_loop=runtime_state.runtime_loop,
-            run_history=runtime_state.run_history,
-            latest_checkpoint_available=_runtime_latest_checkpoint_available(
-                runtime_state, tool_context
-            ),
-        ),
-        description=render_tool_description(capability_declarations["runtime"]),
-        parameters_schema=get_parameters_schema(capability_declarations["runtime"]),
-    )
-    state.tool_registry.register(
-        "self_improve",
-        lambda payload, runtime_state=state: run_self_improve_tool(
-            payload,
-            adapter_factory(runtime_state),
-            runtime_state.self_improve_store,
-        ),
-        description=render_tool_description(capability_declarations["self_improve"]),
-        parameters_schema=get_parameters_schema(
-            capability_declarations["self_improve"]
-        ),
-    )
-    state.tool_registry.register(
-        "mcp",
-        lambda payload, runtime_state=state: run_mcp_tool(
-            payload,
-            runtime_state.mcp_servers,
-            runtime_state.mcp_client,
-            runtime_state.mcp_discovery,
-        ),
-        description=render_tool_description(capability_declarations["mcp"]),
-    )
-    state.tool_registry.register(
-        "automation",
-        lambda payload, runtime_state=state: run_automation_tool(
-            payload,
-            runtime_state.automation_store,
-            adapter_factory(runtime_state),
-        ),
-        description=render_tool_description(capability_declarations["automation"]),
-    )
-    state.tool_registry.register(
-        "runtime",
-        lambda payload, runtime_state=state, *, tool_context=None: run_runtime_tool(
-            payload,
-            tool_context=tool_context,
-            runtime_loop=runtime_state.runtime_loop,
-            run_history=runtime_state.run_history,
-            latest_checkpoint_available=_runtime_latest_checkpoint_available(
-                runtime_state, tool_context
-            ),
-        ),
-        description=render_tool_description(capability_declarations["runtime"]),
-    )
-    state.tool_registry.register(
-        "self_improve",
-        lambda payload, runtime_state=state: run_self_improve_tool(
-            payload,
-            adapter_factory(runtime_state),
-            runtime_state.self_improve_store,
-        ),
-        description=render_tool_description(capability_declarations["self_improve"]),
-    )
-
-
-def _runtime_latest_checkpoint_available(
-    runtime_state: HTTPRuntimeState,
-    tool_context: dict | None,
-) -> bool:
-    session_id = str((tool_context or {}).get("session_id") or "").strip()
-    if not session_id:
-        return False
-    try:
-        return (
-            runtime_state.session_store.get(session_id).latest_compacted_context
-            is not None
-        )
-    except KeyError:
-        return False
-
 
 def _has_feishu_credentials(env: Mapping[str, str]) -> bool:
     return bool(env.get("FEISHU_APP_ID") and env.get("FEISHU_APP_SECRET"))
@@ -526,8 +393,8 @@ def _ensure_self_improve_automation(store: AutomationStore) -> None:
         AutomationJob(
             automation_id=automation_id,
             name="Internal Self Improve",
-            app_id="example_assistant",
-            agent_id="assistant",
+            app_id=DEFAULT_APP_ID,
+            agent_id=DEFAULT_AGENT_ID,
             prompt_template="Summarize repeated failures and later recoveries into lesson candidates.",
             schedule_kind="daily",
             schedule_expr="03:00",

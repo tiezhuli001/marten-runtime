@@ -9,43 +9,31 @@ This directory contains the public design and operations notes for `marten-runti
 3. [ARCHITECTURE_EVOLUTION_CN.md](./ARCHITECTURE_EVOLUTION_CN.md)
 4. [ARCHITECTURE_CHANGELOG.md](./ARCHITECTURE_CHANGELOG.md)
 5. [architecture/adr/README.md](./architecture/adr/README.md)
-6. [2026-03-29-private-agent-harness-design.md](./2026-03-29-private-agent-harness-design.md)
-7. [2026-03-30-conversation-lanes-provider-resilience-design.md](./2026-03-30-conversation-lanes-provider-resilience-design.md)
-8. [2026-03-30-self-improve-design.md](./2026-03-30-self-improve-design.md)
-9. [2026-03-31-progressive-disclosure-llm-first-capability-design.md](./2026-03-31-progressive-disclosure-llm-first-capability-design.md)
-10. [2026-04-01-feishu-generic-card-protocol-design.md](./2026-04-01-feishu-generic-card-protocol-design.md)
-11. [CONFIG_SURFACES.md](./CONFIG_SURFACES.md)
-12. [LIVE_VERIFICATION_CHECKLIST.md](./LIVE_VERIFICATION_CHECKLIST.md)
-13. [archive/README.md](./archive/README.md)
+6. [CONFIG_SURFACES.md](./CONFIG_SURFACES.md)
+7. [LIVE_VERIFICATION_CHECKLIST.md](./LIVE_VERIFICATION_CHECKLIST.md)
+8. [archive/README.md](./archive/README.md)
 
 ## What Each File Is For
 
 - `ARCHITECTURE_EVOLUTION.md` / `ARCHITECTURE_EVOLUTION_CN.md`
   - reader-first architecture evolution guides that explain the main runtime spine, stage boundaries, and why the current architecture looks the way it does
 - `ARCHITECTURE_CHANGELOG.md`
-  - append-only record of architecture evolution, why the baseline changed, and what verification proved it
+  - append-only record of architecture evolution, why the baseline changed, and what verification proved it; this is the primary timeline-truth document
 - `architecture/adr/`
   - stable architecture decision records for non-drifting runtime boundaries and subsystem roles
-- `2026-03-29-private-agent-harness-design.md`
-  - product-direction and architecture decision for the first-wave private-agent harness
-- `2026-03-30-conversation-lanes-provider-resilience-design.md`
-  - current hardening design for same-conversation queueing and provider resilience
-- `2026-03-30-self-improve-design.md`
-  - design for the narrow self-improve loop, evidence store, lesson gate, and `SYSTEM_LESSONS.md` injection
-- `2026-03-31-progressive-disclosure-llm-first-capability-design.md`
-  - final design for shrinking capability exposure to skill summaries, capability catalog, and on-demand expansion
-- `2026-04-01-feishu-generic-card-protocol-design.md`
-  - current design for the Feishu-side minimal `feishu_card` protocol, generic renderer boundary, and LLM-first structured reply contract
 - `CONFIG_SURFACES.md`
   - source-of-truth map for where each kind of config should live, including `*.example.toml` templates and local override files
 - `LIVE_VERIFICATION_CHECKLIST.md`
   - operator checklist for the real `Feishu -> LLM -> MCP -> Feishu` chain
 - `archive/`
-  - historical audits and completed implementation plans that remain useful for traceability but are no longer the primary reading path
+  - a small set of historical audits and completed plans that still carry unique traceability value; archive is intentionally not the default home for every old process document
 
 ## Notes
 
-- completed plans, completed slice designs, and one-off audits are moved under `docs/archive/` instead of competing with current source-of-truth and active docs
+- the primary documentation path is: `README -> docs/README -> ARCHITECTURE_EVOLUTION* -> ARCHITECTURE_CHANGELOG -> ADR -> CONFIG_SURFACES`
+- historical design/process docs are secondary; summarize durable truth into `ARCHITECTURE_CHANGELOG.md` before deciding whether a historical original still deserves archive space
+- archive should stay intentionally small and should not become a graveyard for every stage plan or branch execution note
+- the 2026-04-09 next-branch evolution design/execution/blueprint docs now live under `docs/archive/branch-evolution/` and are no longer part of the default reading path
 - tracked `STATUS.md` is no longer part of the repository source of truth; local continuity can still exist in an ignored local `STATUS.md`
 
 ## Current State

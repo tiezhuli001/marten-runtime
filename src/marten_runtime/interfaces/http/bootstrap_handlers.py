@@ -11,8 +11,6 @@ from marten_runtime.channels.feishu.delivery import FeishuDeliveryPayload
 from marten_runtime.channels.feishu.usage import build_usage_summary_from_history
 from marten_runtime.channels.feishu.rendering import (
     build_feishu_card_protocol_guard_instruction,
-    parse_feishu_card_protocol,
-    render_final_reply_card,
 )
 from marten_runtime.config.models_loader import resolve_model_profile
 from marten_runtime.gateway.models import InboundEnvelope
@@ -26,10 +24,9 @@ from marten_runtime.tools.builtins.automation_tool import (
 )
 
 from marten_runtime.interfaces.http.bootstrap_runtime import HTTPRuntimeState
-
-
-_FEISHU_CARD_HISTORY_BLOCK_RE = re.compile(
-    r"\n*```feishu_card\s*\n[\s\S]*?(?:\n```)?\s*$"
+from marten_runtime.interfaces.http.channel_event_serialization import (
+    history_visible_text,
+    serialize_event_for_channel,
 )
 
 
@@ -308,7 +305,7 @@ def _finalize_session_turn(
     state.session_store.append_message(
         session_id,
         SessionMessage.assistant(
-            _history_visible_text(str(events[-1].payload.get("text", "")))
+            history_visible_text(str(events[-1].payload.get("text", "")))
         ),
     )
     state.session_store.mark_run(session_id, events[-1].run_id, events[-1].created_at)
@@ -323,33 +320,14 @@ def _finalize_session_turn(
         "session_id": session_id,
         "trace_id": trace_id,
         "events": [
-            _serialize_event_for_channel(state, event, channel_id=channel_id)
+            serialize_event_for_channel(
+                event,
+                channel_id=channel_id,
+                run_history=state.run_history,
+            )
             for event in events
         ],
     }
-
-
-def _history_visible_text(text: str) -> str:
-    visible_text, _ = parse_feishu_card_protocol(text)
-    if visible_text != text:
-        return visible_text
-    return _FEISHU_CARD_HISTORY_BLOCK_RE.sub("", text).rstrip()
-
-
-def _serialize_event_for_channel(state: HTTPRuntimeState, event, *, channel_id: str) -> dict[str, object]:
-    payload = dict(event.payload)
-    if channel_id == "feishu" and event.event_type in {"final", "error"}:
-        raw_text = str(payload.get("text", ""))
-        visible_text = _history_visible_text(raw_text)
-        payload["text"] = visible_text
-        payload["card"] = render_final_reply_card(
-            raw_text,
-            event_type=event.event_type,
-            usage_summary=build_usage_summary_from_history(state.run_history, event.run_id),
-        )
-    item = event.model_dump(mode="json")
-    item["payload"] = payload
-    return item
 
 
 def _resolve_automation_skills(

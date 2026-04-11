@@ -6,7 +6,7 @@ It is **not** a replacement for:
 
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md), which is the append-only time-ordered record
 - [`architecture/adr/README.md`](./architecture/adr/README.md), which holds stable decisions
-- the original design docs, which explain the detailed reasoning for each slice
+- a small set of historical design docs, which may still explain detailed reasoning for selected slices when the changelog summary is not enough
 
 Instead, this guide answers a simpler question:
 
@@ -218,9 +218,9 @@ flowchart LR
 
 ### Key references
 
-- [`2026-03-30-conversation-lanes-provider-resilience-design.md`](./2026-03-30-conversation-lanes-provider-resilience-design.md)
-- [`2026-03-30-self-improve-design.md`](./2026-03-30-self-improve-design.md)
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
+- [`architecture/adr/0001-thin-harness-boundary.md`](./architecture/adr/0001-thin-harness-boundary.md)
+- [`architecture/adr/0003-self-improve-runtime-learning-not-architecture-memory.md`](./architecture/adr/0003-self-improve-runtime-learning-not-architecture-memory.md)
 
 ## Stage 4 · Capability Exposure Was Narrowed Around Progressive Disclosure
 
@@ -447,7 +447,7 @@ Narrow Adapters"] -.-> F
 - [`archive/2026-04-07-llm-tool-episode-summary-design.md`](./archive/2026-04-07-llm-tool-episode-summary-design.md)
 - [`archive/plans/2026-04-07-llm-tool-episode-summary-plan.md`](./archive/plans/2026-04-07-llm-tool-episode-summary-plan.md)
 - [`archive/plans/2026-04-05-github-trending-mcp-plan.md`](./archive/plans/2026-04-05-github-trending-mcp-plan.md)
-- [`2026-04-09-fast-path-inventory-and-exit-strategy.md`](./2026-04-09-fast-path-inventory-and-exit-strategy.md)
+- [`2026-04-09-fast-path-inventory-and-exit-strategy.md`](./archive/branch-evolution/2026-04-09-fast-path-inventory-and-exit-strategy.md)
 
 ## Deliberately Excluded Capabilities
 

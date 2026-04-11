@@ -1,8 +1,12 @@
 import unittest
 
 from marten_runtime.runtime.llm_client import ToolExchange
+from marten_runtime.runtime.tool_episode_summary_prompt import ToolEpisodeSummaryDraft
 from marten_runtime.runtime.tool_outcome_flow import (
+    build_combined_tool_episode_summary,
+    build_fallback_tool_episode_summary,
     collect_structured_hint_facts,
+    extract_rule_based_tool_outcome_summary,
     infer_episode_source_kind,
     merge_tool_episode_facts,
     resolve_summary_volatile_flag,
@@ -86,6 +90,79 @@ class ToolOutcomeFlowTests(unittest.TestCase):
         )
 
         self.assertFalse(volatile)
+
+    def test_extract_rule_based_tool_outcome_summary_uses_latest_tool_history_item(self) -> None:
+        summary = extract_rule_based_tool_outcome_summary(
+            run_id="run_test",
+            history=[
+                ToolExchange(tool_name="time", tool_result={"iso_time": "2026-04-09T00:00:00Z"}),
+                ToolExchange(
+                    tool_name="skill",
+                    tool_payload={"skill_id": "example_time"},
+                    tool_result={"skill_id": "example_time"},
+                ),
+            ],
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_test", tool_metadata={}),
+        )
+
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.tool_name, "skill")
+        self.assertEqual(summary.summary_text, "上一轮加载了 skill example_time。")
+
+    def test_build_fallback_tool_episode_summary_returns_generic_final_text_when_no_rule_summary(self) -> None:
+        summary = build_fallback_tool_episode_summary(
+            run_id="run_test",
+            history=[ToolExchange(tool_name="mock_search", tool_result={"issue_count": 12})],
+            final_text="已完成查询",
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_test", tool_metadata={}),
+        )
+
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.summary_text, "上一轮工具调用完成：已完成查询")
+        self.assertEqual(summary.source_kind, "builtin")
+
+    def test_build_combined_tool_episode_summary_merges_draft_and_fallback_semantics(self) -> None:
+        summary = build_combined_tool_episode_summary(
+            run_id="run_test",
+            history=[
+                ToolExchange(
+                    tool_name="mcp",
+                    tool_result={
+                        "result_text": '{"items":[{"full_name":"CloudWide851/easy-agent","default_branch":"main"}]}'
+                    },
+                )
+            ],
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_test", tool_metadata={}),
+            draft=ToolEpisodeSummaryDraft(
+                summary="已完成检查该仓库。",
+                facts=[],
+                volatile=True,
+                keep_next_turn=True,
+                refresh_hint="",
+            ),
+            fallback_summary=ToolOutcomeSummary.create(
+                run_id="run_test",
+                source_kind="mcp",
+                summary_text="上一轮调用了 github MCP。",
+                facts=[ToolOutcomeFact.create("url", "https://github.com/CloudWide851/easy-agent")],
+                volatile=False,
+                keep_next_turn=True,
+                refresh_hint="fallback-hint",
+            ),
+        )
+
+        self.assertEqual(summary.summary_text, "已完成检查该仓库。")
+        self.assertFalse(summary.volatile)
+        self.assertTrue(summary.keep_next_turn)
+        self.assertEqual(summary.refresh_hint, "fallback-hint")
+        self.assertEqual(
+            [f"{item.key}={item.value}" for item in summary.facts],
+            [
+                "full_name=CloudWide851/easy-agent",
+                "default_branch=main",
+                "url=https://github.com/CloudWide851/easy-agent",
+            ],
+        )
 
 
 if __name__ == "__main__":
