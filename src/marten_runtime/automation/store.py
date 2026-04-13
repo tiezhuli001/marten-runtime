@@ -16,7 +16,7 @@ class AutomationStore:
         return job
 
     def list_enabled(self) -> list[AutomationJob]:
-        return [item for item in self._items.values() if item.enabled]
+        return [item for item in self.list_all() if item.enabled]
 
     def list_all(self) -> list[AutomationJob]:
         return list(self._items.values())

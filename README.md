@@ -275,5 +275,5 @@ Recommended reading order:
 
 - GitHub trending now runs through one thin repo-local MCP sidecar: `github_trending.trending_repositories`.
 - The removed legacy `github_hot_repos_digest` skill surface has been cleaned from active code, tests, and automation data.
-- Historical automation rows are migrated at the automation-store boundary to canonical `github_trending_digest` ids.
+- Historical `github_hot_repos_digest` automation rows are no longer a supported runtime input; current supported automation data is already canonical `github_trending_digest`.
 - Feishu GitHub trending cards now state that ranking follows the GitHub Trending page order and avoid repeating the fetched time in multiple places.

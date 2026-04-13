@@ -9,10 +9,6 @@ from lark_oapi.ws.const import HEADER_MESSAGE_ID, HEADER_SEQ, HEADER_SUM, HEADER
 from lark_oapi.ws.enum import FrameType, MessageType
 from lark_oapi.ws.pb.pbbp2_pb2 import Frame
 
-from marten_runtime.agents.bindings import AgentBinding, AgentBindingRegistry
-from marten_runtime.agents.registry import AgentRegistry
-from marten_runtime.agents.router import AgentRouter
-from marten_runtime.agents.specs import AgentSpec
 from marten_runtime.channels.receipts import InMemoryReceiptStore
 from marten_runtime.channels.feishu.inbound import parse_feishu_callback, to_inbound_envelope
 from marten_runtime.channels.feishu.models import (
@@ -681,51 +677,6 @@ class FeishuWebsocketServiceTests(unittest.TestCase):
 
         self.assertEqual(event.message_type, "post")
         self.assertEqual(event.text, "hello@bot")
-
-    def test_feishu_envelope_routes_to_bound_agent_when_mention_required_is_met(self) -> None:
-        payload = {
-            "schema": "2.0",
-            "header": {
-                "event_id": "evt_ws_route_1",
-                "event_type": "im.message.receive_v1",
-            },
-            "event": {
-                "sender": {
-                    "sender_type": "user",
-                    "sender_id": {
-                        "user_id": "user_route_1",
-                    }
-                },
-                "message": {
-                    "message_id": "msg_ws_route_1",
-                    "chat_id": "chat_route_1",
-                    "chat_type": "group",
-                    "content": json.dumps({"text": "@bot hello from feishu"}),
-                    "mentions": [{"name": "bot", "key": "@_user_1"}],
-                },
-            },
-        }
-        event = parse_feishu_callback(payload)
-        envelope = to_inbound_envelope(event)
-        registry = AgentRegistry()
-        registry.register(AgentSpec(agent_id="assistant", role="general_assistant", app_id="example_assistant"))
-        registry.register(AgentSpec(agent_id="ops", role="ops_agent", app_id="example_assistant"))
-        router = AgentRouter(
-            registry,
-            default_agent_id="assistant",
-            bindings=AgentBindingRegistry(
-                [
-                    AgentBinding(
-                        agent_id="ops",
-                        channel_id="feishu",
-                        conversation_id="chat_route_1",
-                        mention_required=True,
-                    )
-                ]
-            ),
-        )
-
-        routed = router.route(envelope)
 
     def test_websocket_service_uses_app_credentials_to_get_endpoint(self) -> None:
         captured: list[tuple[str, dict[str, str], dict[str, str]]] = []

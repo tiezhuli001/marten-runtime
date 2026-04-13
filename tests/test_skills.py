@@ -20,6 +20,17 @@ def write_skill(root: Path, skill_id: str, body: str) -> None:
 
 
 class SkillTests(unittest.TestCase):
+    def _build_single_skill_heads(
+        self,
+        body: str,
+        *,
+        skill_id: str = "repo_helper",
+    ) -> list:
+        with tempfile.TemporaryDirectory() as tmp:
+            skills_root = Path(tmp) / "skills"
+            write_skill(skills_root, skill_id, body)
+            return build_skill_heads(SkillLoader([str(skills_root)]).load_all())
+
     def test_repo_feishu_formatting_skill_constrains_trending_order_and_rank_markers(self) -> None:
         repo_root = Path(__file__).resolve().parent.parent
         skill_body = (repo_root / "skills" / "feishu_channel_formatting" / "SKILL.md").read_text(encoding="utf-8")
@@ -302,14 +313,10 @@ class SkillTests(unittest.TestCase):
                 "Visible skills:\n- alpha_skill\n- beta_skill\n- gamma_skill",
             )
 
-    def test_render_skill_heads_uses_full_format_when_under_budget(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            skills_root = base / "skills"
-            write_skill(
-                skills_root,
-                "repo_helper",
-                """
+    def test_render_skill_heads_switches_between_full_and_compact_formats(self) -> None:
+        cases = [
+            {
+                "body": """
                 ---
                 skill_id: repo_helper
                 name: Repo Helper
@@ -321,26 +328,13 @@ class SkillTests(unittest.TestCase):
                 ---
                 Repo helper body
                 """,
-            )
-            heads = build_skill_heads(SkillLoader([str(skills_root)]).load_all())
-
-            rendered = render_skill_heads(heads, max_chars=500, max_items=10)
-
-            self.assertFalse(rendered.compact)
-            self.assertFalse(rendered.truncated)
-            self.assertEqual(
-                rendered.text,
-                "Visible skills:\n- repo_helper: repo assistance Aliases: repo.",
-            )
-
-    def test_render_skill_heads_uses_compact_format_when_full_exceeds_budget(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            skills_root = base / "skills"
-            write_skill(
-                skills_root,
-                "repo_helper",
-                """
+                "max_chars": 500,
+                "expected_compact": False,
+                "expected_truncated": False,
+                "expected_text": "Visible skills:\n- repo_helper: repo assistance Aliases: repo.",
+            },
+            {
+                "body": """
                 ---
                 skill_id: repo_helper
                 name: Repo Helper
@@ -352,14 +346,20 @@ class SkillTests(unittest.TestCase):
                 ---
                 Repo helper body
                 """,
-            )
-            heads = build_skill_heads(SkillLoader([str(skills_root)]).load_all())
+                "max_chars": 50,
+                "expected_compact": True,
+                "expected_truncated": False,
+                "expected_text": "Visible skills:\n- repo_helper",
+            },
+        ]
 
-            rendered = render_skill_heads(heads, max_chars=50, max_items=10)
-
-            self.assertTrue(rendered.compact)
-            self.assertFalse(rendered.truncated)
-            self.assertEqual(rendered.text, "Visible skills:\n- repo_helper")
+        for case in cases:
+            with self.subTest(max_chars=case["max_chars"]):
+                heads = self._build_single_skill_heads(case["body"])
+                rendered = render_skill_heads(heads, max_chars=case["max_chars"], max_items=10)
+                self.assertEqual(rendered.compact, case["expected_compact"])
+                self.assertEqual(rendered.truncated, case["expected_truncated"])
+                self.assertEqual(rendered.text, case["expected_text"])
 
     def test_render_skill_heads_truncates_compact_format_when_still_over_budget(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

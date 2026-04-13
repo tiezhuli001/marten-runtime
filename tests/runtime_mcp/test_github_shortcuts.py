@@ -14,6 +14,14 @@ class RuntimeMCPGitHubShortcutTests(unittest.TestCase):
     def _server_map(self, *servers: MCPServerSpec) -> dict[str, MCPServerSpec]:
         return build_server_map(*servers)
 
+    def _github_server(self, *tools: MCPToolSpec) -> MCPServerSpec:
+        return MCPServerSpec(
+            server_id="github",
+            transport="stdio",
+            backend_id="github",
+            tools=list(tools),
+        )
+
     def test_normalized_mcp_request_requires_action(self) -> None:
         with self.assertRaisesRegex(ValueError, "action"):
             NormalizedMCPRequest(
@@ -62,64 +70,43 @@ class RuntimeMCPGitHubShortcutTests(unittest.TestCase):
         self.assertEqual(request.tool_name, "mock_search")
         self.assertEqual(request.arguments, {"query": "release notes"})
 
-    def test_normalize_mcp_request_accepts_server_and_parameters_aliases(self) -> None:
-        request = normalize_mcp_request(
-            self._server_map(
-                MCPServerSpec(
-                    server_id="github",
-                    transport="stdio",
-                    backend_id="remote-github",
-                    tools=[MCPToolSpec(name="list_commits", description="List repo commits.")],
-                )
-            ),
+    def test_normalize_mcp_request_accepts_list_commit_alias_payloads(self) -> None:
+        server_map = self._server_map(
+            self._github_server(MCPToolSpec(name="list_commits", description="List repo commits."))
+        )
+        cases = [
             {
-                "action": "call",
-                "server": "github",
-                "tool": "list_commits",
-                "parameters": '{"owner":"jiji262","repo":"ai-agent-021","per_page":1}',
+                "payload": {
+                    "action": "call",
+                    "server": "github",
+                    "tool": "list_commits",
+                    "parameters": '{"owner":"jiji262","repo":"ai-agent-021","per_page":1}',
+                },
+                "expected_arguments": {"owner": "jiji262", "repo": "ai-agent-021", "per_page": 1},
             },
-        )
-
-        self.assertEqual(request.server_id, "github")
-        self.assertEqual(request.tool_name, "list_commits")
-        self.assertEqual(
-            request.arguments,
-            {"owner": "jiji262", "repo": "ai-agent-021", "per_page": 1},
-        )
-
-    def test_normalize_mcp_request_accepts_input_alias_and_repo_slug_for_list_commits(self) -> None:
-        request = normalize_mcp_request(
-            self._server_map(
-                MCPServerSpec(
-                    server_id="github",
-                    transport="stdio",
-                    backend_id="remote-github",
-                    tools=[MCPToolSpec(name="list_commits", description="List repo commits.")],
-                )
-            ),
             {
-                "action": "call",
-                "server": "github",
-                "tool": "list_commits",
-                "input": '{"repo":"jiji262/ai-agent-021","perPage":1}',
+                "payload": {
+                    "action": "call",
+                    "server": "github",
+                    "tool": "list_commits",
+                    "input": '{"repo":"jiji262/ai-agent-021","perPage":1}',
+                },
+                "expected_arguments": {"owner": "jiji262", "repo": "ai-agent-021", "per_page": 1},
             },
-        )
+        ]
 
-        self.assertEqual(request.server_id, "github")
-        self.assertEqual(request.tool_name, "list_commits")
-        self.assertEqual(
-            request.arguments,
-            {"owner": "jiji262", "repo": "ai-agent-021", "per_page": 1},
-        )
+        for case in cases:
+            with self.subTest(payload=case["payload"]):
+                request = normalize_mcp_request(server_map, case["payload"])
+                self.assertEqual(request.server_id, "github")
+                self.assertEqual(request.tool_name, "list_commits")
+                self.assertEqual(request.arguments, case["expected_arguments"])
 
     def test_normalize_mcp_request_does_not_repair_unknown_github_alias_tool_name(self) -> None:
         request = normalize_mcp_request(
             self._server_map(
-                MCPServerSpec(
-                    server_id="github",
-                    transport="stdio",
-                    backend_id="remote-github",
-                    tools=[MCPToolSpec(name="search_repositories", description="Search repositories.")],
+                self._github_server(
+                    MCPToolSpec(name="search_repositories", description="Search repositories.")
                 )
             ),
             {
@@ -218,11 +205,8 @@ class RuntimeMCPGitHubShortcutTests(unittest.TestCase):
     def test_normalize_mcp_request_maps_search_repositories_q_alias_to_query(self) -> None:
         request = normalize_mcp_request(
             self._server_map(
-                MCPServerSpec(
-                    server_id="github",
-                    transport="stdio",
-                    backend_id="github",
-                    tools=[MCPToolSpec(name="search_repositories", description="Search GitHub repositories.")],
+                self._github_server(
+                    MCPToolSpec(name="search_repositories", description="Search GitHub repositories.")
                 )
             ),
             {
@@ -241,11 +225,8 @@ class RuntimeMCPGitHubShortcutTests(unittest.TestCase):
     def test_normalize_mcp_request_treats_commit_action_name_as_call_tool(self) -> None:
         request = normalize_mcp_request(
             self._server_map(
-                MCPServerSpec(
-                    server_id="github",
-                    transport="stdio",
-                    backend_id="github",
-                    tools=[MCPToolSpec(name="list_commits", description="List GitHub commits.")],
+                self._github_server(
+                    MCPToolSpec(name="list_commits", description="List GitHub commits.")
                 )
             ),
             {

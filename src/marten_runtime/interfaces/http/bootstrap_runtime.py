@@ -9,15 +9,8 @@ from marten_runtime.agents.bindings import AgentBindingRegistry
 from marten_runtime.agents.registry import AgentRegistry
 from marten_runtime.agents.router import AgentRouter
 from marten_runtime.agents.specs import AgentSpec
-from marten_runtime.apps.bootstrap_prompt import load_bootstrap_prompt
 from marten_runtime.apps.manifest import AppManifest, load_app_manifest
-from marten_runtime.apps.runtime_defaults import (
-    DEFAULT_AGENT_ID,
-    DEFAULT_APP_ID,
-    default_app_manifest_path,
-    default_lessons_path,
-)
-from marten_runtime.automation.models import AutomationJob
+from marten_runtime.apps.runtime_defaults import default_app_manifest_path, default_lessons_path
 from marten_runtime.automation.sqlite_store import SQLiteAutomationStore
 from marten_runtime.automation.store import AutomationStore
 from marten_runtime.channels.delivery_retry import DeliveryRetryPolicy
@@ -25,7 +18,6 @@ from marten_runtime.channels.feishu.delivery import FeishuDeliveryClient
 from marten_runtime.channels.feishu.service import FeishuWebsocketService
 from marten_runtime.channels.receipts import InMemoryReceiptStore
 from marten_runtime.config.agents_loader import load_agent_specs
-from marten_runtime.config.automations_loader import load_automations
 from marten_runtime.config.bindings_loader import load_agent_bindings
 from marten_runtime.config.channels_loader import ChannelsConfig, load_channels_config
 from marten_runtime.config.env_loader import EnvLoadResult, load_repo_env
@@ -43,6 +35,12 @@ from marten_runtime.mcp.models import MCPServerSpec
 from marten_runtime.interfaces.http.feishu_runtime_services import (
     build_feishu_delivery_client,
     build_feishu_websocket_service,
+)
+from marten_runtime.interfaces.http.bootstrap_runtime_support import (
+    AppRuntimeAssets,
+    build_stateful_stores,
+    has_feishu_credentials,
+    load_app_runtimes,
 )
 from marten_runtime.interfaces.http.runtime_tool_registration import (
     register_builtin_time_tool,
@@ -65,12 +63,6 @@ from marten_runtime.tools.builtins.mcp_tool import build_mcp_capability_catalog
 from marten_runtime.tools.registry import ToolRegistry
 
 TraceIndex = dict[str, dict[str, list[str] | dict[str, str | None]]]
-
-
-@dataclass
-class AppRuntimeAssets:
-    manifest: AppManifest
-    system_prompt: str
 
 
 class CachedLLMClientFactory:
@@ -188,7 +180,7 @@ def build_http_runtime(
         str(default_app_manifest_path(resolved_repo_root))
     )
     agent_specs = load_agent_specs(str(resolved_repo_root / "config/agents.toml"))
-    app_runtimes = _load_app_runtimes(
+    app_runtimes = load_app_runtimes(
         repo_root=resolved_repo_root,
         app_ids={spec.app_id for spec in agent_specs if spec.enabled}
         | {default_app_manifest.app_id},
@@ -203,7 +195,7 @@ def build_http_runtime(
     app_manifest = app_runtimes[default_agent.app_id].manifest
     system_prompt = app_runtimes[default_agent.app_id].system_prompt
     skill_service = SkillService([str(resolved_repo_root / "skills")])
-    automation_store, self_improve_store = _build_stateful_stores(resolved_repo_root)
+    automation_store, self_improve_store = build_stateful_stores(resolved_repo_root)
     default_profile_name, default_profile = resolve_model_profile(
         models_config, default_agent.model_profile
     )
@@ -314,7 +306,7 @@ def _load_runtime_config(
     )
     models_config = load_models_config(str(repo_root / "config/models.toml"))
     channels_config = load_channels_config(str(repo_root / "config/channels.toml"))
-    if not _has_feishu_credentials(env):
+    if not has_feishu_credentials(env):
         channels_config = channels_config.model_copy(
             update={
                 "feishu": channels_config.feishu.model_copy(
@@ -347,63 +339,3 @@ def _build_agent_runtime(
     )
     default_agent = agent_registry.get(app_manifest.default_agent)
     return agent_registry, binding_registry, agent_router, default_agent
-
-
-def _load_app_runtimes(
-    *,
-    repo_root: Path,
-    app_ids: set[str],
-) -> dict[str, AppRuntimeAssets]:
-    runtimes: dict[str, AppRuntimeAssets] = {}
-    for app_id in sorted(app_ids):
-        manifest = load_app_manifest(str(repo_root / "apps" / app_id / "app.toml"))
-        runtimes[app_id] = AppRuntimeAssets(
-            manifest=manifest,
-            system_prompt=load_bootstrap_prompt(repo_root=repo_root, manifest=manifest),
-        )
-    return runtimes
-
-
-def _build_stateful_stores(
-    repo_root: Path,
-) -> tuple[SQLiteAutomationStore, SQLiteSelfImproveStore]:
-    automation_store = SQLiteAutomationStore(repo_root / "data" / "automations.sqlite3")
-    self_improve_store = SQLiteSelfImproveStore(
-        repo_root / "data" / "self_improve.sqlite3"
-    )
-    for job in load_automations(str(repo_root / "config" / "automations.toml")):
-        automation_store.save(job)
-    _ensure_self_improve_automation(automation_store)
-    return automation_store, self_improve_store
-
-
-
-def _has_feishu_credentials(env: Mapping[str, str]) -> bool:
-    return bool(env.get("FEISHU_APP_ID") and env.get("FEISHU_APP_SECRET"))
-
-
-def _ensure_self_improve_automation(store: AutomationStore) -> None:
-    automation_id = "self_improve_internal"
-    try:
-        store.get(automation_id)
-        return
-    except KeyError:
-        pass
-    store.save(
-        AutomationJob(
-            automation_id=automation_id,
-            name="Internal Self Improve",
-            app_id=DEFAULT_APP_ID,
-            agent_id=DEFAULT_AGENT_ID,
-            prompt_template="Summarize repeated failures and later recoveries into lesson candidates.",
-            schedule_kind="daily",
-            schedule_expr="03:00",
-            timezone="UTC",
-            session_target="isolated",
-            delivery_channel="http",
-            delivery_target="internal",
-            skill_id="self_improve",
-            enabled=True,
-            internal=True,
-        )
-    )

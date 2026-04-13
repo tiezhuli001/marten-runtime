@@ -4,8 +4,9 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
-from marten_runtime.runtime.history import CompactionDiagnostics
-from marten_runtime.runtime.llm_client import LLMRequest
+from marten_runtime.runtime.history import CompactionDiagnostics, InMemoryRunHistory
+from marten_runtime.runtime.llm_client import LLMReply, LLMRequest, ScriptedLLMClient
+from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.runtime.usage_models import NormalizedUsage
 from marten_runtime.session.compaction_trigger import CompactionSettings
 from marten_runtime.tools.builtins.runtime_tool import (
@@ -18,10 +19,40 @@ from marten_runtime.tools.builtins.time_tool import (
     render_time_tool_text,
 )
 from marten_runtime.tools.registry import ToolRegistry
-from tests.support.runtime_builders import build_scripted_runtime_loop
 
 
 class RuntimeAndSkillToolTests(unittest.TestCase):
+    def _build_scripted_runtime_loop(
+        self,
+        replies: list[LLMReply] | None = None,
+    ):
+        history = InMemoryRunHistory()
+        runtime = RuntimeLoop(ScriptedLLMClient(list(replies or [])), ToolRegistry(), history)
+        return runtime, history
+
+    def _fixed_time_result(
+        self,
+        payload: dict[str, str],
+        *,
+        detected_timezone: str | None = None,
+    ) -> dict:
+        fixed_now = datetime(2026, 4, 1, 5, 47, 22, tzinfo=timezone.utc)
+        if detected_timezone is None:
+            with mock.patch(
+                "marten_runtime.tools.builtins.time_tool.datetime"
+            ) as mocked_datetime:
+                mocked_datetime.now.return_value = fixed_now
+                return run_time_tool(payload)
+
+        with (
+            mock.patch("marten_runtime.tools.builtins.time_tool.datetime") as mocked_datetime,
+            mock.patch(
+                "marten_runtime.tools.builtins.time_tool._detect_local_timezone_label",
+                return_value=detected_timezone,
+            ),
+        ):
+            mocked_datetime.now.return_value = fixed_now
+            return run_time_tool(payload)
 
     def test_render_time_tool_text_formats_human_readable_time(self) -> None:
         text = render_time_tool_text(
@@ -34,7 +65,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
         self.assertEqual(text, "现在是北京时间 2026年4月8日 10:29")
 
     def test_runtime_tool_returns_compact_user_readable_context_status(self) -> None:
-        runtime, history = build_scripted_runtime_loop()
+        runtime, history = self._build_scripted_runtime_loop()
         run = history.start(
             session_id="sess_runtime",
             trace_id="trace_runtime",
@@ -89,7 +120,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
     def test_runtime_tool_prefers_actual_usage_and_reports_estimate_source(
         self,
     ) -> None:
-        runtime, history = build_scripted_runtime_loop()
+        runtime, history = self._build_scripted_runtime_loop()
         run = history.start(
             session_id="sess_runtime_usage",
             trace_id="trace_runtime_usage",
@@ -180,7 +211,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
     def test_runtime_tool_explicitly_says_actual_peak_is_unavailable_when_no_model_call_happened(
         self,
     ) -> None:
-        runtime, history = build_scripted_runtime_loop()
+        runtime, history = self._build_scripted_runtime_loop()
         run = history.start(
             session_id="sess_runtime_no_model_call",
             trace_id="trace_runtime_no_model_call",
@@ -220,7 +251,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
     def test_runtime_tool_uses_previous_run_actual_peak_for_direct_runtime_query(
         self,
     ) -> None:
-        runtime, history = build_scripted_runtime_loop()
+        runtime, history = self._build_scripted_runtime_loop()
         previous_run = history.start(
             session_id="sess_runtime_prev_peak",
             trace_id="trace_runtime_prev_peak_prev",
@@ -278,7 +309,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
     def test_runtime_tool_skips_intermediate_no_llm_runs_when_finding_last_actual_peak(
         self,
     ) -> None:
-        runtime, history = build_scripted_runtime_loop()
+        runtime, history = self._build_scripted_runtime_loop()
 
         mcp_run = history.start(
             session_id="sess_runtime_last_non_null",
@@ -346,7 +377,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
     def test_runtime_tool_reports_current_run_peak_estimate_when_followup_is_heavier(
         self,
     ) -> None:
-        runtime, history = build_scripted_runtime_loop()
+        runtime, history = self._build_scripted_runtime_loop()
         run = history.start(
             session_id="sess_runtime_peak",
             trace_id="trace_runtime_peak",
@@ -393,7 +424,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
     def test_runtime_tool_summary_calls_out_tool_result_injection_as_peak_source(
         self,
     ) -> None:
-        runtime, history = build_scripted_runtime_loop()
+        runtime, history = self._build_scripted_runtime_loop()
         run = history.start(
             session_id="sess_runtime_peak_summary",
             trace_id="trace_runtime_peak_summary",
@@ -477,7 +508,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
     def test_runtime_tool_summary_does_not_blame_tool_injection_when_peak_matches_initial(
         self,
     ) -> None:
-        runtime, history = build_scripted_runtime_loop()
+        runtime, history = self._build_scripted_runtime_loop()
         run = history.start(
             session_id="sess_runtime_initial_summary",
             trace_id="trace_runtime_initial_summary",
@@ -528,41 +559,28 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
         self.assertEqual(result["timezone"], "UTC")
         self.assertIn("iso_time", result)
 
-    def test_time_tool_accepts_tz_alias_and_returns_requested_timezone_time(
-        self,
-    ) -> None:
-        fixed_now = datetime(2026, 4, 1, 5, 47, 22, tzinfo=timezone.utc)
+    def test_time_tool_uses_requested_or_detected_timezone(self) -> None:
+        cases = [
+            {
+                "payload": {"tz": "Asia/Shanghai"},
+                "detected_timezone": None,
+                "expected_timezone": "Asia/Shanghai",
+            },
+            {
+                "payload": {},
+                "detected_timezone": "Asia/Shanghai",
+                "expected_timezone": "Asia/Shanghai",
+            },
+        ]
 
-        with mock.patch(
-            "marten_runtime.tools.builtins.time_tool.datetime"
-        ) as mocked_datetime:
-            mocked_datetime.now.return_value = fixed_now
-
-            result = run_time_tool({"tz": "Asia/Shanghai"})
-
-        self.assertEqual(result["timezone"], "Asia/Shanghai")
-        self.assertEqual(result["iso_time"], "2026-04-01T13:47:22+08:00")
-
-    def test_time_tool_defaults_to_detected_local_timezone_when_payload_empty(
-        self,
-    ) -> None:
-        fixed_now = datetime(2026, 4, 1, 5, 47, 22, tzinfo=timezone.utc)
-
-        with (
-            mock.patch(
-                "marten_runtime.tools.builtins.time_tool.datetime"
-            ) as mocked_datetime,
-            mock.patch(
-                "marten_runtime.tools.builtins.time_tool._detect_local_timezone_label",
-                return_value="Asia/Shanghai",
-            ),
-        ):
-            mocked_datetime.now.return_value = fixed_now
-
-            result = run_time_tool({})
-
-        self.assertEqual(result["timezone"], "Asia/Shanghai")
-        self.assertEqual(result["iso_time"], "2026-04-01T13:47:22+08:00")
+        for case in cases:
+            with self.subTest(payload=case["payload"]):
+                result = self._fixed_time_result(
+                    case["payload"],
+                    detected_timezone=case["detected_timezone"],
+                )
+                self.assertEqual(result["timezone"], case["expected_timezone"])
+                self.assertEqual(result["iso_time"], "2026-04-01T13:47:22+08:00")
 
     def test_detect_local_timezone_label_prefers_zoneinfo_name(self) -> None:
         with (

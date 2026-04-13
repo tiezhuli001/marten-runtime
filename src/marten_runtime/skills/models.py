@@ -62,11 +62,6 @@ class SkillHead(BaseModel):
     source_path: str
 
 
-def parse_skill_markdown(body: str) -> tuple[dict[str, object], str]:
-    front_matter, content = _split_front_matter(body)
-    return _parse_front_matter_lines(front_matter), content
-
-
 def parse_skill_head_markdown(body: str) -> dict[str, object]:
     front_matter, _ = _split_front_matter(body)
     return _parse_front_matter_lines(front_matter)

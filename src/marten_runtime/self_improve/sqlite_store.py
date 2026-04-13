@@ -10,12 +10,12 @@ from marten_runtime.self_improve.models import (
     RecoveryEvent,
     SystemLesson,
 )
+from marten_runtime.sqlite_support import connect_sqlite, prepare_sqlite_path
 
 
 class SQLiteSelfImproveStore:
     def __init__(self, path: str | Path) -> None:
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = prepare_sqlite_path(path)
         self._init_schema()
 
     def record_failure(self, event: FailureEvent) -> None:
@@ -268,7 +268,7 @@ class SQLiteSelfImproveStore:
         return self._row_to_lesson(row)
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.path)
+        return connect_sqlite(self.path)
 
     def _init_schema(self) -> None:
         with self._connect() as conn:

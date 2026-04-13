@@ -97,7 +97,7 @@ flowchart LR
 
 - GitHub 热榜已收敛到 repo-local MCP sidecar：`github_trending.trending_repositories`
 - 已从 active 代码、测试、automation 数据中移除 legacy `github_hot_repos_digest` skill 面
-- 历史 automation 记录会在 store 边界自动迁移到 canonical `github_trending_digest`
+- 历史 `github_hot_repos_digest` automation 记录已不再属于当前受支持的运行时输入；当前受支持 automation 数据均已 canonical 到 `github_trending_digest`
 - GitHub 热榜 Feishu 卡片现在会明确说明“按 GitHub Trending 页面顺序”，且不会重复展示抓取时间
 - 自动任务 `automation` family tool 统一承载 `register/list/detail/update/delete/pause/resume`
 - 保持 `LLM + agent + skill + MCP first`，没有为 GitHub 热榜增加 runtime 业务特判

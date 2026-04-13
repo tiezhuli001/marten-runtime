@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from marten_runtime.automation.models import AutomationJob
 from marten_runtime.automation.sqlite_store import SQLiteAutomationStore
 from marten_runtime.data_access.adapter import DomainDataAdapter
 from marten_runtime.self_improve.models import LessonCandidate
@@ -65,6 +66,70 @@ class DomainDataAdapterTests(unittest.TestCase):
                 adapter.list_items("system_lesson", filters={"agent_id": "assistant"}, limit=10)
             with self.assertRaises(KeyError):
                 adapter.get_item("unknown_entity", item_id="whatever")
+
+    def test_adapter_filters_automation_by_canonicalized_skill_filter_without_recanonicalizing_items(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            adapter = self._build_adapter(tmpdir)
+            adapter.create_item(
+                "automation",
+                values={
+                    "automation_id": "daily_digest",
+                    "name": "Daily Digest",
+                    "app_id": "assistant",
+                    "agent_id": "assistant",
+                    "prompt_template": "Summarize hot repos",
+                    "schedule_kind": "daily",
+                    "schedule_expr": "09:00",
+                    "timezone": "Asia/Shanghai",
+                    "session_target": "chat-1",
+                    "delivery_channel": "feishu",
+                    "delivery_target": "oc_xxx",
+                    "skill_id": "github_trending_digest",
+                    "enabled": True,
+                    "internal": False,
+                },
+            )
+
+            listed = adapter.list_items(
+                "automation",
+                filters={"skill_id": "  github_trending_digest  "},
+                limit=10,
+            )
+
+        self.assertEqual([item["automation_id"] for item in listed], ["daily_digest"])
+
+    def test_adapter_hides_internal_automation_from_get_update_and_delete(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            adapter = self._build_adapter(tmpdir)
+            adapter.automation_store.save(
+                AutomationJob(
+                    automation_id="self_improve_internal",
+                    name="Internal Self Improve",
+                    app_id="assistant",
+                    agent_id="assistant",
+                    prompt_template="Summarize failures.",
+                    schedule_kind="daily",
+                    schedule_expr="03:00",
+                    timezone="UTC",
+                    session_target="isolated",
+                    delivery_channel="http",
+                    delivery_target="internal",
+                    skill_id="self_improve",
+                    enabled=True,
+                    internal=True,
+                )
+            )
+
+            with self.assertRaises(KeyError):
+                adapter.get_item("automation", item_id="self_improve_internal")
+            with self.assertRaises(KeyError):
+                adapter.update_item(
+                    "automation",
+                    item_id="self_improve_internal",
+                    values={"enabled": False},
+                )
+            with self.assertRaises(KeyError):
+                adapter.delete_item("automation", item_id="self_improve_internal")
 
     def test_adapter_supports_automation_crud(self) -> None:
         with TemporaryDirectory() as tmpdir:

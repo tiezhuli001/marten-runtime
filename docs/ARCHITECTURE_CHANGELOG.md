@@ -24,6 +24,49 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
 
 ## Entries
 
+### 2026-04-13: Fresh Real Feishu Inbound Evidence Was Recovered On The Live Runtime
+
+- Change:
+  - the live proof boundary for the websocket-first Feishu path is now closed again on the current live runtime
+  - a fresh real human Feishu inbound message now correlates cleanly through:
+    - `GET /diagnostics/runtime`
+    - `last_run_id`
+    - `GET /diagnostics/run/{run_id}`
+    - `trace_id`
+    - `GET /diagnostics/trace/{trace_id}`
+  - the latest captured fresh run is:
+    - `run_ad7f60be`
+    - `trace_6b3440ae`
+    - `last_event_at = 2026-04-13T02:27:18.568564+00:00`
+  - the fresh run proved the current live channel still executes a real Feishu-triggered builtin tool turn end-to-end:
+    - tool: `automation`
+    - action: `list`
+    - result count: `5`
+    - final delivery status: `final`
+- Why:
+  - the earlier blocker was no longer websocket lock ownership; it had narrowed to the absence of one fresh human-originated inbound message during verification
+  - once a new real Feishu message arrived, the repo needed a durable architecture log entry showing that the live runtime correlation chain still works on the current source baseline
+- Source of truth:
+  - `docs/LIVE_VERIFICATION_CHECKLIST.md`
+  - runtime diagnostics for the captured run / trace pair:
+    - `run_ad7f60be`
+    - `trace_6b3440ae`
+- Verification:
+  - runtime diagnostics:
+    - `GET /diagnostics/runtime`
+      - pass, `channels.feishu.websocket.last_run_id = run_ad7f60be`
+      - pass, `channels.feishu.websocket.last_runtime_trace_id = trace_6b3440ae`
+  - run diagnostics:
+    - `GET /diagnostics/run/run_ad7f60be`
+      - pass, `status = succeeded`, `llm_request_count = 1`, tool `automation.list`, `delivery_status = final`
+  - trace diagnostics:
+    - `GET /diagnostics/trace/trace_6b3440ae`
+      - pass, trace correlation succeeded for the fresh live run
+  - Feishu-side visible proof:
+    - real screenshots show the bot returned both:
+      - a GitHub latest-commit card reply
+      - a current-automation-list card reply
+
 ### 2026-04-11: Repo Slimming Shifted Test Surface Into Shards, Archived One More Branch Doc, And Started Core Seam Extraction
 
 - Change:
@@ -78,10 +121,7 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
   - duplicate family-tool registration was unnecessary bootstrap noise and was also stripping richer parameter schemas off the family tools
   - the fast-path inventory remained useful as branch-history evidence, but no longer deserved to stay on the active docs surface
 - Source of truth:
-  - `docs/superpowers/plans/2026-04-11-repo-slimming-master-plan.md`
-  - `docs/superpowers/plans/2026-04-11-core-module-slimming-plan.md`
-  - `docs/superpowers/plans/2026-04-11-test-suite-slimming-plan.md`
-  - `docs/superpowers/plans/2026-04-11-documentation-slimming-plan.md`
+  - `./archive/plans/2026-04-11-repo-slimming-summary.md`
   - `src/marten_runtime/runtime/tool_outcome_flow.py`
   - `src/marten_runtime/interfaces/http/bootstrap_runtime.py`
   - `src/marten_runtime/apps/runtime_defaults.py`
@@ -107,11 +147,10 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
     - builtin runtime: final reply succeeded and used `runtime`
     - GitHub MCP `get_me`: final reply succeeded and used `mcp`
     - skill load `example_time`: final reply succeeded and used `skill`
-    - artifacts:
-      - `/Users/litiezhu/workspace/github/marten-runtime/.logs/local_feishu_simulation_20260411.json`
-      - `/Users/litiezhu/workspace/github/marten-runtime/.logs/local_feishu_simulation_20260411_port8002.json`
-      - `/Users/litiezhu/workspace/github/marten-runtime/.logs/local_feishu_simulation_20260411_port8003.json`
-      - `/Users/litiezhu/workspace/github/marten-runtime/.logs/local_feishu_simulation_20260411_port8004.json`
+    - durable proof now lives in:
+      - the verification summary above
+      - the matching live-checklist state in `docs/LIVE_VERIFICATION_CHECKLIST.md`
+      - repo tests that cover the same `/messages` path
 
 ### 2026-04-10: Automation Family Direct Render Was Unified Behind One Thin Follow-Up Seam
 
@@ -204,20 +243,13 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
     - `PYTHONPATH=src python -m unittest -v tests.test_runtime_loop tests.test_gateway tests.test_feishu tests.test_runtime_mcp`
       - pass, `170` tests green
   - live pressure verification:
-    - `/Users/litiezhu/workspace/github/marten-runtime/.logs/ultra_mix_live_20260408_225729.json`
-      - 16-turn mixed soak, all succeeded
-    - `/Users/litiezhu/workspace/github/marten-runtime/.logs/extreme_long_live_20260408_225749.json`
-      - 20-turn mixed soak, all succeeded
-    - `/Users/litiezhu/workspace/github/marten-runtime/.logs/extreme_long_live_20260408_225949.json`
-      - second 20-turn mixed soak, all succeeded
-    - `/Users/litiezhu/workspace/github/marten-runtime/.logs/ultra_queue_live_20260408_225853.json`
-      - captured the pre-fix `TOOL_NOT_ALLOWED after successful MCP` edge case
-    - `/Users/litiezhu/workspace/github/marten-runtime/.logs/ultra_queue_recheck_live_20260408_230832.json`
-      - same-conversation queue recheck after the fix, all 10 requests succeeded
-    - `/Users/litiezhu/workspace/github/marten-runtime/.logs/extreme_queue_live_20260408_225741.json`
-      - extreme queue replay succeeded
-    - `/Users/litiezhu/workspace/github/marten-runtime/.logs/extreme_queue_live_20260408_230114.json`
-      - second extreme queue replay succeeded
+    - mixed soak run: 16 turns, all succeeded
+    - first extreme long soak: 20 turns, all succeeded
+    - second extreme long soak: 20 turns, all succeeded
+    - pre-fix queue pressure run captured the `TOOL_NOT_ALLOWED after successful MCP` edge case
+    - post-fix same-conversation queue recheck: all 10 requests succeeded
+    - first extreme queue replay succeeded
+    - second extreme queue replay succeeded
 
 ### 2026-04-08: Explicit GitHub MCP Repo Queries Now Use Thin Direct MCP Calls, And Queue Wait Is Bound To Real Runs
 
