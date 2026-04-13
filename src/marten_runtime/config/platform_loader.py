@@ -1,5 +1,4 @@
 import tomllib
-from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel
 
@@ -54,9 +53,3 @@ def load_platform_config(path: str, env: dict[str, str] | None = None) -> Platfo
         }
     )
 
-
-def build_public_url(base_url: str | None, path: str) -> str | None:
-    if not base_url:
-        return None
-    split = urlsplit(base_url.rstrip("/"))
-    return urlunsplit((split.scheme, split.netloc, path, "", ""))

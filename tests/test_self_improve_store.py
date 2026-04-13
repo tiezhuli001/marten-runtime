@@ -14,8 +14,9 @@ from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
 class SQLiteSelfImproveStoreTests(unittest.TestCase):
     def test_save_and_list_failure_and_recovery_events(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "self_improve.sqlite3"
+            db_path = Path(tmpdir) / "nested" / "self_improve.sqlite3"
             store = SQLiteSelfImproveStore(db_path)
+            self.assertTrue(db_path.parent.exists())
             store.record_failure(
                 FailureEvent(
                     failure_id="fail_1",

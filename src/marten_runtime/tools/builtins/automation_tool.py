@@ -1,26 +1,17 @@
 from contextvars import ContextVar, Token
-import re
 
-from marten_runtime.automation.skill_ids import canonicalize_automation_skill_id
 from marten_runtime.automation.store import AutomationStore
 from marten_runtime.data_access.adapter import DomainDataAdapter
+from marten_runtime.tools.builtins.automation_tool_support import (
+    REGISTRATION_REQUIRED_FIELDS,
+    build_list_filters,
+    build_registration_values,
+    extract_update_values,
+    normalize_registration_payload,
+)
 from marten_runtime.tools.builtins.automation_view import (
-    normalize_schedule_input,
     present_automation,
     sort_presented_automations,
-)
-
-
-REQUIRED_FIELDS = (
-    "automation_id",
-    "app_id",
-    "agent_id",
-    "schedule_kind",
-    "schedule_expr",
-    "timezone",
-    "delivery_channel",
-    "delivery_target",
-    "skill_id",
 )
 
 _REGISTRATION_CONTEXT: ContextVar[dict[str, str] | None] = ContextVar(
@@ -42,12 +33,9 @@ def run_delete_automation_tool(payload: dict, adapter: DomainDataAdapter) -> dic
     if not automation_id:
         raise ValueError("automation_id is required")
     try:
-        item = adapter.get_item("automation", item_id=automation_id)
+        deleted = adapter.delete_item("automation", item_id=automation_id)
     except KeyError:
         return {"ok": False, "automation_id": automation_id}
-    if bool(item.get("internal", False)):
-        return {"ok": False, "automation_id": automation_id}
-    deleted = adapter.delete_item("automation", item_id=automation_id)
     return {"ok": bool(deleted["ok"]), "automation_id": automation_id}
 
 
@@ -59,22 +47,11 @@ def run_get_automation_detail_tool(
     if not automation_id:
         raise ValueError("automation_id is required")
     item = adapter.get_item("automation", item_id=automation_id)
-    if bool(item.get("internal", False)):
-        raise KeyError(automation_id)
     return {"ok": True, "automation": item}
 
 
 def run_list_automations_tool(payload: dict, adapter: DomainDataAdapter) -> dict:
-    channel = str(payload.get("delivery_channel", "")).strip()
-    target = str(payload.get("delivery_target", "")).strip()
-    include_disabled = bool(payload.get("include_disabled", False))
-    filters: dict[str, object] = {}
-    if channel:
-        filters["delivery_channel"] = channel
-    if target:
-        filters["delivery_target"] = target
-    if include_disabled:
-        filters["include_disabled"] = True
+    filters = build_list_filters(payload)
     items = adapter.list_items("automation", filters=filters, limit=100)
     presented = sort_presented_automations([present_automation(item) for item in items])
     return {"ok": True, "items": presented, "count": len(presented)}
@@ -84,9 +61,6 @@ def run_pause_automation_tool(payload: dict, adapter: DomainDataAdapter) -> dict
     automation_id = str(payload.get("automation_id", "")).strip()
     if not automation_id:
         raise ValueError("automation_id is required")
-    item = adapter.get_item("automation", item_id=automation_id)
-    if bool(item.get("internal", False)):
-        raise KeyError(automation_id)
     updated = adapter.update_item(
         "automation",
         item_id=automation_id,
@@ -100,9 +74,11 @@ def run_register_automation_tool(
     store: AutomationStore,
     adapter: DomainDataAdapter | None = None,
 ) -> dict:
-    normalized = _normalize_payload(payload, _REGISTRATION_CONTEXT.get() or {})
+    normalized = normalize_registration_payload(payload, _REGISTRATION_CONTEXT.get() or {})
     missing = [
-        field for field in REQUIRED_FIELDS if not str(normalized.get(field, "")).strip()
+        field
+        for field in REGISTRATION_REQUIRED_FIELDS
+        if not str(normalized.get(field, "")).strip()
     ]
     if missing:
         return {
@@ -111,21 +87,7 @@ def run_register_automation_tool(
             "missing_fields": missing,
         }
 
-    values = {
-        "automation_id": str(normalized["automation_id"]),
-        "name": str(normalized.get("name", normalized["automation_id"])),
-        "app_id": str(normalized["app_id"]),
-        "agent_id": str(normalized["agent_id"]),
-        "prompt_template": str(normalized.get("prompt_template", "")),
-        "schedule_kind": str(normalized["schedule_kind"]),
-        "schedule_expr": str(normalized["schedule_expr"]),
-        "timezone": str(normalized["timezone"]),
-        "session_target": str(normalized.get("session_target", "isolated")),
-        "delivery_channel": str(normalized["delivery_channel"]),
-        "delivery_target": str(normalized["delivery_target"]),
-        "skill_id": str(normalized["skill_id"]),
-        "enabled": bool(normalized.get("enabled", True)),
-    }
+    values = build_registration_values(normalized)
     existing = store.find_equivalent_registration(values)
     if existing is not None:
         job = existing
@@ -149,79 +111,10 @@ def run_register_automation_tool(
         "semantic_fingerprint": job.semantic_fingerprint,
     }
 
-
-def _normalize_payload(payload: dict, context: dict[str, str]) -> dict[str, object]:
-    normalized = dict(payload)
-    if not str(normalized.get("name", "")).strip():
-        normalized["name"] = str(payload.get("task_name", "")).strip()
-    if not str(normalized.get("skill_id", "")).strip():
-        normalized["skill_id"] = str(payload.get("skill", "")).strip()
-    if str(normalized.get("skill_id", "")).strip():
-        normalized["skill_id"] = canonicalize_automation_skill_id(
-            str(normalized["skill_id"])
-        )
-    normalized["app_id"] = _resolve_alias(
-        payload.get("app_id"),
-        context.get("app_id", ""),
-        {"default_app", "current_app"},
-    )
-    normalized["agent_id"] = _resolve_alias(
-        payload.get("agent_id"),
-        context.get("agent_id", ""),
-        {"default_agent", "current_agent"},
-    )
-    normalized["delivery_channel"] = _resolve_alias(
-        payload.get("delivery_channel"),
-        context.get("channel_id", ""),
-        {"current_channel", "same_channel"},
-    )
-    normalized["delivery_target"] = _resolve_alias(
-        payload.get("delivery_target"),
-        context.get("conversation_id", ""),
-        {"current_channel", "current_chat", "current_conversation"},
-    )
-    schedule_kind, schedule_expr = normalize_schedule_input(
-        str(payload.get("schedule_kind", "")),
-        str(payload.get("schedule_expr", "")),
-        trigger_time=str(payload.get("trigger_time", "")),
-    )
-    normalized["schedule_kind"] = schedule_kind
-    normalized["schedule_expr"] = schedule_expr
-    if not str(normalized.get("automation_id", "")).strip():
-        normalized["automation_id"] = _build_default_automation_id(normalized)
-    return normalized
-
-
-def _resolve_alias(value: object, fallback: str, aliases: set[str]) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return fallback
-    if text.lower() in aliases:
-        return fallback
-    return text
-
-
-def _build_default_automation_id(normalized: dict[str, object]) -> str:
-    skill_id = _slugify(str(normalized.get("skill_id", "")).strip() or "automation")
-    schedule_expr = str(normalized.get("schedule_expr", "")).strip()
-    hhmm = "".join(ch for ch in schedule_expr if ch.isdigit())[:4]
-    if hhmm:
-        return f"{skill_id}_{hhmm}"
-    return skill_id
-
-
-def _slugify(text: str) -> str:
-    collapsed = re.sub(r"[^a-zA-Z0-9]+", "_", text).strip("_").lower()
-    return collapsed or "automation"
-
-
 def run_resume_automation_tool(payload: dict, adapter: DomainDataAdapter) -> dict:
     automation_id = str(payload.get("automation_id", "")).strip()
     if not automation_id:
         raise ValueError("automation_id is required")
-    item = adapter.get_item("automation", item_id=automation_id)
-    if bool(item.get("internal", False)):
-        raise KeyError(automation_id)
     updated = adapter.update_item(
         "automation",
         item_id=automation_id,
@@ -234,28 +127,7 @@ def run_update_automation_tool(payload: dict, adapter: DomainDataAdapter) -> dic
     automation_id = str(payload.get("automation_id", "")).strip()
     if not automation_id:
         raise ValueError("automation_id is required")
-    existing = adapter.get_item("automation", item_id=automation_id)
-    if bool(existing.get("internal", False)):
-        raise KeyError(automation_id)
-    updates = {
-        key: value
-        for key, value in payload.items()
-        if key
-        in {
-            "name",
-            "prompt_template",
-            "schedule_kind",
-            "schedule_expr",
-            "timezone",
-            "session_target",
-            "delivery_channel",
-            "delivery_target",
-            "skill_id",
-        }
-        and value is not None
-    }
-    if "skill_id" in updates:
-        updates["skill_id"] = canonicalize_automation_skill_id(str(updates["skill_id"]))
+    updates = extract_update_values(payload)
     item = adapter.update_item("automation", item_id=automation_id, values=updates)
     return {"ok": True, "automation": item}
 

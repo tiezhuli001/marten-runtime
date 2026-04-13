@@ -4,31 +4,7 @@ import re
 from collections.abc import Mapping
 
 from marten_runtime.automation.skill_ids import display_name_for_automation_skill_id
-
-
-def normalize_schedule_input(
-    schedule_kind: str,
-    schedule_expr: str,
-    *,
-    trigger_time: str = "",
-) -> tuple[str, str]:
-    kind = schedule_kind.strip().lower()
-    expr = schedule_expr.strip()
-    trigger = trigger_time.strip()
-    if not expr and re.fullmatch(r"\d{1,2}:\d{2}", trigger):
-        hour, minute = [int(part) for part in trigger.split(":", 1)]
-        return "daily", f"{hour:02d}:{minute:02d}"
-    daily_cron = re.fullmatch(r"(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+\*", expr)
-    if daily_cron is not None and kind in {"", "cron", "daily"}:
-        minute = int(daily_cron.group(1))
-        hour = int(daily_cron.group(2))
-        return "daily", f"{hour:02d}:{minute:02d}"
-    daily_cron_with_seconds = re.fullmatch(r"(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+\*", expr)
-    if daily_cron_with_seconds is not None and kind in {"", "cron", "daily"}:
-        minute = int(daily_cron_with_seconds.group(2))
-        hour = int(daily_cron_with_seconds.group(3))
-        return "daily", f"{hour:02d}:{minute:02d}"
-    return kind or "daily", expr
+from marten_runtime.tools.builtins.automation_tool_support import normalize_schedule_input
 
 
 def build_schedule_text(schedule_kind: str, schedule_expr: str) -> str:

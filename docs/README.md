@@ -34,6 +34,7 @@ This directory contains the public design and operations notes for `marten-runti
 - historical design/process docs are secondary; summarize durable truth into `ARCHITECTURE_CHANGELOG.md` before deciding whether a historical original still deserves archive space
 - archive should stay intentionally small and should not become a graveyard for every stage plan or branch execution note
 - the 2026-04-09 next-branch evolution design/execution/blueprint docs now live under `docs/archive/branch-evolution/` and are no longer part of the default reading path
+- the 2026-04-11 repo slimming work is now summarized in `docs/archive/plans/2026-04-11-repo-slimming-summary.md`; durable conclusions live in `docs/ARCHITECTURE_CHANGELOG.md` and the module review docs under `docs/review/`
 - tracked `STATUS.md` is no longer part of the repository source of truth; local continuity can still exist in an ignored local `STATUS.md`
 
 ## Current State

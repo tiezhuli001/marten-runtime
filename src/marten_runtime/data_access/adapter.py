@@ -39,11 +39,7 @@ class DomainDataAdapter:
                 items = [item for item in items if item.delivery_target == expected]
             if "skill_id" in filters:
                 expected = canonicalize_automation_skill_id(str(filters["skill_id"]))
-                items = [
-                    item
-                    for item in items
-                    if canonicalize_automation_skill_id(item.skill_id) == expected
-                ]
+                items = [item for item in items if item.skill_id == expected]
             if "enabled" in filters:
                 expected = bool(filters["enabled"])
                 items = [item for item in items if item.enabled is expected]
@@ -55,7 +51,7 @@ class DomainDataAdapter:
         if entity == "lesson_candidate":
             return self.self_improve_store.get_candidate(item_id).model_dump(mode="json")
         if entity == "automation":
-            return self._require_automation_store().get(item_id).model_dump(mode="json")
+            return self._get_public_automation(item_id).model_dump(mode="json")
         raise KeyError(entity)
 
     def create_item(self, entity: str, *, values: dict) -> dict:
@@ -71,6 +67,7 @@ class DomainDataAdapter:
         spec = self._get_spec(entity)
         self._validate_values(spec, values, operation="update")
         if entity == "automation":
+            self._get_public_automation(item_id)
             updated = self._require_automation_store().update(item_id, values)
             return updated.model_dump(mode="json")
         raise KeyError(entity)
@@ -83,6 +80,7 @@ class DomainDataAdapter:
             deleted = self.self_improve_store.delete_candidate(item_id)
             return {"ok": deleted, spec.item_id_field: item_id}
         if entity == "automation":
+            self._get_public_automation(item_id)
             deleted = self._require_automation_store().delete(item_id)
             return {"ok": deleted, spec.item_id_field: item_id}
         raise KeyError(entity)
@@ -105,6 +103,12 @@ class DomainDataAdapter:
         for key in values:
             if key not in allowed_fields:
                 raise KeyError(key)
+
+    def _get_public_automation(self, item_id: str):
+        item = self._require_automation_store().get(item_id)
+        if item.internal:
+            raise KeyError(item_id)
+        return item
 
     def _require_automation_store(self) -> AutomationStore:
         if self.automation_store is None:

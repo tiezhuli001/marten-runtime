@@ -31,6 +31,20 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
     def _wait_for_port(self, port: int, timeout_s: float = 5.0) -> None:
         wait_for_port(port, timeout_s)
 
+    def _build_stdio_echo_server(self, *, fixture: Path | None = None) -> MCPServerSpec:
+        kwargs = {
+            "server_id": "stdio-echo",
+            "transport": "stdio",
+            "backend_id": "stdio-test",
+            "command": sys.executable,
+            "args": [str(fixture)] if fixture else ["-c", "print('unused')"],
+        }
+        if fixture is not None:
+            kwargs["timeout_ms"] = 5_000
+        return MCPServerSpec(
+            **kwargs,
+        )
+
     def test_client_can_call_tool_inside_asyncio_thread(self) -> None:
         class AsyncSafeClient(MCPClient):
             @asynccontextmanager
@@ -53,13 +67,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
 
                 yield FakeSession()
 
-        server = MCPServerSpec(
-            server_id="stdio-echo",
-            transport="stdio",
-            backend_id="stdio-test",
-            command=sys.executable,
-            args=["-c", "print('unused')"],
-        )
+        server = self._build_stdio_echo_server()
         client = AsyncSafeClient([server])
 
         async def run_call() -> dict:
@@ -85,13 +93,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
                 yield FakeSession()
                 raise BaseExceptionGroup("shutdown", [anyio.BrokenResourceError()])
 
-        server = MCPServerSpec(
-            server_id="stdio-echo",
-            transport="stdio",
-            backend_id="stdio-test",
-            command=sys.executable,
-            args=["-c", "print('unused')"],
-        )
+        server = self._build_stdio_echo_server()
         client = BrokenOnExitClient([server])
 
         tools = client.list_tools(server.server_id)
@@ -121,13 +123,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
                 yield FakeSession()
                 raise BaseExceptionGroup("shutdown", [anyio.BrokenResourceError()])
 
-        server = MCPServerSpec(
-            server_id="stdio-echo",
-            transport="stdio",
-            backend_id="stdio-test",
-            command=sys.executable,
-            args=["-c", "print('unused')"],
-        )
+        server = self._build_stdio_echo_server()
         client = BrokenOnExitClient([server])
 
         result = client.call_tool(server.server_id, "echo", {"query": "release notes"})
@@ -137,14 +133,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
 
     def test_discovery_can_run_inside_asyncio_thread(self) -> None:
         fixture = Path(__file__).resolve().parents[1] / "fixtures" / "mcp_stdio_server.py"
-        server = MCPServerSpec(
-            server_id="stdio-echo",
-            transport="stdio",
-            backend_id="stdio-test",
-            command=sys.executable,
-            args=[str(fixture)],
-            timeout_ms=5_000,
-        )
+        server = self._build_stdio_echo_server(fixture=fixture)
         client = MCPClient([server])
 
         async def run_discovery() -> dict[str, dict[str, object]]:
@@ -157,14 +146,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
 
     def test_runtime_can_call_real_stdio_mcp_tool_without_static_tool_list(self) -> None:
         fixture = Path(__file__).resolve().parents[1] / "fixtures" / "mcp_stdio_server.py"
-        server = MCPServerSpec(
-            server_id="stdio-echo",
-            transport="stdio",
-            backend_id="stdio-test",
-            command=sys.executable,
-            args=[str(fixture)],
-            timeout_ms=5_000,
-        )
+        server = self._build_stdio_echo_server(fixture=fixture)
         client = MCPClient([server])
         discovery = discover_mcp_tools([server], client)
         tools = ToolRegistry()

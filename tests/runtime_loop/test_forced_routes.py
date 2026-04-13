@@ -272,45 +272,6 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
         self.assertEqual(run.llm_request_count, 1)
         self.assertEqual(run.tool_calls, [])
 
-    def test_runtime_returns_provider_transport_error_for_explicit_github_404_commit_query_after_first_llm_provider_failure(
-        self,
-    ) -> None:
-        tools = ToolRegistry()
-        history = InMemoryRunHistory()
-        runtime = RuntimeLoop(FailingLLMClient(), tools, history)
-        tools.register(
-            "mcp",
-            lambda payload: {
-                "action": "call",
-                "server_id": payload["server_id"],
-                "tool_name": payload["tool_name"],
-                "arguments": payload["arguments"],
-                "result_text": "failed to list commits: : GET https://api.github.com/repos/definitely-not-found-user/definitely-not-found-repo/commits?page=1&per_page=1: 404 Not Found []",
-                "ok": False,
-                "is_error": True,
-            },
-        )
-        agent = AgentSpec(
-            agent_id="assistant",
-            role="general_assistant",
-            app_id="example_assistant",
-            allowed_tools=["mcp"],
-        )
-
-        events = runtime.run(
-            session_id="sess_fail_commit_404_recover",
-            message="GitHub - definitely-not-found-user/definitely-not-found-repo 这个github仓库最近一次提交是什么时候",
-            trace_id="trace_fail_commit_404_recover",
-            agent=agent,
-        )
-
-        self.assertEqual([event.event_type for event in events], ["progress", "error"])
-        self.assertEqual(events[-1].payload["code"], "PROVIDER_TRANSPORT_ERROR")
-        run = history.get(events[0].run_id)
-        self.assertEqual(run.status, "failed")
-        self.assertEqual(run.llm_request_count, 1)
-        self.assertEqual(run.tool_calls, [])
-
     def test_runtime_returns_provider_auth_error_when_provider_auth_fails_before_any_tool(
         self,
     ) -> None:

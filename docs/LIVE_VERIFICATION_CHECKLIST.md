@@ -32,12 +32,12 @@ Already verified in this repository:
 
 Not yet proven from a real external conversation:
 
-- [ ] a real Feishu user sends an actual DM or `@` mention to the bot
-- [ ] that websocket-native inbound event reaches the running process
-- [ ] the live run calls the intended LLM profile
-- [ ] the live run calls GitHub MCP from that Feishu-triggered turn
-- [ ] the final answer is delivered back into the same Feishu chat
-- [ ] only one final reply is delivered for that one human message
+- [x] a real Feishu user sends an actual DM or `@` mention to the bot
+- [x] that websocket-native inbound event reaches the running process
+- [x] the live run calls the intended LLM profile
+- [x] the live run calls GitHub MCP from that Feishu-triggered turn
+- [x] the final answer is delivered back into the same Feishu chat
+- [x] only one final reply is delivered for that one human message
 
 Already proven from a real external conversation on the self-improve slice:
 
@@ -143,10 +143,10 @@ Use GitHub MCP tool get_me and reply with my GitHub login and public repo count 
 
 Evidence to capture:
 
-- [ ] Feishu-side screenshot or visible reply text
-- [ ] `/diagnostics/runtime` output during the run
-- [ ] `/diagnostics/trace/{trace_id}` for the inbound event
-- [ ] `/diagnostics/run/{run_id}` for the final run
+- [x] Feishu-side screenshot or visible reply text
+- [x] `/diagnostics/runtime` output during the run
+- [x] `/diagnostics/trace/{trace_id}` for the inbound event
+- [x] `/diagnostics/run/{run_id}` for the final run
 
 Trace correlation note:
 
@@ -187,12 +187,12 @@ The remaining work for a true live proof is environmental:
 
 This checklist is complete when all of these are true:
 
-- [ ] a real Feishu message reaches the runtime
-- [ ] that run uses the real LLM
-- [ ] that run uses GitHub MCP successfully
-- [ ] the final answer is delivered back to Feishu
-- [ ] the bot replies exactly once for that one human message
-- [ ] the result is recorded in `docs/ARCHITECTURE_CHANGELOG.md`
+- [x] a real Feishu message reaches the runtime
+- [x] that run uses the real LLM
+- [x] that run uses GitHub MCP successfully
+- [x] the final answer is delivered back to Feishu
+- [x] the bot replies exactly once for that one human message
+- [x] the result is recorded in `docs/ARCHITECTURE_CHANGELOG.md`
 
 For self-improve live inspection, completion additionally means:
 

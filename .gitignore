@@ -56,3 +56,6 @@ data/
 # Local continuity only
 STATUS.md
 apps/example_assistant/SYSTEM_LESSONS.md
+.gitnexus
+docs/review/
+.claude/

@@ -31,6 +31,7 @@ This directory holds completed plans and one-off audits that remain useful for t
 - `plans/2026-04-09-next-branch-evolution-stage-1-execution-plan.md`
 - `plans/2026-04-09-pre-commit-closure-and-evolution-design.md`
 - `plans/2026-04-09-pre-commit-closure-execution-plan.md`
+- `plans/2026-04-11-repo-slimming-summary.md`
 
 ## Archive Groups
 

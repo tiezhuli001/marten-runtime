@@ -28,6 +28,82 @@ from tests.support.scripted_llm import AuthFailingLLMClient, FailingLLMClient
 
 
 class GatewayContractTests(unittest.TestCase):
+    FAMILY_TOOLS = ["automation", "mcp", "runtime", "self_improve", "skill", "time"]
+
+    def _assert_http_turn_keeps_family_tool_surface(
+        self,
+        *,
+        conversation_id: str,
+        message_id: str,
+        body: str,
+        final_text: str = "ok",
+    ) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        llm = ScriptedLLMClient([LLMReply(final_text=final_text)])
+        runtime.runtime_loop.llm = llm
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                    "body": body,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(llm.requests[0].available_tools, self.FAMILY_TOOLS)
+
+    def _assert_http_provider_auth_error_for_message(
+        self,
+        *,
+        conversation_id: str,
+        message_id: str,
+        body: str,
+    ) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        runtime.runtime_loop.llm = AuthFailingLLMClient()
+        runtime.llm_client_factory.cache_client("default", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_coding", runtime.runtime_loop.llm)
+        runtime.tool_registry.register(
+            "mcp",
+            lambda payload: {
+                "action": "call",
+                "server_id": payload["server_id"],
+                "tool_name": payload["tool_name"],
+                "arguments": payload["arguments"],
+                "result_text": '[{"sha":"abc","commit":{"author":{"date":"2026-04-01T02:24:49Z"},"message":"chore(release): 发布0.3.3版本"}}]',
+                "ok": True,
+                "is_error": False,
+            },
+        )
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                    "body": body,
+                },
+            )
+            run_id = response.json()["events"][-1]["run_id"]
+            run_diag = client.get(f"/diagnostics/run/{run_id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["events"][-1]["event_type"], "error")
+        self.assertEqual(response.json()["events"][-1]["payload"]["code"], "PROVIDER_AUTH_ERROR")
+        self.assertEqual(run_diag.status_code, 200)
+        self.assertEqual(run_diag.json()["status"], "failed")
+        self.assertEqual(run_diag.json()["llm_request_count"], 1)
+        self.assertEqual(run_diag.json()["tool_calls"], [])
 
     def test_http_and_event_contracts_keep_required_fields(self) -> None:
         with TestClient(build_test_app()) as client:
@@ -137,69 +213,29 @@ class GatewayContractTests(unittest.TestCase):
             tool_result["estimated_usage"],
         )
 
-    def test_plain_chat_turn_does_not_expose_full_tool_surface(self) -> None:
-        app = build_test_app()
-        runtime = app.state.runtime
-        llm = ScriptedLLMClient([LLMReply(final_text="你好")])
-        runtime.runtime_loop.llm = llm
+    def test_http_turns_keep_only_family_tool_surface(self) -> None:
+        cases = [
+            {
+                "conversation_id": "plain-chat",
+                "message_id": "plain-1",
+                "body": "你好啊",
+                "final_text": "你好",
+            },
+            {
+                "conversation_id": "github-schedule",
+                "message_id": "github-1",
+                "body": "每天晚上11点25给我推送github热榜",
+            },
+            {
+                "conversation_id": "search-turn",
+                "message_id": "search-1",
+                "body": "search release notes",
+            },
+        ]
 
-        with TestClient(app) as client:
-            response = client.post(
-                "/messages",
-                json={
-                    "channel_id": "http",
-                    "user_id": "demo",
-                    "conversation_id": "plain-chat",
-                    "message_id": "plain-1",
-                    "body": "你好啊",
-                },
-            )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(llm.requests[0].available_tools, ["automation", "mcp", "runtime", "self_improve", "skill", "time"])
-
-    def test_github_schedule_turn_keeps_family_tool_surface(self) -> None:
-        app = build_test_app()
-        runtime = app.state.runtime
-        llm = ScriptedLLMClient([LLMReply(final_text="ok")])
-        runtime.runtime_loop.llm = llm
-
-        with TestClient(app) as client:
-            response = client.post(
-                "/messages",
-                json={
-                    "channel_id": "http",
-                    "user_id": "demo",
-                    "conversation_id": "github-schedule",
-                    "message_id": "github-1",
-                    "body": "每天晚上11点25给我推送github热榜",
-                },
-            )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(llm.requests[0].available_tools, ["automation", "mcp", "runtime", "self_improve", "skill", "time"])
-
-    def test_search_turn_keeps_mcp_family_tool_without_restoring_full_surface(self) -> None:
-        app = build_test_app()
-        runtime = app.state.runtime
-        llm = ScriptedLLMClient([LLMReply(final_text="ok")])
-        runtime.runtime_loop.llm = llm
-
-        with TestClient(app) as client:
-            response = client.post(
-                "/messages",
-                json={
-                    "channel_id": "http",
-                    "user_id": "demo",
-                    "conversation_id": "search-turn",
-                    "message_id": "search-1",
-                    "body": "search release notes",
-                },
-            )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(llm.requests[0].available_tools, ["automation", "mcp", "runtime", "self_improve", "skill", "time"])
-        self.assertNotIn("mock_search", llm.requests[0].available_tools)
+        for case in cases:
+            with self.subTest(body=case["body"]):
+                self._assert_http_turn_keeps_family_tool_surface(**case)
 
     def test_http_messages_return_provider_specific_error_event_instead_of_500_when_llm_fails(self) -> None:
         app = build_test_app()
@@ -298,87 +334,23 @@ class GatewayContractTests(unittest.TestCase):
         self.assertEqual(run_diag.json()["status"], "failed")
         self.assertEqual(run_diag.json()["llm_request_count"], 1)
 
-    def test_http_messages_return_provider_auth_error_for_explicit_github_commit_query_when_provider_auth_fails(self) -> None:
-        app = build_test_app()
-        runtime = app.state.runtime
-        runtime.runtime_loop.llm = AuthFailingLLMClient()
-        runtime.llm_client_factory.cache_client("default", runtime.runtime_loop.llm)
-        runtime.llm_client_factory.cache_client("minimax_coding", runtime.runtime_loop.llm)
-        runtime.tool_registry.register(
-            "mcp",
-            lambda payload: {
-                "action": "call",
-                "server_id": payload["server_id"],
-                "tool_name": payload["tool_name"],
-                "arguments": payload["arguments"],
-                "result_text": '[{"sha":"abc","commit":{"author":{"date":"2026-04-01T02:24:49Z"},"message":"chore(release): 发布0.3.3版本"}}]',
-                "ok": True,
-                "is_error": False,
+    def test_http_messages_return_provider_auth_error_for_explicit_github_commit_queries(self) -> None:
+        cases = [
+            {
+                "conversation_id": "compat-auth-fail-commit",
+                "message_id": "auth-fail-commit-1",
+                "body": "GitHub - CloudWide851/easy-agent 这个github仓库最近一次提交是什么时候",
             },
-        )
-
-        with TestClient(app) as client:
-            response = client.post(
-                "/messages",
-                json={
-                    "channel_id": "http",
-                    "user_id": "demo",
-                    "conversation_id": "compat-auth-fail-commit",
-                    "message_id": "auth-fail-commit-1",
-                    "body": "GitHub - CloudWide851/easy-agent 这个github仓库最近一次提交是什么时候",
-                },
-            )
-            run_id = response.json()["events"][-1]["run_id"]
-            run_diag = client.get(f"/diagnostics/run/{run_id}")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["events"][-1]["event_type"], "error")
-        self.assertEqual(response.json()["events"][-1]["payload"]["code"], "PROVIDER_AUTH_ERROR")
-        self.assertEqual(run_diag.status_code, 200)
-        self.assertEqual(run_diag.json()["status"], "failed")
-        self.assertEqual(run_diag.json()["llm_request_count"], 1)
-        self.assertEqual(run_diag.json()["tool_calls"], [])
-
-    def test_http_messages_return_provider_auth_error_for_english_explicit_github_commit_query_when_provider_auth_fails(self) -> None:
-        app = build_test_app()
-        runtime = app.state.runtime
-        runtime.runtime_loop.llm = AuthFailingLLMClient()
-        runtime.llm_client_factory.cache_client("default", runtime.runtime_loop.llm)
-        runtime.llm_client_factory.cache_client("minimax_coding", runtime.runtime_loop.llm)
-        runtime.tool_registry.register(
-            "mcp",
-            lambda payload: {
-                "action": "call",
-                "server_id": payload["server_id"],
-                "tool_name": payload["tool_name"],
-                "arguments": payload["arguments"],
-                "result_text": '[{"sha":"abc","commit":{"author":{"date":"2026-04-01T02:24:49Z"},"message":"chore(release): 发布0.3.3版本"}}]',
-                "ok": True,
-                "is_error": False,
+            {
+                "conversation_id": "compat-auth-fail-commit-en",
+                "message_id": "auth-fail-commit-en-1",
+                "body": "latest commit of CloudWide851/easy-agent",
             },
-        )
+        ]
 
-        with TestClient(app) as client:
-            response = client.post(
-                "/messages",
-                json={
-                    "channel_id": "http",
-                    "user_id": "demo",
-                    "conversation_id": "compat-auth-fail-commit-en",
-                    "message_id": "auth-fail-commit-en-1",
-                    "body": "latest commit of CloudWide851/easy-agent",
-                },
-            )
-            run_id = response.json()["events"][-1]["run_id"]
-            run_diag = client.get(f"/diagnostics/run/{run_id}")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["events"][-1]["event_type"], "error")
-        self.assertEqual(response.json()["events"][-1]["payload"]["code"], "PROVIDER_AUTH_ERROR")
-        self.assertEqual(run_diag.status_code, 200)
-        self.assertEqual(run_diag.json()["status"], "failed")
-        self.assertEqual(run_diag.json()["llm_request_count"], 1)
-        self.assertEqual(run_diag.json()["tool_calls"], [])
+        for case in cases:
+            with self.subTest(body=case["body"]):
+                self._assert_http_provider_auth_error_for_message(**case)
 
     def test_http_overlap_is_queued_and_keeps_normal_response_contract(self) -> None:
         app = build_test_app()
@@ -573,7 +545,7 @@ class GatewayContractTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["events"][-1]["payload"]["text"], "实时链路验证通过。")
 
-    def test_manual_automation_trigger_for_legacy_github_digest_does_not_require_skill_file(self) -> None:
+    def test_manual_automation_trigger_for_canonical_github_digest_does_not_require_skill_file(self) -> None:
         app = build_test_app()
         runtime = app.state.runtime
         runtime.automation_store.save(
