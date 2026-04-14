@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import time
 from collections.abc import Mapping
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -14,6 +13,7 @@ from marten_runtime.channels.feishu.models import (
     FeishuWebsocketClientConfig,
 )
 from marten_runtime.channels.feishu.usage import build_usage_summary_from_history
+from marten_runtime.runtime.timing import elapsed_ms
 
 
 
@@ -70,11 +70,6 @@ def first_value(values: list[str] | None) -> str | None:
 
 def normalize_message_text(text: str) -> str:
     return " ".join(text.strip().lower().split())
-
-
-def elapsed_ms(started_at: float) -> int:
-    return max(0, int((time.perf_counter() - started_at) * 1000))
-
 
 def bind_queue_observation_to_body(
     *,

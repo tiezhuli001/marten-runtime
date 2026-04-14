@@ -1,9 +1,9 @@
-import asyncio
 from pathlib import Path
 
 from marten_runtime.automation.store import AutomationStore
 from marten_runtime.interfaces.http.app import create_app
 from marten_runtime.runtime.llm_client import DemoLLMClient
+from tests.support.event_loop import close_idle_event_loop
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -28,20 +28,5 @@ def build_test_app():
             )
         }
     )
-    _close_idle_event_loop()
+    close_idle_event_loop()
     return app
-
-
-def _close_idle_event_loop() -> None:
-    policy = asyncio.get_event_loop_policy()
-    try:
-        loop = policy.get_event_loop()
-    except RuntimeError:
-        return
-    if loop.is_running() or loop.is_closed():
-        return
-    loop.close()
-    try:
-        asyncio.set_event_loop(None)
-    except RuntimeError:
-        pass

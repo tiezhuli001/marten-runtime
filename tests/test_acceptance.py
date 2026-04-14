@@ -7,9 +7,86 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from marten_runtime.interfaces.http.bootstrap import build_http_runtime
+from marten_runtime.interfaces.http.app import create_app
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from tests.http_app_support import build_test_app
-from tests.support.app_repo_builders import build_repo_backed_test_app, write_test_repo
+
+
+def _write_test_app(
+    root: Path,
+    app_id: str,
+    *,
+    prompt_mode: str,
+    marker: str,
+    default_agent: str = "assistant",
+) -> None:
+    app_root = root / "apps" / app_id
+    app_root.mkdir(parents=True, exist_ok=True)
+    (app_root / "app.toml").write_text(
+        (
+            f'app_id = "{app_id}"\n'
+            'app_version = "0.1.0"\n'
+            f'default_agent = "{default_agent}"\n'
+            f'prompt_mode = "{prompt_mode}"\n'
+            'delegation_policy = "isolated_session_only"\n\n'
+            '[bootstrap]\n'
+            f'root = "apps/{app_id}"\n'
+            'agents = "AGENTS.md"\n'
+            'identity = "SOUL.md"\n'
+            'tools = "TOOLS.md"\n'
+            'bootstrap = "BOOTSTRAP.md"\n\n'
+            '[skills]\nrequired = []\n\n'
+            '[mcp]\nrequired_servers = []\n'
+        ),
+        encoding="utf-8",
+    )
+    (app_root / "BOOTSTRAP.md").write_text(f"{marker} bootstrap", encoding="utf-8")
+    (app_root / "SOUL.md").write_text(f"{marker} soul", encoding="utf-8")
+    (app_root / "AGENTS.md").write_text(f"{marker} agents", encoding="utf-8")
+    (app_root / "TOOLS.md").write_text(f"{marker} tools", encoding="utf-8")
+
+
+def _write_test_repo(root: Path) -> None:
+    (root / "config").mkdir(parents=True, exist_ok=True)
+    (root / "skills").mkdir(parents=True, exist_ok=True)
+    (root / "data").mkdir(parents=True, exist_ok=True)
+    (root / "config" / "agents.toml").write_text(
+        (
+            '[agents.assistant]\n'
+            'role = "general_assistant"\n'
+            'app_id = "example_assistant"\n'
+            'allowed_tools = ["automation", "mcp", "runtime", "self_improve", "skill", "time"]\n'
+            'prompt_mode = "full"\n'
+            'model_profile = "minimax_coding"\n\n'
+            '[agents.coding]\n'
+            'role = "coding_agent"\n'
+            'app_id = "code_assistant"\n'
+            'allowed_tools = ["runtime", "skill", "time"]\n'
+            'prompt_mode = "child"\n'
+            'model_profile = "default"\n'
+        ),
+        encoding="utf-8",
+    )
+    (root / "config" / "bindings.toml").write_text(
+        (
+            '[[bindings]]\n'
+            'agent_id = "assistant"\n'
+            'channel_id = "http"\n'
+            'default = true\n'
+        ),
+        encoding="utf-8",
+    )
+    _write_test_app(root, "example_assistant", prompt_mode="full", marker="DEFAULT APP", default_agent="assistant")
+    _write_test_app(root, "code_assistant", prompt_mode="child", marker="CODE APP", default_agent="coding")
+
+
+def _build_repo_backed_test_app(root: Path):
+    return create_app(
+        repo_root=root,
+        env={"MINIMAX_API_KEY": "minimax-test", "OPENAI_API_KEY": "openai-test"},
+        load_env_file=False,
+        use_compat_json=False,
+    )
 
 
 
@@ -184,8 +261,8 @@ class AcceptanceTests(unittest.TestCase):
     def test_http_runtime_switches_llm_client_by_selected_agent_model_profile(self) -> None:
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
-            write_test_repo(repo_root)
-            test_app = build_repo_backed_test_app(repo_root)
+            _write_test_repo(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
             assistant_llm = ScriptedLLMClient([LLMReply(final_text="assistant profile")])
             coding_llm = ScriptedLLMClient([LLMReply(final_text="coding profile")])
             test_app.state.runtime.llm_client_factory.cache_client("minimax_coding", assistant_llm)
@@ -225,10 +302,10 @@ class AcceptanceTests(unittest.TestCase):
     def test_http_runtime_switches_app_manifest_and_bootstrap_prompt_by_selected_agent(self) -> None:
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
-            write_test_repo(repo_root)
+            _write_test_repo(repo_root)
             coding_llm = ScriptedLLMClient([LLMReply(final_text="coding profile")])
             assistant_llm = ScriptedLLMClient([LLMReply(final_text="assistant profile")])
-            test_app = build_repo_backed_test_app(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
             test_app.state.runtime.llm_client_factory.cache_client("minimax_coding", assistant_llm)
             test_app.state.runtime.llm_client_factory.cache_client("default", coding_llm)
             test_app.state.runtime.runtime_loop.llm = assistant_llm
@@ -257,8 +334,8 @@ class AcceptanceTests(unittest.TestCase):
     def test_http_messages_proactively_compact_long_history_and_persist_checkpoint(self) -> None:
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
-            write_test_repo(repo_root)
-            test_app = build_repo_backed_test_app(repo_root)
+            _write_test_repo(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
             seed_llm = ScriptedLLMClient([LLMReply(final_text="seed-1"), LLMReply(final_text="seed-2")])
             test_app.state.runtime.llm_client_factory.cache_client("minimax_coding", seed_llm)
             test_app.state.runtime.runtime_loop.llm = seed_llm
@@ -322,8 +399,8 @@ class AcceptanceTests(unittest.TestCase):
     def test_http_messages_reactively_compact_after_prompt_too_long_and_retry(self) -> None:
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
-            write_test_repo(repo_root)
-            test_app = build_repo_backed_test_app(repo_root)
+            _write_test_repo(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
             seed_llm = ScriptedLLMClient([LLMReply(final_text="seed-1"), LLMReply(final_text="seed-2")])
             test_app.state.runtime.llm_client_factory.cache_client("minimax_coding", seed_llm)
             test_app.state.runtime.runtime_loop.llm = seed_llm

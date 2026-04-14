@@ -4,8 +4,8 @@ import time
 
 from marten_runtime.mcp.client import MCPClient
 from marten_runtime.mcp.models import MCPToolSpec
-from marten_runtime.mcp.normalize import normalize_mcp_request
 from marten_runtime.mcp.models import MCPServerSpec
+from marten_runtime.mcp.normalize import normalize_mcp_request, server_id_candidates
 
 _TRANSIENT_MCP_ERROR_MARKERS = (
     " eof",
@@ -175,19 +175,7 @@ def _server_summary(
 
 
 def _server_id_candidates(server_id: str | None) -> list[str]:
-    normalized = str(server_id or "").strip()
-    if not normalized:
-        return []
-    candidates = [normalized]
-    if "_" in normalized:
-        candidates.append(normalized.replace("_", "-"))
-    if "-" in normalized:
-        candidates.append(normalized.replace("-", "_"))
-    deduped: list[str] = []
-    for item in candidates:
-        if item not in deduped:
-            deduped.append(item)
-    return deduped
+    return server_id_candidates(server_id)
 
 
 def _heal_discovery_after_successful_call(
