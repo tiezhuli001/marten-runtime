@@ -11,12 +11,7 @@ from marten_runtime.skills.render import build_skill_heads, render_always_on_ski
 from marten_runtime.skills.selector import select_activated_skills
 from marten_runtime.skills.service import SkillService
 from marten_runtime.skills.snapshot import SkillSnapshot
-
-
-def write_skill(root: Path, skill_id: str, body: str) -> None:
-    skill_dir = root / skill_id
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "SKILL.md").write_text(textwrap.dedent(body).strip() + "\n", encoding="utf-8")
+from tests.support.skill_builders import write_skill
 
 
 class SkillTests(unittest.TestCase):

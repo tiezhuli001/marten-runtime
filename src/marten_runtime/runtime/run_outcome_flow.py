@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -10,6 +9,7 @@ from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.llm_client import ToolExchange
 from marten_runtime.runtime.provider_retry import ProviderTransportError
 from marten_runtime.runtime.tool_episode_summary_prompt import ToolEpisodeSummaryDraft
+from marten_runtime.runtime.timing import elapsed_ms
 from marten_runtime.runtime.tool_outcome_flow import (
     build_combined_tool_episode_summary,
     build_fallback_tool_episode_summary,
@@ -32,11 +32,6 @@ def is_provider_failure(exc: Exception) -> bool:
     if isinstance(exc, (ProviderTransportError, TimeoutError, OSError)):
         return True
     return str(exc).startswith("provider_")
-
-
-def elapsed_ms(started_at: float) -> int:
-    return max(0, int((time.perf_counter() - started_at) * 1000))
-
 
 def finish_run_success(
     *,

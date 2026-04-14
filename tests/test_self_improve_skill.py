@@ -1,17 +1,11 @@
 import tempfile
-import textwrap
 import unittest
 from pathlib import Path
 
 from marten_runtime.skills.filter import filter_skills
 from marten_runtime.skills.loader import SkillLoader
 from marten_runtime.skills.selector import select_activated_skills
-
-
-def write_skill(root: Path, skill_id: str, body: str) -> None:
-    skill_dir = root / skill_id
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "SKILL.md").write_text(textwrap.dedent(body).strip() + "\n", encoding="utf-8")
+from tests.support.skill_builders import write_skill
 
 
 class SelfImproveSkillTests(unittest.TestCase):

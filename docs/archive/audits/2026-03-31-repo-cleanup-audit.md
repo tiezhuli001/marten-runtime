@@ -85,7 +85,7 @@
 - `docs/plans/2026-03-31-agent-domain-query-adapter-plan.md`
 - `docs/plans/2026-03-31-automation-domain-adapter-plan.md`
 - `docs/plans/2026-03-31-progressive-disclosure-llm-first-capability-plan.md`
-- `docs/plans/2026-03-31-progressive-disclosure-capability-refinement-plan.md`
+- `docs/plans/2026-03-31-progressive-disclosure-capability-refinement-plan.md`（historical at audit time; durable truth later moved to `docs/architecture/adr/0002-progressive-disclosure-default-surface.md`, `docs/ARCHITECTURE_CHANGELOG.md`, and `docs/ARCHITECTURE_EVOLUTION*.md`）
 
 说明：
 
@@ -151,7 +151,7 @@
 - `docs/plans/2026-03-31-agent-domain-query-adapter-plan.md`
 - `docs/plans/2026-03-31-automation-domain-adapter-plan.md`
 - `docs/plans/2026-03-31-progressive-disclosure-llm-first-capability-plan.md`
-- `docs/plans/2026-03-31-progressive-disclosure-capability-refinement-plan.md`
+- `docs/plans/2026-03-31-progressive-disclosure-capability-refinement-plan.md`（historical example only; current repo no longer needs the full plan body because progressive-disclosure truth now lives in ADR/changelog/evolution docs）
 
 判断依据：
 

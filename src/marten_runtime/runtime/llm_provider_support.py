@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import re
-import time
 from collections.abc import Mapping
 
 from marten_runtime.config.models_loader import ModelProfile
+from marten_runtime.runtime.timing import elapsed_ms
 from marten_runtime.runtime.usage_models import NormalizedUsage
 from marten_runtime.tools.registry import ToolSnapshot
 
@@ -82,11 +82,6 @@ def collapse_system_messages(messages: list[dict]) -> list[dict]:
     if system_chunks and not flushed:
         collapsed.append({"role": "system", "content": "\n\n".join(system_chunks)})
     return collapsed
-
-
-def elapsed_ms(started_at: float) -> int:
-    return int((time.perf_counter() - started_at) * 1000)
-
 
 def resolve_parameters_schema(tool_name: str, tool_snapshot: ToolSnapshot) -> dict[str, object]:
     schema = tool_snapshot.tool_metadata.get(tool_name, {}).get("parameters_schema")
