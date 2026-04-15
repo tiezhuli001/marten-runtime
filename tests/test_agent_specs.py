@@ -14,9 +14,9 @@ class AgentSpecLoadingTests(unittest.TestCase):
             path.write_text(
                 textwrap.dedent(
                     """
-                    [agents.assistant]
+                    [agents.main]
                     role = "general_assistant"
-                    app_id = "example_assistant"
+                    app_id = "main_agent"
                     allowed_tools = ["time", "skill"]
                     prompt_mode = "full"
                     model_profile = "fast"
@@ -33,12 +33,12 @@ class AgentSpecLoadingTests(unittest.TestCase):
 
             specs = load_agent_specs(str(path))
 
-            self.assertEqual([item.agent_id for item in specs], ["assistant", "ops"])
+            self.assertEqual([item.agent_id for item in specs], ["main", "ops"])
             self.assertEqual(specs[0].allowed_tools, ["time", "skill"])
             self.assertEqual(specs[0].model_profile, "fast")
             self.assertEqual(specs[1].role, "ops_agent")
             self.assertFalse(specs[1].enabled)
-            self.assertEqual(specs[1].app_id, "example_assistant")
+            self.assertEqual(specs[1].app_id, "main_agent")
             self.assertEqual(specs[1].prompt_mode, "full")
             self.assertIsNone(specs[1].model_profile)
 
@@ -48,7 +48,7 @@ class AgentSpecLoadingTests(unittest.TestCase):
             path.write_text(
                 textwrap.dedent(
                     """
-                    [agents.assistant]
+                    [agents.main]
                     role = "general_assistant"
                     """
                 ).strip()
@@ -66,7 +66,7 @@ class AgentSpecLoadingTests(unittest.TestCase):
             path.write_text(
                 textwrap.dedent(
                     """
-                    [agents.assistant]
+                    [agents.main]
                     allowed_tools = ["time"]
                     """
                 ).strip()

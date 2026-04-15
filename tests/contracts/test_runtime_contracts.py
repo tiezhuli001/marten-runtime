@@ -40,6 +40,13 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(runtime.default_agent.app_id, DEFAULT_APP_ID)
         self.assertEqual(runtime.default_agent.agent_id, DEFAULT_AGENT_ID)
 
+    def test_runtime_router_keeps_legacy_assistant_alias_routable(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+
+        self.assertEqual(runtime.agent_router.default_agent_id, DEFAULT_AGENT_ID)
+        self.assertEqual(runtime.agent_router.registry.get("assistant").agent_id, DEFAULT_AGENT_ID)
+
     def test_runtime_bootstrap_registers_automation_tool(self) -> None:
         app = build_test_app()
 
@@ -52,7 +59,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertNotIn("register_automation", app.state.runtime.tool_registry.list())
         self.assertNotIn("list_lesson_candidates", app.state.runtime.tool_registry.list())
 
-    def test_default_assistant_agent_keeps_family_tool_contract(self) -> None:
+    def test_default_main_agent_keeps_family_tool_contract(self) -> None:
         app = build_test_app()
 
         assistant = app.state.runtime.default_agent
@@ -63,11 +70,13 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertIn("self_improve", assistant.allowed_tools)
         self.assertIn("runtime", assistant.allowed_tools)
         self.assertIn("time", assistant.allowed_tools)
+        self.assertIn("spawn_subagent", assistant.allowed_tools)
+        self.assertIn("cancel_subagent", assistant.allowed_tools)
         self.assertNotIn("register_automation", assistant.allowed_tools)
         self.assertNotIn("list_lesson_candidates", assistant.allowed_tools)
         self.assertEqual(
             assistant.allowed_tools,
-            ["automation", "mcp", "runtime", "self_improve", "skill", "time"],
+            ["automation", "mcp", "runtime", "self_improve", "skill", "time", "spawn_subagent", "cancel_subagent"],
         )
 
     def test_mcp_family_tool_is_the_only_model_visible_mcp_entrypoint(self) -> None:
@@ -136,16 +145,16 @@ class RuntimeContractTests(unittest.TestCase):
                 lessons_path=Path(tmpdir) / "SYSTEM_LESSONS.md",
                 judge=make_default_judge(
                     runtime.runtime_loop.llm,
-                    app_id="example_assistant",
-                    agent_id="assistant",
+                    app_id="main_agent",
+                    agent_id="main",
                 ),
             )
             runtime.automation_store.save(
                 AutomationJob(
                     automation_id="self_improve_internal",
                     name="Internal Self Improve",
-                    app_id="example_assistant",
-                    agent_id="assistant",
+                    app_id="main_agent",
+                    agent_id="main",
                     prompt_template="Summarize repeated failures and later recoveries.",
                     schedule_kind="daily",
                     schedule_expr="03:00",
@@ -161,27 +170,27 @@ class RuntimeContractTests(unittest.TestCase):
             runtime.self_improve_store.record_failure(
                 FailureEvent(
                     failure_id="failure_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     run_id="run_1",
                     trace_id="trace_1",
                     session_id="session_1",
                     error_code="PROVIDER_TIMEOUT",
                     error_stage="llm",
                     summary="provider timed out",
-                    fingerprint="assistant|hello",
+                    fingerprint="main|hello",
                 )
             )
             runtime.self_improve_store.record_failure(
                 FailureEvent(
                     failure_id="failure_2",
-                    agent_id="assistant",
+                    agent_id="main",
                     run_id="run_2",
                     trace_id="trace_2",
                     session_id="session_2",
                     error_code="PROVIDER_TIMEOUT",
                     error_stage="llm",
                     summary="provider timed out",
-                    fingerprint="assistant|hello",
+                    fingerprint="main|hello",
                 )
             )
             runtime.runtime_loop.llm = ScriptedLLMClient(
@@ -191,8 +200,8 @@ class RuntimeContractTests(unittest.TestCase):
                         tool_payload={
                             "action": "save_candidate",
                             "candidate_id": "cand_1",
-                            "agent_id": "assistant",
-                            "source_fingerprints": ["assistant|hello", "assistant|hello"],
+                            "agent_id": "main",
+                            "source_fingerprints": ["main|hello", "main|hello"],
                             "candidate_text": "遇到重复 provider timeout 时先减少无关工具面。",
                             "rationale": "repeated failures with later recovery evidence",
                             "score": 0.95,
@@ -210,15 +219,15 @@ class RuntimeContractTests(unittest.TestCase):
             )
             runtime.self_improve_service.judge = make_default_judge(
                 runtime.runtime_loop.llm,
-                app_id="example_assistant",
-                agent_id="assistant",
+                app_id="main_agent",
+                agent_id="main",
             )
 
             with TestClient(app) as client:
                 response = client.post("/automations/self_improve_internal/trigger")
 
             self.assertEqual(response.status_code, 200)
-            lessons = runtime.self_improve_store.list_active_lessons(agent_id="assistant")
+            lessons = runtime.self_improve_store.list_active_lessons(agent_id="main")
             self.assertEqual(len(lessons), 1)
             exported = (Path(tmpdir) / "SYSTEM_LESSONS.md").read_text(encoding="utf-8")
             self.assertIn("遇到重复 provider timeout 时先减少无关工具面。", exported)
@@ -265,8 +274,8 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         enabled = runtime.automation_store.list_enabled()
         self.assertEqual(len(enabled), 1)
-        self.assertEqual(enabled[0].app_id, "example_assistant")
-        self.assertEqual(enabled[0].agent_id, "assistant")
+        self.assertEqual(enabled[0].app_id, "main_agent")
+        self.assertEqual(enabled[0].agent_id, "main")
         self.assertEqual(enabled[0].schedule_kind, "daily")
         self.assertEqual(enabled[0].schedule_expr, "23:30")
         self.assertEqual(enabled[0].delivery_channel, "feishu")
@@ -431,8 +440,8 @@ class RuntimeContractTests(unittest.TestCase):
                         "action": "register",
                         "automation_id": "daily_hot",
                         "name": "Daily GitHub Hot Repos",
-                        "app_id": "example_assistant",
-                        "agent_id": "assistant",
+                        "app_id": "main_agent",
+                        "agent_id": "main",
                         "prompt_template": "Summarize today's hot repositories.",
                         "schedule_kind": "daily",
                         "schedule_expr": "09:30",

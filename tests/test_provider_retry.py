@@ -1,3 +1,4 @@
+import threading
 import unittest
 
 from marten_runtime.runtime.provider_retry import ProviderTransportError, RetryPolicy, with_retry
@@ -84,6 +85,50 @@ class ProviderRetryTests(unittest.TestCase):
 
         self.assertEqual(ctx.exception.error_code, "PROVIDER_RESPONSE_INVALID")
         self.assertEqual(attempts["count"], 1)
+
+    def test_retry_stops_during_backoff_when_stop_event_is_set(self) -> None:
+        attempts = {"count": 0}
+        stop_event = threading.Event()
+        sleeps: list[float] = []
+
+        def flaky() -> str:
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                stop_event.set()
+                raise TimeoutError("timed out")
+            return "ok"
+
+        with self.assertRaises(TimeoutError) as ctx:
+            with_retry(
+                flaky,
+                policy=RetryPolicy(max_attempts=3, base_backoff_seconds=0.5, jitter_ratio=0),
+                stop_event=stop_event,
+                sleeper=sleeps.append,
+            )
+
+        self.assertIn("PROVIDER_CALL_CANCELLED", str(ctx.exception))
+        self.assertEqual(attempts["count"], 1)
+        self.assertEqual(sleeps, [])
+
+    def test_retry_stops_when_deadline_expires_before_next_attempt(self) -> None:
+        attempts = {"count": 0}
+        sleeps: list[float] = []
+
+        def flaky() -> str:
+            attempts["count"] += 1
+            raise TimeoutError("timed out")
+
+        with self.assertRaises(TimeoutError) as ctx:
+            with_retry(
+                flaky,
+                policy=RetryPolicy(max_attempts=3, base_backoff_seconds=0.5, jitter_ratio=0),
+                deadline_monotonic=0.0,
+                sleeper=sleeps.append,
+            )
+
+        self.assertIn("PROVIDER_CALL_TIMED_OUT", str(ctx.exception))
+        self.assertEqual(attempts["count"], 0)
+        self.assertEqual(sleeps, [])
 
 
 if __name__ == "__main__":

@@ -30,31 +30,31 @@ class SelfImproveToolTests(unittest.TestCase):
             store.record_failure(
                 FailureEvent(
                     failure_id="failure_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     run_id="run_1",
                     trace_id="trace_1",
                     session_id="session_1",
                     error_code="PROVIDER_TIMEOUT",
                     error_stage="llm",
                     summary="provider timed out",
-                    fingerprint="assistant|hello",
+                    fingerprint="main|hello",
                 )
             )
             store.save_lesson(
                 SystemLesson(
                     lesson_id="lesson_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     topic_key="provider_timeout",
                     lesson_text="先减少无关工具面。",
-                    source_fingerprints=["assistant|hello"],
+                    source_fingerprints=["main|hello"],
                     active=True,
                 )
             )
             store.save_candidate(
                 LessonCandidate(
                     candidate_id="cand_keep",
-                    agent_id="assistant",
-                    source_fingerprints=["assistant|hello", "assistant|hello"],
+                    agent_id="main",
+                    source_fingerprints=["main|hello", "main|hello"],
                     candidate_text="pending candidate",
                     rationale="same failure repeated",
                     status="pending",
@@ -63,13 +63,13 @@ class SelfImproveToolTests(unittest.TestCase):
             )
 
             evidence = run_list_self_improve_evidence_tool(
-                {"agent_id": "assistant"}, store
+                {"agent_id": "main"}, store
             )
             candidate = run_save_lesson_candidate_tool(
                 {
                     "candidate_id": "cand_1",
-                    "agent_id": "assistant",
-                    "source_fingerprints": ["assistant|hello"],
+                    "agent_id": "main",
+                    "source_fingerprints": ["main|hello"],
                     "candidate_text": "遇到重复 provider timeout 时先减少无关工具面。",
                     "rationale": "same failure repeated",
                     "score": 0.9,
@@ -77,13 +77,13 @@ class SelfImproveToolTests(unittest.TestCase):
                 store,
             )
             candidates = run_list_lesson_candidates_tool(
-                {"agent_id": "assistant", "status": "pending"}, adapter
+                {"agent_id": "main", "status": "pending"}, adapter
             )
             detail = run_get_lesson_candidate_detail_tool(
                 {"candidate_id": "cand_1"}, adapter
             )
             summary = run_get_self_improve_summary_tool(
-                {"agent_id": "assistant"}, store
+                {"agent_id": "main"}, store
             )
             deleted = run_delete_lesson_candidate_tool(
                 {"candidate_id": "cand_keep"}, adapter
@@ -91,7 +91,7 @@ class SelfImproveToolTests(unittest.TestCase):
             missing_delete = run_delete_lesson_candidate_tool(
                 {"candidate_id": "cand_missing"}, adapter
             )
-            lessons = run_list_system_lessons_tool({"agent_id": "assistant"}, store)
+            lessons = run_list_system_lessons_tool({"agent_id": "main"}, store)
 
         self.assertTrue(evidence["ok"])
         self.assertEqual(evidence["failure_count"], 1)
@@ -115,18 +115,18 @@ class SelfImproveToolTests(unittest.TestCase):
             store.save_lesson(
                 SystemLesson(
                     lesson_id="lesson_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     topic_key="provider_timeout",
                     lesson_text="先减少无关工具面。",
-                    source_fingerprints=["assistant|hello"],
+                    source_fingerprints=["main|hello"],
                     active=True,
                 )
             )
             store.save_candidate(
                 LessonCandidate(
                     candidate_id="cand_keep",
-                    agent_id="assistant",
-                    source_fingerprints=["assistant|hello", "assistant|hello"],
+                    agent_id="main",
+                    source_fingerprints=["main|hello", "main|hello"],
                     candidate_text="pending candidate",
                     rationale="same failure repeated",
                     status="pending",
@@ -135,7 +135,7 @@ class SelfImproveToolTests(unittest.TestCase):
             )
 
             summary = run_self_improve_tool(
-                {"action": "summary", "agent_id": "assistant"}, adapter, store
+                {"action": "summary", "agent_id": "main"}, adapter, store
             )
             deleted = run_self_improve_tool(
                 {"action": "delete_candidate", "candidate_id": "cand_keep"},

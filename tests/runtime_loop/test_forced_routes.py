@@ -55,9 +55,9 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
             },
         )
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -94,9 +94,9 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
             lambda payload: {"action": payload["action"], "summary": "ok", "ok": True},
         )
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["runtime"],
         )
 
@@ -156,9 +156,9 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
             },
         )
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -191,9 +191,9 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=[],
         )
 
@@ -252,9 +252,9 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
             },
         )
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -280,9 +280,9 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
         llm = AuthFailingLLMClient()
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=[],
         )
 
@@ -313,7 +313,7 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
                     "name: Example Time\n"
                     "description: Return current time guidance\n"
                     "enabled: true\n"
-                    "agents: [assistant]\n"
+                    "agents: [main]\n"
                     "channels: [http]\n"
                     "---\n"
                     "Use the time tool when the user asks for the current time.\n"
@@ -331,9 +331,9 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
             llm = AuthFailingLLMClient()
             runtime = RuntimeLoop(llm, tools, history)
             agent = AgentSpec(
-                agent_id="assistant",
+                agent_id="main",
                 role="general_assistant",
-                app_id="example_assistant",
+                app_id="main_agent",
                 allowed_tools=["skill"],
             )
 
@@ -372,9 +372,9 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
         llm = AuthFailingLLMClient()
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -411,9 +411,9 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
         llm = AuthFailingLLMClient()
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 

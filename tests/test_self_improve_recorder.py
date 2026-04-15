@@ -13,7 +13,7 @@ class SelfImproveRecorderTests(unittest.TestCase):
             recorder = SelfImproveRecorder(store)
 
             failure = recorder.record_failure(
-                agent_id="assistant",
+                agent_id="main",
                 run_id="run_1",
                 trace_id="trace_1",
                 session_id="session_1",
@@ -24,7 +24,7 @@ class SelfImproveRecorderTests(unittest.TestCase):
                 message="请总结今天的问题",
             )
             recovery = recorder.record_recovery(
-                agent_id="assistant",
+                agent_id="main",
                 run_id="run_2",
                 trace_id="trace_2",
                 message="请总结今天的问题",
@@ -32,8 +32,8 @@ class SelfImproveRecorderTests(unittest.TestCase):
                 success_evidence="final reply generated",
             )
 
-            failures = store.list_recent_failures(agent_id="assistant", limit=10)
-            recoveries = store.list_recent_recoveries(agent_id="assistant", limit=10)
+            failures = store.list_recent_failures(agent_id="main", limit=10)
+            recoveries = store.list_recent_recoveries(agent_id="main", limit=10)
 
         self.assertEqual(len(failures), 1)
         self.assertEqual(failures[0].fingerprint, failure.fingerprint)

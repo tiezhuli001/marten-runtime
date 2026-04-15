@@ -228,9 +228,9 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -273,9 +273,9 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -314,9 +314,9 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -334,6 +334,57 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         self.assertEqual(len(run.tool_outcome_summaries), 1)
         self.assertTrue(run.tool_outcome_summaries[0].volatile)
 
+    def test_runtime_directly_acknowledges_spawn_subagent_without_followup_llm(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        tools.register(
+            "spawn_subagent",
+            lambda payload: {
+                "ok": True,
+                "status": "accepted",
+                "task_id": "task_spawn_ack",
+                "child_session_id": "sess_child_ack",
+                "effective_tool_profile": "standard",
+                "queue_state": "running",
+            },
+        )
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="spawn_subagent",
+                    tool_payload={
+                        "task": "run child task",
+                        "label": "child-task",
+                        "tool_profile": "standard",
+                        "notify_on_finish": True,
+                    },
+                ),
+                LLMReply(final_text="this followup should not be used"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["spawn_subagent"],
+        )
+
+        events = runtime.run(
+            session_id="sess_spawn_ack",
+            message="start background task",
+            trace_id="trace_spawn_ack",
+            agent=agent,
+        )
+
+        run = history.get(events[-1].run_id)
+        self.assertEqual(events[-1].payload["text"], "已受理，子 agent 正在后台执行，完成后会通知你结果。")
+        self.assertEqual(len(llm.requests), 1)
+        self.assertEqual(run.llm_request_count, 1)
+        self.assertEqual(run.tool_calls[0]["tool_name"], "spawn_subagent")
+
     def test_runtime_can_load_skill_body_via_skill_tool(self) -> None:
         with TemporaryDirectory() as tmpdir:
             skills_root = Path(tmpdir) / "skills"
@@ -346,7 +397,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
                     "name: Repo Helper\n"
                     "description: inspect repositories\n"
                     "enabled: true\n"
-                    "agents: [assistant]\n"
+                    "agents: [main]\n"
                     "channels: [http]\n"
                     "---\n"
                     "Read repository files before proposing edits.\n"
@@ -372,9 +423,9 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
             )
             runtime = RuntimeLoop(llm, tools, history)
             agent = AgentSpec(
-                agent_id="assistant",
+                agent_id="main",
                 role="general_assistant",
-                app_id="example_assistant",
+                app_id="main_agent",
                 allowed_tools=["skill"],
             )
 
@@ -406,7 +457,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
             store.save_candidate(
                 LessonCandidate(
                     candidate_id="cand_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     source_fingerprints=["fp_one", "fp_one"],
                     candidate_text="candidate lesson",
                     rationale="candidate rationale",
@@ -417,7 +468,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
             store.save_lesson(
                 SystemLesson(
                     lesson_id="lesson_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     topic_key="provider_timeout",
                     lesson_text="keep this active lesson",
                     source_fingerprints=["fp_timeout"],
@@ -436,7 +487,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
                         tool_name="self_improve",
                         tool_payload={
                             "action": "list_candidates",
-                            "agent_id": "assistant",
+                            "agent_id": "main",
                         },
                     ),
                     LLMReply(
@@ -451,9 +502,9 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
             )
             runtime = RuntimeLoop(llm, tools, history)
             agent = AgentSpec(
-                agent_id="assistant",
+                agent_id="main",
                 role="general_assistant",
-                app_id="example_assistant",
+                app_id="main_agent",
                 allowed_tools=["self_improve"],
             )
 
@@ -463,8 +514,8 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
                 trace_id="trace_candidates",
                 agent=agent,
             )
-            remaining_candidates = store.list_candidates(agent_id="assistant", limit=10)
-            active_lessons = store.list_active_lessons(agent_id="assistant")
+            remaining_candidates = store.list_candidates(agent_id="main", limit=10)
+            active_lessons = store.list_active_lessons(agent_id="main")
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
         self.assertEqual(events[-1].payload["text"], "已删除这个候选规则。")

@@ -68,6 +68,7 @@ flowchart LR
 
 Latest MVP-facing changes:
 
+- renamed the default runtime app to `main_agent` and repositioned its prompt assets around a primary execution-agent stance
 - added a narrow GitHub hot-repos automation path driven by the `automation` family tool with `action=register`, a due-window scheduler, isolated automation turns, and final-channel delivery
 - moved the public automation resource layer onto the thin shared adapter core while keeping automation lifecycle logic outside the adapter
 - added the builtin `automation` family tool for recurring-job register/list/detail/update/delete/pause/resume flows
@@ -78,7 +79,7 @@ Latest MVP-facing changes:
 - strengthened Feishu live-chain observability with run-level `tool_calls`, `llm_request_count`, and websocket diagnostics exposing the latest inbound `session_id`, `run_id`, and runtime trace correlation
 - hardened Feishu ingress by suppressing semantic duplicate replays, isolating runtime-handler failures to a single message, ignoring blank-text inbound events, and keeping duplicate websocket replays from clobbering the last accepted status
 - added a narrow self-improve loop that records repeated failures plus later recoveries, synthesizes lesson candidates through a dedicated skill, gates them through a structured LLM judgment plus deterministic checks, and injects accepted active lessons from runtime-managed `SYSTEM_LESSONS.md`
-- added a thin self-improve domain-query adapter so the assistant can inspect candidate lessons and delete bad candidates through natural-language turns without exposing raw SQL, table names, or generic CRUD
+- added a thin self-improve domain-query adapter so the default main agent can inspect candidate lessons and delete bad candidates through natural-language turns without exposing raw SQL, table names, or generic CRUD
 
 ## Architecture
 
@@ -128,7 +129,7 @@ Implemented narrow extensions:
 - chat-registered recurring digest path for GitHub hot repos
 - adapter-backed automation resource CRUD with domain tools kept stable for the LLM surface
 - internal self-improve automation that summarizes failure/recovery evidence into candidate lessons
-- assistant-facing self-improve candidate inspection and candidate-only deletion through skill-routed builtin tools backed by a thin adapter core
+- main-agent-facing self-improve candidate inspection and candidate-only deletion through skill-routed builtin tools backed by a thin adapter core
 - both paths reuse the thin automation bridge and builtin tools instead of introducing a worker-first platform
 
 ## Repository Layout
@@ -146,6 +147,19 @@ Implemented narrow extensions:
 
 ## Getting Started
 
+### Fastest local bootstrap
+
+```bash
+./init.sh
+```
+
+`./init.sh` is the recommended shortest path for a fresh local checkout. It creates or reuses `.venv`, installs dependencies, copies `.env` / `mcps.json` from templates when missing, prints the canonical startup command, and runs a temporary local smoke against `/healthz`, `/readyz`, and `/diagnostics/runtime`.
+
+Useful variants:
+
+- `./init.sh --skip-install`: reuse the existing virtualenv and skip dependency installation, but still run readiness checks and local smoke
+- `./init.sh --smoke-only`: assume the workspace is already initialized and run only readiness checks plus the temporary local smoke
+
 ### Requirements
 
 - Python `3.11`, `3.12`, or `3.13`
@@ -161,6 +175,8 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 pip install -e .
 ```
+
+Use the manual path above when you want to run each setup step yourself instead of the one-shot `./init.sh`.
 
 ### Configure
 

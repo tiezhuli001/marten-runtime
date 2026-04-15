@@ -35,7 +35,7 @@ The current direction is:
 
 ## Design Summary
 
-The assistant continues to answer in natural language by default.
+The main agent continues to answer in natural language by default.
 
 When the model believes the reply is naturally card-shaped, it may append one optional structured block at the end of the final answer:
 

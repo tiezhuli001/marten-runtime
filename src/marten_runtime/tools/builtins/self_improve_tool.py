@@ -31,7 +31,7 @@ def run_get_self_improve_summary_tool(
     payload: dict,
     store: SQLiteSelfImproveStore,
 ) -> dict:
-    agent_id = str(payload.get("agent_id", "assistant"))
+    agent_id = str(payload.get("agent_id", "main"))
     pending = store.list_candidates(agent_id=agent_id, limit=100, status="pending")
     accepted = store.list_candidates(agent_id=agent_id, limit=100, status="accepted")
     rejected = store.list_candidates(agent_id=agent_id, limit=100, status="rejected")
@@ -53,7 +53,7 @@ def run_list_lesson_candidates_tool(
     payload: dict,
     adapter: DomainDataAdapter,
 ) -> dict:
-    agent_id = str(payload.get("agent_id", "assistant"))
+    agent_id = str(payload.get("agent_id", "main"))
     status = payload.get("status")
     filters = {"agent_id": agent_id}
     if status is not None:
@@ -75,7 +75,7 @@ def run_list_self_improve_evidence_tool(
     payload: dict,
     store: SQLiteSelfImproveStore,
 ) -> dict:
-    agent_id = str(payload.get("agent_id", "assistant"))
+    agent_id = str(payload.get("agent_id", "main"))
     limit = int(payload.get("limit", 20))
     failures = store.list_recent_failures(agent_id=agent_id, limit=limit)
     recoveries = store.list_recent_recoveries(agent_id=agent_id, limit=limit)
@@ -93,7 +93,7 @@ def run_list_system_lessons_tool(
     payload: dict,
     store: SQLiteSelfImproveStore,
 ) -> dict:
-    agent_id = str(payload.get("agent_id", "assistant"))
+    agent_id = str(payload.get("agent_id", "main"))
     items = store.list_active_lessons(agent_id=agent_id)
     return {
         "ok": True,

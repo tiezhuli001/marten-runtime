@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import random
-import time
 from typing import TypeVar
 
+from marten_runtime.runtime.cooperative_stop import interruptible_sleep, raise_if_interrupted
 
 T = TypeVar("T")
 
@@ -38,11 +38,24 @@ class ProviderTransportError(RuntimeError):
         self.model_name = model_name
 
 
-def with_retry(operation: Callable[[], T], *, policy: RetryPolicy | None = None) -> T:
+def with_retry(
+    operation: Callable[[], T],
+    *,
+    policy: RetryPolicy | None = None,
+    stop_event=None,
+    deadline_monotonic: float | None = None,
+    sleeper: Callable[[float], None] | None = None,
+) -> T:
     retry_policy = policy or RetryPolicy()
     last_error: Exception | None = None
     for attempt in range(1, retry_policy.max_attempts + 1):
         try:
+            raise_if_interrupted(
+                stop_event=stop_event,
+                deadline_monotonic=deadline_monotonic,
+                cancelled_message="PROVIDER_CALL_CANCELLED",
+                timed_out_message="PROVIDER_CALL_TIMED_OUT",
+            )
             return operation()
         except Exception as exc:  # noqa: BLE001
             normalized = normalize_provider_error(exc)
@@ -58,7 +71,14 @@ def with_retry(operation: Callable[[], T], *, policy: RetryPolicy | None = None)
                 delay += random.uniform(0, delay * retry_policy.jitter_ratio)
                 delay = min(delay, retry_policy.max_backoff_seconds)
             if delay > 0:
-                time.sleep(delay)
+                interruptible_sleep(
+                    delay,
+                    stop_event=stop_event,
+                    deadline_monotonic=deadline_monotonic,
+                    cancelled_message="PROVIDER_CALL_CANCELLED",
+                    timed_out_message="PROVIDER_CALL_TIMED_OUT",
+                    sleeper=sleeper,
+                )
     assert last_error is not None
     raise last_error
 

@@ -1,5 +1,7 @@
 import time
+import threading
 import unittest
+from unittest.mock import patch
 
 from lark_oapi.ws.const import HEADER_MESSAGE_ID, HEADER_TYPE
 from lark_oapi.ws.pb.pbbp2_pb2 import Frame
@@ -7,6 +9,7 @@ from lark_oapi.ws.pb.pbbp2_pb2 import Frame
 from marten_runtime.channels.feishu.models import FeishuInboundEvent
 from marten_runtime.channels.feishu.service_support import (
     coerce_payload,
+    default_endpoint_transport,
     elapsed_ms,
     first_value,
     headers_to_dict,
@@ -72,6 +75,48 @@ class FeishuServiceSupportTests(unittest.TestCase):
     def test_elapsed_ms_is_non_negative(self) -> None:
         started_at = time.perf_counter()
         self.assertGreaterEqual(elapsed_ms(started_at), 0)
+
+    def test_default_endpoint_transport_honors_cooperative_timeout_override(self) -> None:
+        captured: list[float] = []
+
+        def fake_post(url: str, headers: dict[str, str], json: dict, timeout: float):
+            del url, headers, json
+            captured.append(timeout)
+
+            class _Response:
+                def raise_for_status(self) -> None:
+                    return None
+
+                def json(self) -> dict[str, object]:
+                    return {"code": 0}
+
+            return _Response()
+
+        with patch('marten_runtime.channels.feishu.service_support.httpx.post', fake_post):
+            result = default_endpoint_transport(
+                'https://example.test/endpoint',
+                {'Authorization': 'Bearer x'},
+                {'ok': True},
+                timeout_seconds_override=1.25,
+                deadline_monotonic=time.monotonic() + 5,
+            )
+
+        self.assertEqual(result, {'code': 0})
+        self.assertEqual(captured, [1.25])
+
+    def test_default_endpoint_transport_stops_before_http_call_when_cancelled(self) -> None:
+        stop_event = threading.Event()
+        stop_event.set()
+
+        with self.assertRaises(TimeoutError) as ctx:
+            default_endpoint_transport(
+                'https://example.test/endpoint',
+                {'Authorization': 'Bearer x'},
+                {'ok': True},
+                stop_event=stop_event,
+            )
+
+        self.assertIn('HTTP_CALL_CANCELLED', str(ctx.exception))
 
 
 if __name__ == '__main__':

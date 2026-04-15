@@ -47,7 +47,7 @@ class SkillTests(unittest.TestCase):
                 name: Repo Helper
                 description: repo version
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http]
                 tags: [repo]
                 ---
@@ -64,7 +64,7 @@ class SkillTests(unittest.TestCase):
                     name: Ignored Nested
                     description: should not be discovered
                     enabled: true
-                    agents: [assistant]
+                    agents: [main]
                     channels: [http]
                     ---
                     Ignored body
@@ -94,7 +94,7 @@ class SkillTests(unittest.TestCase):
                 name: Repo Helper
                 description: repo version
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http]
                 tags: [repo]
                 ---
@@ -121,7 +121,7 @@ class SkillTests(unittest.TestCase):
                 name: Repo Helper
                 description: repo version
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http]
                 tags: [repo]
                 ---
@@ -153,7 +153,7 @@ class SkillTests(unittest.TestCase):
                 name: Repo Helper
                 description: repo version
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http]
                 tags: [repo]
                 ---
@@ -186,7 +186,7 @@ class SkillTests(unittest.TestCase):
                 description: visible skill
                 enabled: true
                 always_on: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http]
                 tags: [time]
                 ---
@@ -202,7 +202,7 @@ class SkillTests(unittest.TestCase):
                 name: Repo Helper
                 description: hidden from http
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [cli]
                 tags: [repo]
                 requires_env: [REPO_TOKEN]
@@ -212,7 +212,7 @@ class SkillTests(unittest.TestCase):
             )
             loader = SkillLoader([str(system)])
             visible = filter_skills(
-                agent_id="assistant",
+                agent_id="main",
                 channel_id="http",
                 items=loader.load_all(),
                 env={},
@@ -239,7 +239,7 @@ class SkillTests(unittest.TestCase):
                 description: visible skill
                 enabled: true
                 always_on: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http]
                 tags: [time]
                 ---
@@ -255,7 +255,7 @@ class SkillTests(unittest.TestCase):
                 name: Repo Helper
                 description: repo assistance
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http]
                 tags: [repo]
                 ---
@@ -268,7 +268,7 @@ class SkillTests(unittest.TestCase):
                 patch.object(service.loader, "load_all", wraps=service.loader.load_all) as load_all,
                 patch.object(service.loader, "load_skill", wraps=service.loader.load_skill) as load_skill,
             ):
-                runtime = service.build_runtime(agent_id="assistant", channel_id="http", env={}, config={})
+                runtime = service.build_runtime(agent_id="main", channel_id="http", env={}, config={})
 
             self.assertEqual(runtime.snapshot.always_on_ids, ["example_time"])
             self.assertEqual([head.skill_id for head in runtime.snapshot.heads], ["repo_helper"])
@@ -293,7 +293,7 @@ class SkillTests(unittest.TestCase):
                     name: {skill_id}
                     description: this is a deliberately long description for {skill_id} to force compact rendering in runtime startup payloads
                     enabled: true
-                    agents: [assistant]
+                    agents: [main]
                     channels: [http]
                     ---
                     Body for {skill_id}
@@ -301,7 +301,7 @@ class SkillTests(unittest.TestCase):
                 )
             service = SkillService([str(system)])
 
-            runtime = service.build_runtime(agent_id="assistant", channel_id="http", env={}, config={})
+            runtime = service.build_runtime(agent_id="main", channel_id="http", env={}, config={})
 
             self.assertEqual(
                 runtime.skill_heads_text,
@@ -317,7 +317,7 @@ class SkillTests(unittest.TestCase):
                 name: Repo Helper
                 description: repo assistance
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http]
                 aliases: [repo]
                 ---
@@ -335,7 +335,7 @@ class SkillTests(unittest.TestCase):
                 name: Repo Helper
                 description: repo assistance with longer description text
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http]
                 aliases: [repo]
                 ---
@@ -369,7 +369,7 @@ class SkillTests(unittest.TestCase):
                 name: Repo Helper
                 description: repo assistance
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http]
                 ---
                 Repo helper body
@@ -384,7 +384,7 @@ class SkillTests(unittest.TestCase):
                 name: Time Helper
                 description: time assistance
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http]
                 ---
                 Time helper body
@@ -412,7 +412,7 @@ class SkillTests(unittest.TestCase):
                 name: B Skill
                 description: second
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http]
                 ---
                 B body
@@ -427,7 +427,7 @@ class SkillTests(unittest.TestCase):
                 name: A Skill
                 description: first
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http]
                 ---
                 A body
@@ -455,7 +455,7 @@ class SkillTests(unittest.TestCase):
                 name: Repo Helper
                 description: repo assistance
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http]
                 tags: [repo, git]
                 ---
@@ -464,7 +464,7 @@ class SkillTests(unittest.TestCase):
             )
             loader = SkillLoader([str(system)])
             visible = filter_skills(
-                agent_id="assistant",
+                agent_id="main",
                 channel_id="http",
                 items=loader.load_all(),
                 env={},
@@ -488,7 +488,7 @@ class SkillTests(unittest.TestCase):
                 name: GitHub Hot Repos Digest
                 description: daily hot repositories digest
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [feishu, http]
                 tags: [github, trending]
                 ---
@@ -497,7 +497,7 @@ class SkillTests(unittest.TestCase):
             )
             loader = SkillLoader([str(shared)])
             visible = filter_skills(
-                agent_id="assistant",
+                agent_id="main",
                 channel_id="feishu",
                 items=loader.load_all(),
                 env={},
@@ -525,7 +525,7 @@ class SkillTests(unittest.TestCase):
                 name: GitHub Hot Repos Digest
                 description: build a concise daily digest for fast-moving GitHub repositories
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [feishu, http]
                 tags: [github, trending, digest]
                 aliases: ["GitHub 热门项目摘要", "GitHub 热门仓库", "GitHub trending", "今日开源热榜"]
@@ -535,7 +535,7 @@ class SkillTests(unittest.TestCase):
             )
             loader = SkillLoader([str(shared)])
             visible = filter_skills(
-                agent_id="assistant",
+                agent_id="main",
                 channel_id="feishu",
                 items=loader.load_all(),
                 env={},
@@ -624,13 +624,13 @@ class SkillTests(unittest.TestCase):
         service = SkillService([str(repo_root / "skills")])
 
         feishu_runtime = service.build_runtime(
-            agent_id="assistant",
+            agent_id="main",
             channel_id="feishu",
             env={},
             config={},
         )
         http_runtime = service.build_runtime(
-            agent_id="assistant",
+            agent_id="main",
             channel_id="http",
             env={},
             config={},

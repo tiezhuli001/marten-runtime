@@ -24,6 +24,107 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
 
 ## Entries
 
+### 2026-04-15: Lightweight Subagents Became A First-Class Runtime Path With Selector-Aware Ceilings And Cooperative MCP Cancellation
+
+- Change:
+  - the repository now treats the lightweight subagent lane as a real runtime path instead of an ad-hoc prompt trick:
+    - `channel -> main agent -> spawn_subagent -> child agent -> builtin/MCP/skill -> parent summary -> delivery`
+  - the main agent prompt and runtime policy now align on explicit child-agent intent:
+    - explicit user requests such as “开启子代理 / 后台处理 / 不要污染主线程” are expected to prefer `spawn_subagent`
+    - runtime policy can still promote an under-scoped requested child profile up to the minimum needed for the task, while staying under the parent allowed-tools ceiling
+  - subagent tool ceilings now honor selector-style parent authorization instead of treating selectors like plain names:
+    - `*`
+    - `builtin:*`
+    - `mcp:*`
+    - `mcp:<server>`
+  - child execution now resolves the requested `agent_id` through the real `AgentRegistry` and runtime assets:
+    - child `role`
+    - child `app_id`
+    - child `prompt_mode`
+    - child `model_profile`
+    - matching `llm_client` / prompt assets when available
+  - persisted subagent task metadata now stores the resolved target app identity, so diagnostics ownership matches actual execution
+  - the active-event-loop MCP fallback is now cooperatively cancellable:
+    - timeout/cancel no longer only returns early on the caller side
+    - the worker coroutine is explicitly cancelled and its worker loop is cleaned up before exit
+- Why:
+  - the runtime needed a stable product path for background isolated work, not a fragile “only if the prompt is perfect” behavior
+  - selector-aware ceilings were required to keep the parent/child allowed-tools contract correct once parent permissions were expressed via families
+  - `agent_id` could not remain a schema-only field; child execution and diagnostics had to reflect the real target agent
+  - MCP cancellation had to become stronger than “ignore the eventual result” to reduce hanging background workers under timeout pressure
+- Source of truth:
+  - `apps/main_agent/AGENTS.md`
+  - `src/marten_runtime/subagents/policy.py`
+  - `src/marten_runtime/subagents/tool_profiles.py`
+  - `src/marten_runtime/subagents/service.py`
+  - `src/marten_runtime/interfaces/http/bootstrap_runtime.py`
+  - `src/marten_runtime/mcp/client.py`
+  - `docs/LIVE_VERIFICATION_CHECKLIST.md`
+- Verification:
+  - focused permission / execution / MCP cancellation regression:
+    - `PYTHONPATH=src python -m unittest -v tests.test_subagent_permissions tests.test_subagent_service tests.tools.test_subagent_tools tests.test_subagent_integration tests.test_subagent_runtime_loop tests.runtime_mcp.test_followup_recovery`
+      - pass, `57` tests green
+  - broader runtime / gateway / contracts regression:
+    - `PYTHONPATH=src python -m unittest -v tests.test_gateway tests.test_acceptance tests.contracts.test_runtime_contracts tests.contracts.test_gateway_contracts tests.test_event_loop_cleanup tests.test_subagent_permissions tests.test_subagent_service tests.tools.test_subagent_tools tests.test_subagent_integration tests.test_subagent_runtime_loop tests.runtime_mcp.test_followup_recovery`
+      - pass, `117` tests green
+  - live proof:
+    - real Feishu -> main agent -> child agent -> GitHub MCP -> Feishu completion notification path recorded in `docs/LIVE_VERIFICATION_CHECKLIST.md`
+
+### 2026-04-14: Default Runtime App Was Renamed To `main_agent` And The Main Prompt Was Repositioned As An Execution Agent
+
+- Change:
+  - the default runtime app id and app root moved from `example_assistant` to `main_agent`
+  - the default main agent id moved from `assistant` to `main`
+  - the canonical prompt asset root now lives under:
+    - `apps/main_agent/app.toml`
+    - `apps/main_agent/AGENTS.md`
+    - `apps/main_agent/BOOTSTRAP.md`
+    - `apps/main_agent/SOUL.md`
+    - `apps/main_agent/TOOLS.md`
+  - the default prompt posture changed from a generic helper/demo-assistant tone to a primary execution-agent stance
+  - the refreshed prompt now explicitly tells the default agent to:
+    - act as the default main agent
+    - push requests toward the next verifiable outcome
+    - prefer runtime facts, registered tools, MCP, and skills over guesswork
+    - stay concise and engineering-oriented instead of acting like a product concierge
+  - legacy inbound references to `assistant` remain routable through a narrow registry alias so old requested-agent and binding values do not hard-break
+- Why:
+  - `example_assistant` no longer matched the role of the repository's canonical default agent
+  - the runtime needed a stronger default system prompt aligned with the repository center of gravity:
+    - `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel`
+  - the new prompt position is intentionally closer to execution-first open-agent runtimes than to a demo helper persona
+- Source of truth:
+  - `apps/main_agent/app.toml`
+  - `apps/main_agent/AGENTS.md`
+  - `apps/main_agent/BOOTSTRAP.md`
+  - `apps/main_agent/SOUL.md`
+  - `apps/main_agent/TOOLS.md`
+  - `src/marten_runtime/apps/runtime_defaults.py`
+  - `src/marten_runtime/agents/registry.py`
+  - `config/agents.toml`
+  - `config/bindings.toml`
+  - compatibility boundary:
+    - `assistant` is compatibility-only for legacy requested-agent / binding values
+    - `assistant` still remains the LLM/chat message role name in replay and provider payloads
+- Verification:
+  - targeted rename + prompt assembly:
+    - `PYTHONPATH=src python -m unittest -v tests.test_agent_specs tests.test_router tests.test_bootstrap_prompt`
+      - pass, `17` tests green
+  - focused default-app regression:
+    - `PYTHONPATH=src python -m unittest -v tests.test_agent_specs tests.test_router tests.test_bootstrap_prompt tests.test_automation tests.test_automation_dispatch tests.test_automation_store tests.test_automation_tool_support tests.test_llm_transport tests.test_runtime_usage tests.test_usage_estimator tests.test_self_improve_gate tests.tools.test_automation_tool tests.tools.test_runtime_and_skill_tools tests.contracts.test_runtime_contracts tests.contracts.test_gateway_contracts`
+      - pass, `125` tests green
+  - focused default-agent-id + routing compatibility regression:
+    - `PYTHONPATH=src python -m unittest -v tests.test_router tests.test_bindings tests.test_acceptance tests.contracts.test_runtime_contracts`
+      - pass, `41` tests green
+  - gateway/skills/alias follow-up regression:
+    - `PYTHONPATH=src python -m unittest -v tests.contracts.test_gateway_contracts tests.test_agent_specs tests.test_automation_tool_support tests.test_gateway tests.test_skills`
+      - pass, `57` tests green
+  - full suite:
+    - `PYTHONPATH=src python -m unittest -v`
+      - pass, `504` tests green
+  - active-surface grep:
+    - `rg -n "example_assistant" README.md README_CN.md docs src tests config apps`
+      - pass, remaining matches are limited to architecture-history / archive references and the implementation plan for this rename
 ### 2026-04-13: Fresh Real Feishu Inbound Evidence Was Recovered On The Live Runtime
 
 - Change:
@@ -408,7 +509,7 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
 
 - Change:
   - added one new builtin family tool `runtime` with action `context_status`
-  - the default assistant-visible family-tool surface is now:
+  - the default main-agent-visible family-tool surface is now:
     - `automation`
     - `mcp`
     - `runtime`
@@ -588,7 +689,7 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
 ### 2026-03-31: Progressive Disclosure Refinement And Harness-Only Tightening Is The Current Baseline
 
 - Change:
-  - locked the default assistant-visible surface to five family entrypoints: `automation`, `mcp`, `self_improve`, `skill`, `time`
+  - locked the default main-agent-visible surface to five family entrypoints: `automation`, `mcp`, `self_improve`, `skill`, `time`
   - kept skill exposure as summary-first with body-on-demand
   - kept MCP exposure as family-level and server-summary-first, with detail and call on demand
   - removed remaining host-side keyword routing and extra prompt narration

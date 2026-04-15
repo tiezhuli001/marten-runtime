@@ -13,6 +13,7 @@ from marten_runtime.channels.dead_letter import InMemoryDeadLetterQueue
 from marten_runtime.channels.delivery_retry import DeliveryRetryPolicy
 from marten_runtime.channels.feishu.delivery_session import InMemoryFeishuDeliverySessionStore
 from marten_runtime.channels.feishu import rendering as feishu_rendering
+from marten_runtime.runtime.cooperative_stop import interruptible_sleep, raise_if_interrupted
 
 
 class FeishuDeliveryPayload(BaseModel):
@@ -163,7 +164,12 @@ class FeishuDeliveryClient:
         self._log_delivery_event("update", payload, result["message_id"])
         return result
 
-    def deliver(self, payload: FeishuDeliveryPayload) -> dict:
+    def deliver(
+        self,
+        payload: FeishuDeliveryPayload,
+        *,
+        cooperative_context: dict | None = None,
+    ) -> dict:
         if payload.event_type == "progress":
             self._log_delivery_event("skip", payload, None, reason="progress_hidden")
             return {
@@ -200,7 +206,11 @@ class FeishuDeliveryClient:
             run_id=payload.run_id,
             trace_id=payload.trace_id,
         )
-        result = self._deliver_with_retry(payload, session.message_id)
+        result = self._deliver_with_retry(
+            payload,
+            session.message_id,
+            cooperative_context=cooperative_context,
+        )
         if not result["ok"]:
             if payload.event_type in {"final", "error"}:
                 self.session_store.finalize_error(
@@ -249,16 +259,28 @@ class FeishuDeliveryClient:
             )
         return result
 
-    def _deliver_with_retry(self, payload: FeishuDeliveryPayload, message_id: str | None) -> dict:
+    def _deliver_with_retry(
+        self,
+        payload: FeishuDeliveryPayload,
+        message_id: str | None,
+        *,
+        cooperative_context: dict | None = None,
+    ) -> dict:
         retry_count = 0
         limit = self.retry_policy.retry_limit_for(payload.event_type)
         while True:
             try:
+                raise_if_interrupted(
+                    stop_event=(cooperative_context or {}).get("stop_event"),
+                    deadline_monotonic=(cooperative_context or {}).get("deadline_monotonic"),
+                    cancelled_message="FEISHU_DELIVERY_CANCELLED",
+                    timed_out_message="FEISHU_DELIVERY_TIMED_OUT",
+                )
                 result = self._attempt_delivery(payload, message_id)
                 result["retry_count"] = retry_count
                 result["ok"] = True
                 return result
-            except RuntimeError as exc:
+            except (RuntimeError, TimeoutError) as exc:
                 if retry_count >= limit:
                     dead_letter = self.dead_letter_queue.record(
                         channel_id="feishu",
@@ -282,7 +304,37 @@ class FeishuDeliveryClient:
                         "error": str(exc),
                     }
                 retry_count += 1
-                self.sleeper(self.retry_policy.backoff_for(retry_count))
+                try:
+                    interruptible_sleep(
+                        self.retry_policy.backoff_for(retry_count),
+                        stop_event=(cooperative_context or {}).get("stop_event"),
+                        deadline_monotonic=(cooperative_context or {}).get("deadline_monotonic"),
+                        cancelled_message="FEISHU_DELIVERY_CANCELLED",
+                        timed_out_message="FEISHU_DELIVERY_TIMED_OUT",
+                        sleeper=self.sleeper,
+                    )
+                except TimeoutError as stop_exc:
+                    dead_letter = self.dead_letter_queue.record(
+                        channel_id="feishu",
+                        conversation_id=payload.chat_id,
+                        payload=payload,
+                        attempts=retry_count,
+                        error=str(stop_exc),
+                    )
+                    return {
+                        "ok": False,
+                        "action": "send" if not message_id else "update",
+                        "event_type": payload.event_type,
+                        "event_id": payload.event_id,
+                        "run_id": payload.run_id,
+                        "trace_id": payload.trace_id,
+                        "sequence": payload.sequence,
+                        "chat_id": payload.chat_id,
+                        "message_id": message_id,
+                        "retry_count": retry_count,
+                        "dead_letter_id": dead_letter.dead_letter_id,
+                        "error": str(stop_exc),
+                    }
 
     def _attempt_delivery(self, payload: FeishuDeliveryPayload, message_id: str | None) -> dict:
         should_try_update = message_id is not None and self.enable_message_update

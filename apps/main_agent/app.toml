@@ -1,11 +1,11 @@
-app_id = "example_assistant"
+app_id = "main_agent"
 app_version = "0.1.0"
-default_agent = "assistant"
+default_agent = "main"
 prompt_mode = "full"
 delegation_policy = "isolated_session_only"
 
 [bootstrap]
-root = "apps/example_assistant"
+root = "apps/main_agent"
 agents = "AGENTS.md"
 identity = "SOUL.md"
 tools = "TOOLS.md"

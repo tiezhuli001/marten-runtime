@@ -11,6 +11,8 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field, field_validator
 
+from marten_runtime.runtime.cooperative_stop import call_with_cooperative_timeout
+
 _ARTICLE_RE = re.compile(r"<article\b[^>]*class=\"[^\"]*Box-row[^\"]*\"[^>]*>(.*?)</article>", re.S)
 _REPO_LINK_RE = re.compile(
     r"<h2\b[^>]*>.*?<a\s+[^>]*href=\"(?P<href>/[^\"#?]+/[^\"#?]+)\"[^>]*>(?P<text>.*?)</a>.*?</h2>",
@@ -111,7 +113,14 @@ def parse_trending_repositories(html: str, *, limit: int) -> list[TrendingReposi
     return items
 
 
-def fetch_trending_html(request: TrendingRepositoriesRequest) -> str:
+def fetch_trending_html(
+    request: TrendingRepositoriesRequest,
+    *,
+    stop_event=None,
+    deadline_monotonic: float | None = None,
+    timeout_seconds_override: float | None = None,
+    http_get=httpx.get,
+) -> str:
     fixture_path = os.environ.get("GITHUB_TRENDING_FIXTURE_PATH")
     if fixture_path:
         with open(fixture_path, encoding="utf-8") as handle:
@@ -120,7 +129,20 @@ def fetch_trending_html(request: TrendingRepositoriesRequest) -> str:
         "User-Agent": "marten-runtime-github-trending/0.1",
         "Accept": "text/html,application/xhtml+xml",
     }
-    response = httpx.get(_build_trending_url(request), headers=headers, timeout=20.0, follow_redirects=True)
+    response = call_with_cooperative_timeout(
+        lambda effective_timeout_seconds: http_get(
+            _build_trending_url(request),
+            headers=headers,
+            timeout=effective_timeout_seconds,
+            follow_redirects=True,
+        ),
+        default_timeout_seconds=20.0,
+        stop_event=stop_event,
+        deadline_monotonic=deadline_monotonic,
+        timeout_seconds_override=timeout_seconds_override,
+        cancelled_message="HTTP_CALL_CANCELLED",
+        timed_out_message="HTTP_CALL_TIMED_OUT",
+    )
     response.raise_for_status()
     return response.text
 

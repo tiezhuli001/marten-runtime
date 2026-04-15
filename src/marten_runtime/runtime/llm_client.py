@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from collections.abc import Callable, Mapping
@@ -81,6 +82,9 @@ class LLMRequest(BaseModel):
     requested_tool_payload: dict = Field(default_factory=dict)
     request_kind: str = "conversation"
     summary_input_text: str | None = None
+    timeout_seconds_override: float | None = None
+    cooperative_stop_event: object | None = None
+    cooperative_deadline_monotonic: float | None = None
 
 
 class LLMReply(BaseModel):
@@ -162,7 +166,11 @@ def _default_transport(
     headers: dict[str, str],
     body: dict,
     timeout_seconds: float = 30,
+    *,
+    stop_event=None,
+    deadline_monotonic: float | None = None,
 ) -> dict:
+    del stop_event, deadline_monotonic
     payload = json.dumps(body).encode("utf-8")
     request_headers = dict(headers)
     request_headers.setdefault("User-Agent", "marten-runtime/0.1")
@@ -222,6 +230,8 @@ class OpenAIChatLLMClient:
                     attempts=attempts,
                 ),
                 policy=retry_policy,
+                stop_event=request.cooperative_stop_event,
+                deadline_monotonic=request.cooperative_deadline_monotonic,
             )
         except Exception as exc:
             normalized = exc if isinstance(exc, ProviderTransportError) else None
@@ -235,7 +245,7 @@ class OpenAIChatLLMClient:
                 final_error_code=normalized.error_code,
                 attempts=list(attempts),
             )
-            raise
+            raise normalized
         self.last_call_diagnostics = ProviderCallDiagnostics(
             request_kind=request.request_kind,
             timeout_seconds=timeout_seconds,
@@ -258,6 +268,8 @@ class OpenAIChatLLMClient:
         return build_openai_chat_payload(self.model_name, request)
 
     def _timeout_seconds_for(self, request: LLMRequest) -> int:
+        if request.timeout_seconds_override is not None:
+            return max(1, int(math.ceil(request.timeout_seconds_override)))
         if _is_tool_followup_request(request):
             return self.interactive_tool_followup_timeout_seconds
         if request.request_kind == "interactive":
@@ -286,6 +298,8 @@ class OpenAIChatLLMClient:
             body=self._build_payload(request),
             timeout_seconds=timeout_seconds,
             attempts=attempts,
+            stop_event=request.cooperative_stop_event,
+            deadline_monotonic=request.cooperative_deadline_monotonic,
         )
 
     def _parse_reply(self, payload: dict) -> LLMReply:

@@ -1,10 +1,10 @@
 ---
 skill_id: self_improve
 name: Self Improve
-description: Use when the runtime needs to synthesize lesson candidates from repeated failures and later recoveries for the default assistant agent.
+description: Use when the runtime needs to synthesize lesson candidates from repeated failures and later recoveries for the default main agent.
 aliases: ["self improve", "runtime lessons", "lesson synthesis"]
 enabled: true
-agents: [assistant]
+agents: [main]
 channels: [http, feishu]
 tags: [self_improve, lessons, diagnostics]
 ---

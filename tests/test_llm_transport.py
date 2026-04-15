@@ -1,3 +1,5 @@
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -49,8 +51,8 @@ class OpenAIChatClientTests(unittest.TestCase):
             session_id="sess_1",
             trace_id="trace_1",
             message="what time is it?",
-            agent_id="assistant",
-            app_id="example_assistant",
+            agent_id="main",
+            app_id="main_agent",
             available_tools=["time"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1", builtin_tools=["time"]
@@ -100,8 +102,8 @@ class OpenAIChatClientTests(unittest.TestCase):
                     session_id="sess_1",
                     trace_id="trace_1",
                     message="hello",
-                    agent_id="assistant",
-                    app_id="example_assistant",
+                    agent_id="main",
+                    app_id="main_agent",
                     request_kind="interactive",
                 )
             )
@@ -143,8 +145,8 @@ class OpenAIChatClientTests(unittest.TestCase):
                     session_id="sess_1",
                     trace_id="trace_1",
                     message="hello",
-                    agent_id="assistant",
-                    app_id="example_assistant",
+                    agent_id="main",
+                    app_id="main_agent",
                     request_kind="automation",
                 )
             )
@@ -176,8 +178,8 @@ class OpenAIChatClientTests(unittest.TestCase):
             session_id="sess_summary",
             trace_id="trace_summary",
             message="继续",
-            agent_id="assistant",
-            app_id="example_assistant",
+            agent_id="main",
+            app_id="main_agent",
             tool_outcome_summary_text="Recent tool outcome summaries:\n- runtime.context_status: 峰值来自工具结果注入后。",
             tool_result={"iso_time": "2026-03-27T00:00:00Z"},
             requested_tool_name="time",
@@ -218,8 +220,8 @@ class OpenAIChatClientTests(unittest.TestCase):
             session_id="sess_1",
             trace_id="trace_1",
             message="当前有哪些定时任务",
-            agent_id="assistant",
-            app_id="example_assistant",
+            agent_id="main",
+            app_id="main_agent",
             available_tools=["automation"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1", builtin_tools=["automation"]
@@ -274,8 +276,8 @@ class OpenAIChatClientTests(unittest.TestCase):
             session_id="sess_1",
             trace_id="trace_1",
             message="what time is it?",
-            agent_id="assistant",
-            app_id="example_assistant",
+            agent_id="main",
+            app_id="main_agent",
             skill_heads_text="Visible skills:\n- example_time",
             capability_catalog_text="Capability catalog:\n- time",
             available_tools=["time"],
@@ -339,8 +341,8 @@ class OpenAIChatClientTests(unittest.TestCase):
             session_id="sess_1",
             trace_id="trace_1",
             message="当前上下文窗口多大？",
-            agent_id="assistant",
-            app_id="example_assistant",
+            agent_id="main",
+            app_id="main_agent",
             available_tools=["runtime"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1",
@@ -407,8 +409,8 @@ class OpenAIChatClientTests(unittest.TestCase):
             session_id="sess_1",
             trace_id="trace_1",
             message="看下 easy-agent",
-            agent_id="assistant",
-            app_id="example_assistant",
+            agent_id="main",
+            app_id="main_agent",
             available_tools=["mcp"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1",
@@ -474,8 +476,8 @@ class OpenAIChatClientTests(unittest.TestCase):
             session_id="sess_1",
             trace_id="trace_1",
             message="查一下 easy-agent",
-            agent_id="assistant",
-            app_id="example_assistant",
+            agent_id="main",
+            app_id="main_agent",
             tool_result={
                 "result_text": '{"items":[{"full_name":"CloudWide851/easy-agent","default_branch":"main"}]}'
             },
@@ -519,8 +521,8 @@ class OpenAIChatClientTests(unittest.TestCase):
             session_id="sess_1",
             trace_id="trace_1",
             message="帮我看下今天 github 热门仓库",
-            agent_id="assistant",
-            app_id="example_assistant",
+            agent_id="main",
+            app_id="main_agent",
             capability_catalog_text="Capability catalog:\n- mcp: Use MCP progressively.\n- time: Check live time first.",
             available_tools=["mcp", "time"],
             tool_snapshot=ToolSnapshot(
@@ -556,8 +558,8 @@ class OpenAIChatClientTests(unittest.TestCase):
             session_id="sess_1",
             trace_id="trace_1",
             message="现在上下文用了多少，简短一点。",
-            agent_id="assistant",
-            app_id="example_assistant",
+            agent_id="main",
+            app_id="main_agent",
             available_tools=["runtime", "mcp"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1", builtin_tools=["runtime", "mcp"]
@@ -593,8 +595,8 @@ class OpenAIChatClientTests(unittest.TestCase):
             session_id="sess_1",
             trace_id="trace_1",
             message="请用 github mcp 查看 https://github.com/CloudWide851/easy-agent 这个仓库的默认分支和描述。",
-            agent_id="assistant",
-            app_id="example_assistant",
+            agent_id="main",
+            app_id="main_agent",
             available_tools=["mcp"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1", builtin_tools=["mcp"]
@@ -632,8 +634,8 @@ class OpenAIChatClientTests(unittest.TestCase):
             session_id="sess_1",
             trace_id="trace_1",
             message="请用 github mcp 查看 https://github.com/CloudWide851/easy-agent 这个仓库最近一次提交是什么时候？",
-            agent_id="assistant",
-            app_id="example_assistant",
+            agent_id="main",
+            app_id="main_agent",
             available_tools=["mcp"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1", builtin_tools=["mcp"]
@@ -671,8 +673,8 @@ class OpenAIChatClientTests(unittest.TestCase):
             session_id="sess_1",
             trace_id="trace_1",
             message="当前上下文的具体使用详情是什么？",
-            agent_id="assistant",
-            app_id="example_assistant",
+            agent_id="main",
+            app_id="main_agent",
             available_tools=["runtime"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1", builtin_tools=["runtime"]
@@ -708,8 +710,8 @@ class OpenAIChatClientTests(unittest.TestCase):
             session_id="sess_1",
             trace_id="trace_1",
             message="请整理成适合飞书展示的结果。",
-            agent_id="assistant",
-            app_id="example_assistant",
+            agent_id="main",
+            app_id="main_agent",
             channel_protocol_instruction_text=feishu_instruction,
             available_tools=["skill"],
             tool_snapshot=ToolSnapshot(
@@ -732,6 +734,124 @@ class OpenAIChatClientTests(unittest.TestCase):
         ):
             with self.assertRaises(Exception):
                 _default_transport("https://example.com", {}, {})
+
+    def test_openai_client_stops_retry_when_stop_event_is_set(self) -> None:
+        captured: list[dict[str, object]] = []
+        stop_event = threading.Event()
+
+        def fake_transport(
+            url: str,
+            headers: dict[str, str],
+            body: dict,
+            timeout_seconds: float,
+            **kwargs,
+        ) -> dict:
+            del url, headers, body
+            captured.append({"timeout_seconds": timeout_seconds, **kwargs})
+            stop_event.set()
+            raise TimeoutError("timed out")
+
+        client = OpenAIChatLLMClient(
+            api_key="secret",
+            model="MiniMax-M2.5",
+            profile_name="minimax_coding",
+            transport=fake_transport,
+        )
+
+        with self.assertRaises(ProviderTransportError) as ctx:
+            client.complete(
+                LLMRequest(
+                    session_id="sess_stop",
+                    trace_id="trace_stop",
+                    message="hello",
+                    agent_id="main",
+                    app_id="main_agent",
+                    request_kind="interactive",
+                    cooperative_stop_event=stop_event,
+                )
+            )
+
+        self.assertEqual(len(captured), 1)
+        self.assertIs(captured[0]["stop_event"], stop_event)
+        self.assertEqual(ctx.exception.error_code, "PROVIDER_TIMEOUT")
+
+    def test_openai_client_preserves_subsecond_deadline_for_transport_timeout(self) -> None:
+        captured: list[dict[str, object]] = []
+
+        def fake_transport(
+            url: str,
+            headers: dict[str, str],
+            body: dict,
+            timeout_seconds: float,
+            **kwargs,
+        ) -> dict:
+            del url, headers, body, kwargs
+            captured.append({"timeout_seconds": timeout_seconds})
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+        client = OpenAIChatLLMClient(
+            api_key="secret",
+            model="MiniMax-M2.5",
+            profile_name="minimax_coding",
+            transport=fake_transport,
+        )
+
+        reply = client.complete(
+            LLMRequest(
+                session_id="sess_subsecond_deadline",
+                trace_id="trace_subsecond_deadline",
+                message="hello",
+                agent_id="main",
+                app_id="main_agent",
+                request_kind="interactive",
+                timeout_seconds_override=10,
+                cooperative_deadline_monotonic=time.monotonic() + 0.2,
+            )
+        )
+
+        self.assertEqual(reply.final_text, "ok")
+        self.assertEqual(len(captured), 1)
+        self.assertLess(captured[0]["timeout_seconds"], 0.5)
+
+    def test_openai_client_passes_deadline_to_transport_and_clamps_timeout(self) -> None:
+        captured: list[dict[str, object]] = []
+
+        def fake_transport(
+            url: str,
+            headers: dict[str, str],
+            body: dict,
+            timeout_seconds: float,
+            **kwargs,
+        ) -> dict:
+            del url, headers, body
+            captured.append({"timeout_seconds": timeout_seconds, **kwargs})
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+        client = OpenAIChatLLMClient(
+            api_key="secret",
+            model="MiniMax-M2.5",
+            profile_name="minimax_coding",
+            transport=fake_transport,
+        )
+
+        reply = client.complete(
+            LLMRequest(
+                session_id="sess_deadline",
+                trace_id="trace_deadline",
+                message="hello",
+                agent_id="main",
+                app_id="main_agent",
+                request_kind="interactive",
+                timeout_seconds_override=10,
+                cooperative_deadline_monotonic=time.monotonic() + 1.0,
+            )
+        )
+
+        self.assertEqual(reply.final_text, "ok")
+        self.assertEqual(len(captured), 1)
+        self.assertLessEqual(captured[0]["timeout_seconds"], 1.0)
+        self.assertGreater(captured[0]["timeout_seconds"], 0.5)
+        self.assertIn("deadline_monotonic", captured[0])
 
 
 if __name__ == "__main__":

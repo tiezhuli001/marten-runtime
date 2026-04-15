@@ -14,8 +14,8 @@ class AutomationDispatchTests(unittest.TestCase):
             AutomationJob(
                 automation_id="daily_hot",
                 name="Daily GitHub Hot Repos",
-                app_id="example_assistant",
-                agent_id="assistant",
+                app_id="main_agent",
+                agent_id="main",
                 prompt_template="Summarize today's hot repositories.",
                 schedule_kind="daily",
                 schedule_expr="10:00",
@@ -38,8 +38,8 @@ class AutomationDispatchTests(unittest.TestCase):
             AutomationJob(
                 automation_id="daily_hot",
                 name="Daily GitHub Hot Repos",
-                app_id="example_assistant",
-                agent_id="assistant",
+                app_id="main_agent",
+                agent_id="main",
                 prompt_template="Summarize today's hot repositories.",
                 schedule_kind="daily",
                 schedule_expr="10:00",
@@ -67,8 +67,8 @@ class AutomationDispatchTests(unittest.TestCase):
             AutomationJob(
                 automation_id="daily_hot",
                 name="Daily GitHub Hot Repos",
-                app_id="example_assistant",
-                agent_id="assistant",
+                app_id="main_agent",
+                agent_id="main",
                 prompt_template="Summarize today's hot repositories.",
                 schedule_kind="daily",
                 schedule_expr="10:00",

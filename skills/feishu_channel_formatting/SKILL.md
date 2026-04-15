@@ -4,7 +4,7 @@ name: Feishu Channel Formatting
 description: Always-on Feishu formatting constraints for final user-visible replies. Use when the answer is heading to Feishu and must stay compact, skimmable, and card-friendly.
 enabled: true
 always_on: true
-agents: [assistant]
+agents: [main]
 channels: [feishu]
 tags: [feishu, lark, formatting, channel]
 ---

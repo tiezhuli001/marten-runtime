@@ -104,8 +104,8 @@ class SelfImproveService:
 def make_default_judge(
     llm: LLMClient | None = None,
     *,
-    app_id: str = "example_assistant",
-    agent_id: str = "assistant",
+    app_id: str = "main_agent",
+    agent_id: str = "main",
     min_score: float = 0.8,
 ) -> LessonJudge:
     if llm is None:

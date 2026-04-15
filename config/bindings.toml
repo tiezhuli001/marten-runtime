@@ -1,9 +1,9 @@
 [[bindings]]
-agent_id = "assistant"
+agent_id = "main"
 channel_id = "http"
 default = true
 
 [[bindings]]
-agent_id = "assistant"
+agent_id = "main"
 channel_id = "feishu"
 default = true

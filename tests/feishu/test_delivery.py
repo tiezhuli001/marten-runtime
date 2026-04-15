@@ -1,4 +1,5 @@
 import json
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -539,6 +540,44 @@ class FeishuDeliveryTests(unittest.TestCase):
         self.assertEqual(final_result["retry_count"], 4)
         self.assertEqual(dead_letters.count(), 0)
         self.assertGreaterEqual(len(sleeps), 4)
+
+    def test_delivery_retry_stops_when_cooperative_stop_event_is_set(self) -> None:
+        transport = FlakyDeliveryTransport({"final": 10})
+        stop_event = threading.Event()
+        sleeps: list[float] = []
+
+        def sleeper(delay: float) -> None:
+            sleeps.append(delay)
+            stop_event.set()
+
+        client = FeishuDeliveryClient(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            transport=transport.post,
+            update_transport=lambda url, headers, body: transport.post(url, headers, body),
+            retry_policy=DeliveryRetryPolicy(final_max_retries=3, base_backoff_seconds=0.2, max_backoff_seconds=0.2),
+            sleeper=sleeper,
+        )
+
+        result = client.deliver(
+            FeishuDeliveryPayload(
+                chat_id="chat_stop",
+                event_type="final",
+                event_id="evt_stop",
+                run_id="run_stop",
+                trace_id="trace_stop",
+                sequence=1,
+                text="done",
+            ),
+            cooperative_context={"stop_event": stop_event},
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["retry_count"], 1)
+        self.assertIn("FEISHU_DELIVERY_CANCELLED", result["error"])
+        self.assertEqual(len(sleeps), 1)
 
     def test_terminal_delivery_failure_records_dead_letter_with_trace_metadata(self) -> None:
         transport = FlakyDeliveryTransport({"final": 6})

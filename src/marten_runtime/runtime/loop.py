@@ -1,3 +1,4 @@
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -71,6 +72,22 @@ DEFAULT_ALLOWED_TOOLS = [
 
 
 class RuntimeLoop:
+
+    @staticmethod
+    def _raise_if_interrupted(
+        stop_event: threading.Event | None,
+        deadline_monotonic: float | None,
+    ) -> None:
+        if stop_event is not None and stop_event.is_set():
+            raise RuntimeError("SUBAGENT_CANCELLED")
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            raise TimeoutError("SUBAGENT_TIMED_OUT")
+
+    @staticmethod
+    def _remaining_timeout_seconds(deadline_monotonic: float | None) -> float | None:
+        if deadline_monotonic is None:
+            return None
+        return max(0.05, deadline_monotonic - time.monotonic())
 
     def _append_post_turn_summary(
         self,
@@ -153,6 +170,8 @@ class RuntimeLoop:
             "activated_skill_bodies": ctx.activated_skill_bodies,
             "tool_snapshot": tool_snapshot,
             "request_kind": request_kind,
+            "cooperative_stop_event": overrides.get("cooperative_stop_event"),
+            "cooperative_deadline_monotonic": overrides.get("cooperative_deadline_monotonic"),
         }
         if include_available_tools:
             fields["available_tools"] = tool_snapshot.available_tools()
@@ -197,14 +216,19 @@ class RuntimeLoop:
         compact_settings: CompactionSettings | None = None,
         recent_tool_outcome_summaries: list[dict[str, object]] | None = None,
         request_kind: str = "interactive",
+        parent_run_id: str | None = None,
+        channel_id: str | None = None,
+        stop_event: threading.Event | None = None,
+        deadline_monotonic: float | None = None,
+        timeout_seconds_override: float | None = None,
     ) -> list[OutboundEvent]:
         trace_id = trace_id or f"trace_{uuid4().hex[:8]}"
         llm_request_count = 0
         run_started_at = time.perf_counter()
         resolved_agent = agent or AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=list(DEFAULT_ALLOWED_TOOLS),
         )
         resolved_llm = llm_client or self.llm
@@ -234,6 +258,8 @@ class RuntimeLoop:
             activated_skill_bodies=list(activated_skill_bodies or []),
             tool_snapshot=tool_snapshot,
             request_kind=request_kind,
+            cooperative_stop_event=stop_event,
+            cooperative_deadline_monotonic=deadline_monotonic,
         )
         estimated_tokens_before = estimate_request_tokens(rough_request)
         decision = (
@@ -309,6 +335,7 @@ class RuntimeLoop:
             context_snapshot_id=runtime_context.context_snapshot_id,
             skill_snapshot_id=resolved_skill_snapshot_id,
             tool_snapshot_id=tool_snapshot.tool_snapshot_id,
+            parent_run_id=parent_run_id,
         )
         request_base = dict(
             session_id=session_id,
@@ -385,15 +412,28 @@ class RuntimeLoop:
             include_available_tools=True,
             bootstrap_manifest_id=bootstrap_manifest_id,
             prompt_mode=resolved_agent.prompt_mode,
+            timeout_seconds_override=timeout_seconds_override,
+            cooperative_stop_event=stop_event,
+            cooperative_deadline_monotonic=deadline_monotonic,
         )
         tool_history: list[ToolExchange] = []
         current_request = first_request
         latest_actual_usage = None
         for _ in range(self.max_tool_rounds + 1):
             try:
+                self._raise_if_interrupted(stop_event, deadline_monotonic)
                 self.request_count += 1
                 llm_request_count += 1
                 llm_started_at = time.perf_counter()
+                current_request = current_request.model_copy(
+                    update={
+                        "timeout_seconds_override": timeout_seconds_override
+                        if timeout_seconds_override is not None
+                        else self._remaining_timeout_seconds(deadline_monotonic),
+                        "cooperative_stop_event": stop_event,
+                        "cooperative_deadline_monotonic": deadline_monotonic,
+                    }
+                )
                 reply = resolved_llm.complete(current_request)
                 provider_diagnostics = getattr(
                     resolved_llm, "last_call_diagnostics", None
@@ -417,6 +457,7 @@ class RuntimeLoop:
                     elapsed_ms=elapsed_ms(llm_started_at),
                 )
                 try:
+                    self._raise_if_interrupted(stop_event, deadline_monotonic)
                     tool_started_at = time.perf_counter()
                     tool_result = resolve_tool_call(
                         reply,
@@ -427,14 +468,21 @@ class RuntimeLoop:
                             "session_id": session_id,
                             "trace_id": trace_id,
                             "message": message,
+                            "channel_id": channel_id,
                             "agent_id": resolved_agent.agent_id,
                             "app_id": resolved_agent.app_id,
+                            "allowed_tools": list(resolved_agent.allowed_tools),
                             "model_profile": model_profile_name
                             or getattr(resolved_llm, "profile_name", "unknown"),
                             "current_request": current_request,
                             "latest_actual_usage": latest_actual_usage,
                             "compact_settings": resolved_compact_settings,
                             "compacted_context": resolved_compacted_context,
+                            "stop_event": stop_event,
+                            "deadline_monotonic": deadline_monotonic,
+                            "timeout_seconds_override": timeout_seconds_override
+                            if timeout_seconds_override is not None
+                            else self._remaining_timeout_seconds(deadline_monotonic),
                         },
                     )
                     if tool_result is not None:
@@ -559,6 +607,11 @@ class RuntimeLoop:
                             current_request = first_request.model_copy(
                                 update={
                                     "tool_history": list(tool_history),
+                                    "timeout_seconds_override": timeout_seconds_override
+                                    if timeout_seconds_override is not None
+                                    else self._remaining_timeout_seconds(deadline_monotonic),
+                                    "cooperative_stop_event": stop_event,
+                                    "cooperative_deadline_monotonic": deadline_monotonic,
                                 }
                             )
                             self.history.set_compaction(
@@ -730,6 +783,12 @@ class RuntimeLoop:
                 tool_result=tool_result,
                 requested_tool_name=reply.tool_name,
                 requested_tool_payload=reply.tool_payload,
+            ).model_copy(
+                update={
+                    "timeout_seconds_override": timeout_seconds_override
+                    if timeout_seconds_override is not None
+                    else self._remaining_timeout_seconds(deadline_monotonic)
+                }
             )
         record_failure(self.self_improve_recorder, 
             agent_id=resolved_agent.agent_id,
@@ -751,4 +810,3 @@ class RuntimeLoop:
             error_code="TOOL_LOOP_LIMIT_EXCEEDED",
             error_text="tool_loop_limit_exceeded",
         )
-

@@ -59,6 +59,7 @@ from marten_runtime.self_improve.service import SelfImproveService, make_default
 from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
 from marten_runtime.session.store import SessionStore
 from marten_runtime.skills.service import SkillService
+from marten_runtime.subagents.service import SubagentService
 from marten_runtime.tools.builtins.mcp_tool import build_mcp_capability_catalog
 from marten_runtime.tools.registry import ToolRegistry
 
@@ -131,6 +132,7 @@ class HTTPRuntimeState:
     agent_router: AgentRouter
     default_agent: AgentSpec
     skill_service: SkillService
+    subagent_service: SubagentService
     capability_catalog_text: str | None
     system_prompt: str
     runtime_loop: RuntimeLoop
@@ -208,11 +210,29 @@ def build_http_runtime(
         profile_name=default_profile_name, profile=default_profile, env=resolved_env
     )
     llm_client_factory.cache_client(default_profile_name, default_llm)
+    session_store = SessionStore()
     runtime_loop = RuntimeLoop(
         default_llm,
         tool_registry,
         InMemoryRunHistory(),
         self_improve_recorder=SelfImproveRecorder(self_improve_store),
+    )
+    feishu_delivery = build_feishu_delivery_client(
+        env=resolved_env,
+        channels_config=channels_config,
+    )
+    subagent_service = SubagentService(
+        session_store=session_store,
+        run_history=runtime_loop.history,
+        tool_registry=tool_registry,
+        runtime_loop=runtime_loop,
+        max_concurrent_subagents=5,
+        auto_start_background=True,
+        feishu_delivery=feishu_delivery,
+        agent_registry=agent_registry,
+        app_runtimes=app_runtimes,
+        llm_client_factory=llm_client_factory,
+        models_config=models_config,
     )
     self_improve_service = SelfImproveService(
         self_improve_store,
@@ -222,10 +242,6 @@ def build_http_runtime(
             app_id=app_manifest.app_id,
             agent_id=default_agent.agent_id,
         ),
-    )
-    feishu_delivery = build_feishu_delivery_client(
-        env=resolved_env,
-        channels_config=channels_config,
     )
     feishu_receipts = InMemoryReceiptStore()
     state = HTTPRuntimeState(
@@ -241,7 +257,7 @@ def build_http_runtime(
         automation_store=automation_store,
         self_improve_store=self_improve_store,
         self_improve_service=self_improve_service,
-        session_store=SessionStore(),
+        session_store=session_store,
         run_history=runtime_loop.history,
         tool_registry=tool_registry,
         mcp_client=mcp_client,
@@ -251,6 +267,7 @@ def build_http_runtime(
         agent_router=agent_router,
         default_agent=default_agent,
         skill_service=skill_service,
+        subagent_service=subagent_service,
         capability_catalog_text=capability_catalog_text,
         system_prompt=system_prompt,
         runtime_loop=runtime_loop,

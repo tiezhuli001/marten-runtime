@@ -14,7 +14,7 @@ class AgentRouter:
     def __init__(
         self,
         registry: AgentRegistry,
-        default_agent_id: str = "assistant",
+        default_agent_id: str = "main",
         bindings: AgentBindingRegistry | None = None,
     ) -> None:
         self.registry = registry

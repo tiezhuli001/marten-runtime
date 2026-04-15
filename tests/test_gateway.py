@@ -656,7 +656,7 @@ class GatewayTests(unittest.TestCase):
             session_response = client.get(f"/diagnostics/session/{session_id}")
 
         self.assertEqual(session_response.status_code, 200)
-        self.assertEqual(session_response.json()["active_agent_id"], "assistant")
+        self.assertEqual(session_response.json()["active_agent_id"], "main")
 
     def test_http_messages_endpoint_routes_requested_agent_id_from_request(self) -> None:
         with TestClient(build_test_app()) as client:

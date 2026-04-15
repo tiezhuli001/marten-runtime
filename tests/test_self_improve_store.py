@@ -20,7 +20,7 @@ class SQLiteSelfImproveStoreTests(unittest.TestCase):
             store.record_failure(
                 FailureEvent(
                     failure_id="fail_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     run_id="run_1",
                     trace_id="trace_1",
                     session_id="session_1",
@@ -34,7 +34,7 @@ class SQLiteSelfImproveStoreTests(unittest.TestCase):
             store.record_recovery(
                 RecoveryEvent(
                     recovery_id="recovery_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     run_id="run_2",
                     trace_id="trace_2",
                     related_failure_fingerprint="fp_timeout",
@@ -45,8 +45,8 @@ class SQLiteSelfImproveStoreTests(unittest.TestCase):
             )
 
             reloaded = SQLiteSelfImproveStore(db_path)
-            failures = reloaded.list_recent_failures(agent_id="assistant", limit=10)
-            recoveries = reloaded.list_recent_recoveries(agent_id="assistant", limit=10)
+            failures = reloaded.list_recent_failures(agent_id="main", limit=10)
+            recoveries = reloaded.list_recent_recoveries(agent_id="main", limit=10)
 
         self.assertEqual(len(failures), 1)
         self.assertEqual(failures[0].error_code, "PROVIDER_TIMEOUT")
@@ -60,7 +60,7 @@ class SQLiteSelfImproveStoreTests(unittest.TestCase):
             store.save_candidate(
                 LessonCandidate(
                     candidate_id="cand_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     source_fingerprints=["fp_timeout", "fp_timeout"],
                     candidate_text="遇到重复 provider timeout 时先减少无关工具面。",
                     rationale="same failure repeated with later successful narrowing",
@@ -70,7 +70,7 @@ class SQLiteSelfImproveStoreTests(unittest.TestCase):
             )
             updated = store.update_candidate_status("cand_1", status="accepted")
             reloaded = SQLiteSelfImproveStore(db_path)
-            candidates = reloaded.list_candidates(agent_id="assistant", limit=10)
+            candidates = reloaded.list_candidates(agent_id="main", limit=10)
 
         self.assertEqual(updated.status, "accepted")
         self.assertEqual(len(candidates), 1)
@@ -83,7 +83,7 @@ class SQLiteSelfImproveStoreTests(unittest.TestCase):
             store.save_candidate(
                 LessonCandidate(
                     candidate_id="cand_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     source_fingerprints=["fp_one", "fp_one"],
                     candidate_text="pending lesson",
                     rationale="pending rationale",
@@ -94,7 +94,7 @@ class SQLiteSelfImproveStoreTests(unittest.TestCase):
             store.save_candidate(
                 LessonCandidate(
                     candidate_id="cand_2",
-                    agent_id="assistant",
+                    agent_id="main",
                     source_fingerprints=["fp_two", "fp_two"],
                     candidate_text="accepted lesson",
                     rationale="accepted rationale",
@@ -103,9 +103,9 @@ class SQLiteSelfImproveStoreTests(unittest.TestCase):
                 )
             )
 
-            pending = store.list_candidates(agent_id="assistant", limit=10, status="pending")
+            pending = store.list_candidates(agent_id="main", limit=10, status="pending")
             deleted = store.delete_candidate("cand_1")
-            remaining = store.list_candidates(agent_id="assistant", limit=10)
+            remaining = store.list_candidates(agent_id="main", limit=10)
 
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0].candidate_id, "cand_1")
@@ -119,7 +119,7 @@ class SQLiteSelfImproveStoreTests(unittest.TestCase):
             store.save_lesson(
                 SystemLesson(
                     lesson_id="lesson_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     topic_key="provider_timeout",
                     lesson_text="旧规则",
                     source_fingerprints=["fp_timeout"],
@@ -129,7 +129,7 @@ class SQLiteSelfImproveStoreTests(unittest.TestCase):
             store.save_lesson(
                 SystemLesson(
                     lesson_id="lesson_2",
-                    agent_id="assistant",
+                    agent_id="main",
                     topic_key="provider_timeout",
                     lesson_text="新规则",
                     source_fingerprints=["fp_timeout", "fp_timeout"],
@@ -138,7 +138,7 @@ class SQLiteSelfImproveStoreTests(unittest.TestCase):
             )
 
             reloaded = SQLiteSelfImproveStore(db_path)
-            active_lessons = reloaded.list_active_lessons(agent_id="assistant")
+            active_lessons = reloaded.list_active_lessons(agent_id="main")
             old_lesson = reloaded.get_lesson("lesson_1")
             new_lesson = reloaded.get_lesson("lesson_2")
 

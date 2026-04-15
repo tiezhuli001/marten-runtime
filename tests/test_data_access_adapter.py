@@ -23,7 +23,7 @@ class DomainDataAdapterTests(unittest.TestCase):
             store.save_candidate(
                 LessonCandidate(
                     candidate_id="cand_pending",
-                    agent_id="assistant",
+                    agent_id="main",
                     source_fingerprints=["fp_one", "fp_one"],
                     candidate_text="pending lesson",
                     rationale="pending rationale",
@@ -34,7 +34,7 @@ class DomainDataAdapterTests(unittest.TestCase):
             store.save_candidate(
                 LessonCandidate(
                     candidate_id="cand_rejected",
-                    agent_id="assistant",
+                    agent_id="main",
                     source_fingerprints=["fp_two", "fp_two"],
                     candidate_text="rejected lesson",
                     rationale="rejected rationale",
@@ -45,12 +45,12 @@ class DomainDataAdapterTests(unittest.TestCase):
 
             pending = adapter.list_items(
                 "lesson_candidate",
-                filters={"agent_id": "assistant", "status": "pending"},
+                filters={"agent_id": "main", "status": "pending"},
                 limit=10,
             )
             item = adapter.get_item("lesson_candidate", item_id="cand_pending")
             deleted = adapter.delete_item("lesson_candidate", item_id="cand_pending")
-            remaining = store.list_candidates(agent_id="assistant", limit=10)
+            remaining = store.list_candidates(agent_id="main", limit=10)
 
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0]["candidate_id"], "cand_pending")
@@ -63,7 +63,7 @@ class DomainDataAdapterTests(unittest.TestCase):
             adapter = self._build_adapter(tmpdir)
 
             with self.assertRaises(KeyError):
-                adapter.list_items("system_lesson", filters={"agent_id": "assistant"}, limit=10)
+                adapter.list_items("system_lesson", filters={"agent_id": "main"}, limit=10)
             with self.assertRaises(KeyError):
                 adapter.get_item("unknown_entity", item_id="whatever")
 
@@ -75,8 +75,8 @@ class DomainDataAdapterTests(unittest.TestCase):
                 values={
                     "automation_id": "daily_digest",
                     "name": "Daily Digest",
-                    "app_id": "assistant",
-                    "agent_id": "assistant",
+                    "app_id": "main_agent",
+                    "agent_id": "main",
                     "prompt_template": "Summarize hot repos",
                     "schedule_kind": "daily",
                     "schedule_expr": "09:00",
@@ -105,8 +105,8 @@ class DomainDataAdapterTests(unittest.TestCase):
                 AutomationJob(
                     automation_id="self_improve_internal",
                     name="Internal Self Improve",
-                    app_id="assistant",
-                    agent_id="assistant",
+                    app_id="main_agent",
+                    agent_id="main",
                     prompt_template="Summarize failures.",
                     schedule_kind="daily",
                     schedule_expr="03:00",
@@ -140,8 +140,8 @@ class DomainDataAdapterTests(unittest.TestCase):
                 values={
                     "automation_id": "daily_digest",
                     "name": "Daily Digest",
-                    "app_id": "assistant",
-                    "agent_id": "assistant",
+                    "app_id": "main_agent",
+                    "agent_id": "main",
                     "prompt_template": "Summarize hot repos",
                     "schedule_kind": "daily",
                     "schedule_expr": "09:00",
@@ -183,7 +183,7 @@ class DomainDataAdapterTests(unittest.TestCase):
             adapter.self_improve_store.save_candidate(
                 LessonCandidate(
                     candidate_id="cand_pending",
-                    agent_id="assistant",
+                    agent_id="main",
                     source_fingerprints=["fp_one", "fp_one"],
                     candidate_text="pending lesson",
                     rationale="pending rationale",
@@ -199,7 +199,7 @@ class DomainDataAdapterTests(unittest.TestCase):
                     "lesson_candidate",
                     values={
                         "candidate_id": "cand_created",
-                        "agent_id": "assistant",
+                        "agent_id": "main",
                     },
                 )
             with self.assertRaises(KeyError):

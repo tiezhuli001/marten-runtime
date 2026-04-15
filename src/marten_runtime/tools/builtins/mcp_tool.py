@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import time
 
 from marten_runtime.mcp.client import MCPClient
@@ -54,6 +55,8 @@ def run_mcp_tool(
     servers: list[MCPServerSpec],
     client: MCPClient,
     discovery: dict[str, dict[str, object]],
+    *,
+    tool_context: dict | None = None,
 ) -> dict:
     server_map = {server.server_id: server for server in servers}
     normalized = normalize_mcp_request(server_map, payload)
@@ -79,13 +82,20 @@ def run_mcp_tool(
         server = _require_server(server_map, normalized.server_id)
         tool_name = normalized.tool_name or ""
         arguments = normalized.arguments
-        result = _call_tool_with_transient_retry(client, server.server_id, tool_name, arguments)
+        result = _call_tool_with_transient_retry(
+            client,
+            server.server_id,
+            tool_name,
+            arguments,
+            tool_context=tool_context,
+        )
         if bool(result.get("ok")) and not bool(result.get("is_error")):
             _heal_discovery_after_successful_call(
                 server=server,
                 tool_name=tool_name,
                 client=client,
                 discovery=discovery,
+                tool_context=tool_context,
             )
         return {
             "action": "call",
@@ -115,20 +125,29 @@ def _call_tool_with_transient_retry(
     server_id: str,
     tool_name: str,
     arguments: dict,
+    *,
+    tool_context: dict | None = None,
 ) -> dict:
     attempts = len(_TRANSIENT_MCP_RETRY_DELAYS_SECONDS) + 1
     last_result: dict | None = None
     for attempt in range(attempts):
         try:
-            result = client.call_tool(server_id, tool_name, arguments)
+            _raise_if_mcp_interrupted(tool_context)
+            result = _call_client_tool(
+                client,
+                server_id,
+                tool_name,
+                arguments,
+                tool_context=tool_context,
+            )
         except Exception as exc:
             if attempt + 1 < attempts and _is_transient_mcp_exception(exc):
-                time.sleep(_TRANSIENT_MCP_RETRY_DELAYS_SECONDS[attempt])
+                _interruptible_sleep(_TRANSIENT_MCP_RETRY_DELAYS_SECONDS[attempt], tool_context)
                 continue
             raise
         last_result = result
         if attempt + 1 < attempts and _is_transient_mcp_error_result(result):
-            time.sleep(_TRANSIENT_MCP_RETRY_DELAYS_SECONDS[attempt])
+            _interruptible_sleep(_TRANSIENT_MCP_RETRY_DELAYS_SECONDS[attempt], tool_context)
             continue
         return result
     return last_result or {}
@@ -184,9 +203,14 @@ def _heal_discovery_after_successful_call(
     tool_name: str,
     client: MCPClient,
     discovery: dict[str, dict[str, object]],
+    tool_context: dict | None = None,
 ) -> None:
     try:
-        refreshed_tools = client.list_tools(server.server_id)
+        refreshed_tools = _list_client_tools(
+            client,
+            server.server_id,
+            tool_context=tool_context,
+        )
     except Exception:
         refreshed_tools = []
     if refreshed_tools:
@@ -198,4 +222,68 @@ def _heal_discovery_after_successful_call(
         "state": "discovered" if tool_count > 0 else "configured",
         "tool_count": tool_count,
         "error": None,
+    }
+
+
+def _raise_if_mcp_interrupted(tool_context: dict | None) -> None:
+    stop_event = (tool_context or {}).get("stop_event")
+    deadline_monotonic = (tool_context or {}).get("deadline_monotonic")
+    if stop_event is not None and getattr(stop_event, "is_set", lambda: False)():
+        raise RuntimeError("MCP_CALL_CANCELLED")
+    if deadline_monotonic is not None and time.monotonic() >= float(deadline_monotonic):
+        raise TimeoutError("MCP_CALL_TIMED_OUT")
+
+
+def _interruptible_sleep(seconds: float, tool_context: dict | None) -> None:
+    _raise_if_mcp_interrupted(tool_context)
+    stop_event = (tool_context or {}).get("stop_event")
+    if stop_event is not None and hasattr(stop_event, "wait"):
+        if stop_event.wait(timeout=seconds):
+            raise RuntimeError("MCP_CALL_CANCELLED")
+        _raise_if_mcp_interrupted(tool_context)
+        return
+    time.sleep(seconds)
+    _raise_if_mcp_interrupted(tool_context)
+
+
+def _call_client_tool(
+    client: MCPClient,
+    server_id: str,
+    tool_name: str,
+    arguments: dict,
+    *,
+    tool_context: dict | None = None,
+) -> dict:
+    kwargs = _cooperative_client_kwargs(client.call_tool, tool_context)
+    return client.call_tool(server_id, tool_name, arguments, **kwargs)
+
+
+def _list_client_tools(
+    client: MCPClient,
+    server_id: str,
+    *,
+    tool_context: dict | None = None,
+):
+    kwargs = _cooperative_client_kwargs(client.list_tools, tool_context)
+    return client.list_tools(server_id, **kwargs)
+
+
+def _cooperative_client_kwargs(handler, tool_context: dict | None) -> dict:
+    try:
+        signature = inspect.signature(handler)
+    except (TypeError, ValueError):
+        return {}
+    accepts_kwargs = any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+    candidates = {
+        "stop_event": (tool_context or {}).get("stop_event"),
+        "deadline_monotonic": (tool_context or {}).get("deadline_monotonic"),
+        "timeout_seconds_override": (tool_context or {}).get("timeout_seconds_override"),
+    }
+    return {
+        key: value
+        for key, value in candidates.items()
+        if value is not None and (accepts_kwargs or key in signature.parameters)
     }

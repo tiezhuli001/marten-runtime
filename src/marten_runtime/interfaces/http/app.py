@@ -20,6 +20,7 @@ from marten_runtime.interfaces.http.runtime_diagnostics import (
     serialize_runtime_diagnostics,
 )
 from marten_runtime.runtime.lanes import LaneLease
+from marten_runtime.runtime.event_loop_cleanup import close_idle_event_loops
 
 
 class MessageRequest(BaseModel):
@@ -57,7 +58,9 @@ def create_app(
         try:
             yield
         finally:
+            runtime.subagent_service.shutdown()
             await runtime.feishu_socket_service.stop_background()
+            close_idle_event_loops()
 
     app = FastAPI(title="marten-runtime", lifespan=lifespan)
     app.state.runtime = runtime
@@ -152,6 +155,18 @@ def create_app(
             return runtime.run_history.get(run_id).model_dump(mode="json")
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="RUN_NOT_FOUND") from exc
+
+    @app.get("/diagnostics/subagents")
+    def list_subagents() -> dict[str, object]:
+        items = [item.model_dump(mode="json") for item in runtime.subagent_service.store.list_tasks()]
+        return {"items": items, "count": len(items)}
+
+    @app.get("/diagnostics/subagent/{task_id}")
+    def get_subagent(task_id: str) -> dict[str, object]:
+        try:
+            return runtime.subagent_service.store.get(task_id).model_dump(mode="json")
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="SUBAGENT_NOT_FOUND") from exc
 
     @app.get("/diagnostics/runs")
     def list_runs(limit: int = 20) -> dict[str, object]:

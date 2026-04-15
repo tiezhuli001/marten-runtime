@@ -1,15 +1,15 @@
-[agents.assistant]
+[agents.main]
 enabled = true
 role = "general_assistant"
-app_id = "example_assistant"
-allowed_tools = ["automation", "mcp", "runtime", "self_improve", "skill", "time"]
+app_id = "main_agent"
+allowed_tools = ["automation", "mcp", "runtime", "self_improve", "skill", "time", "spawn_subagent", "cancel_subagent"]
 prompt_mode = "full"
 model_profile = "minimax_coding"
 
 [agents.coding]
 enabled = true
 role = "coding_agent"
-app_id = "example_assistant"
+app_id = "main_agent"
 allowed_tools = ["runtime", "skill", "time"]
 prompt_mode = "child"
 model_profile = "default"
@@ -17,6 +17,6 @@ model_profile = "default"
 [agents.ops]
 enabled = false
 role = "ops_agent"
-app_id = "example_assistant"
+app_id = "main_agent"
 allowed_tools = ["runtime", "time"]
 prompt_mode = "full"

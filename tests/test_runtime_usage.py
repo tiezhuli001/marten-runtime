@@ -31,8 +31,8 @@ class RuntimeUsageTests(unittest.TestCase):
                 session_id="sess_usage_text",
                 trace_id="trace_usage_text",
                 message="hello",
-                agent_id="assistant",
-                app_id="example_assistant",
+                agent_id="main",
+                app_id="main_agent",
             )
         )
 
@@ -82,8 +82,8 @@ class RuntimeUsageTests(unittest.TestCase):
                 session_id="sess_usage_tool",
                 trace_id="trace_usage_tool",
                 message="what time",
-                agent_id="assistant",
-                app_id="example_assistant",
+                agent_id="main",
+                app_id="main_agent",
                 available_tools=["time"],
                 tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_usage", builtin_tools=["time"]),
             )
@@ -113,8 +113,8 @@ class RuntimeUsageTests(unittest.TestCase):
                 session_id="sess_usage_missing",
                 trace_id="trace_usage_missing",
                 message="hello",
-                agent_id="assistant",
-                app_id="example_assistant",
+                agent_id="main",
+                app_id="main_agent",
             )
         )
 

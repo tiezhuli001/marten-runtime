@@ -2,6 +2,8 @@ import asyncio
 import os
 import subprocess
 import sys
+import threading
+import time
 import unittest
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -44,6 +46,38 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         return MCPServerSpec(
             **kwargs,
         )
+
+    def test_client_call_tool_inside_asyncio_thread_honors_deadline_even_if_worker_blocks(self) -> None:
+        finished = threading.Event()
+
+        class BlockingAsyncClient(MCPClient):
+            async def _call_tool_async(self, server, tool_name, payload, stop_event=None, deadline_monotonic=None, timeout_seconds_override=None):
+                del server, tool_name, payload, stop_event, deadline_monotonic, timeout_seconds_override
+                try:
+                    await anyio.sleep(10)
+                    return {"ok": True, "result_text": "late"}
+                finally:
+                    finished.set()
+
+        server = self._build_stdio_echo_server()
+        client = BlockingAsyncClient([server])
+
+        async def run_call() -> dict:
+            return client.call_tool(
+                server.server_id,
+                "echo",
+                {"query": "release notes"},
+                deadline_monotonic=time.monotonic() + 0.2,
+            )
+
+        started = time.monotonic()
+        with self.assertRaises(TimeoutError) as ctx:
+            asyncio.run(run_call())
+        elapsed = time.monotonic() - started
+
+        self.assertIn("TIMED_OUT", str(ctx.exception))
+        self.assertLess(elapsed, 1.0)
+        self.assertTrue(finished.wait(timeout=1.0))
 
     def test_client_can_call_tool_inside_asyncio_thread(self) -> None:
         class AsyncSafeClient(MCPClient):
@@ -144,6 +178,59 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         self.assertEqual(discovery["stdio-echo"]["state"], "discovered")
         self.assertEqual([tool.name for tool in server.tools], ["echo"])
 
+    def test_discovery_passes_cooperative_kwargs_to_client(self) -> None:
+        server = self._build_stdio_echo_server()
+
+        class CapturingClient:
+            def __init__(self) -> None:
+                self.kwargs = None
+
+            def list_tools(self, server_id: str, **kwargs):
+                del server_id
+                self.kwargs = kwargs
+                return [MCPToolSpec(name="echo", description="Echo over stdio.")]
+
+        client = CapturingClient()
+        deadline = time.monotonic() + 2
+        discovery = discover_mcp_tools(
+            [server],
+            client,  # type: ignore[arg-type]
+            stop_event=threading.Event(),
+            deadline_monotonic=deadline,
+            timeout_seconds_override=1.5,
+        )
+
+        self.assertEqual(discovery["stdio-echo"]["state"], "discovered")
+        self.assertIsNotNone(client.kwargs)
+        self.assertAlmostEqual(client.kwargs["timeout_seconds_override"], 1.5, places=2)
+        self.assertEqual(client.kwargs["deadline_monotonic"], deadline)
+
+    def test_discovery_inside_asyncio_thread_honors_deadline_even_if_worker_blocks(self) -> None:
+        server = self._build_stdio_echo_server()
+
+        class BlockingClient:
+            def list_tools(self, server_id: str, **kwargs):
+                del server_id, kwargs
+                time.sleep(10)
+                return [MCPToolSpec(name="echo", description="Echo over stdio.")]
+
+        client = BlockingClient()
+
+        async def run_discovery() -> dict[str, dict[str, object]]:
+            return discover_mcp_tools(
+                [server],
+                client,  # type: ignore[arg-type]
+                deadline_monotonic=time.monotonic() + 0.2,
+            )
+
+        started = time.monotonic()
+        discovery = asyncio.run(run_discovery())
+        elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 1.0)
+        self.assertEqual(discovery["stdio-echo"]["state"], "unavailable")
+        self.assertIn("TIMED_OUT", str(discovery["stdio-echo"]["error"]))
+
     def test_runtime_can_call_real_stdio_mcp_tool_without_static_tool_list(self) -> None:
         fixture = Path(__file__).resolve().parents[1] / "fixtures" / "mcp_stdio_server.py"
         server = self._build_stdio_echo_server(fixture=fixture)
@@ -170,9 +257,9 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, InMemoryRunHistory())
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -239,9 +326,9 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, InMemoryRunHistory())
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -309,9 +396,9 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, InMemoryRunHistory())
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -383,6 +470,112 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         self.assertEqual(discovery["github"]["tool_count"], 1)
         self.assertEqual(discovery["github"]["error"], None)
         self.assertEqual([tool.name for tool in server.tools], ["list_commits"])
+
+    def test_mcp_family_tool_stops_retry_sleep_when_stop_event_is_set(self) -> None:
+        server = MCPServerSpec(
+            server_id="github",
+            transport="mock",
+            backend_id="github",
+            tools=[MCPToolSpec(name="list_commits", description="List GitHub commits.")],
+        )
+
+        class StopDuringRetryEvent:
+            def __init__(self) -> None:
+                self._set = False
+                self.wait_calls: list[float] = []
+
+            def is_set(self) -> bool:
+                return self._set
+
+            def wait(self, timeout: float | None = None) -> bool:
+                self.wait_calls.append(float(timeout or 0.0))
+                self._set = True
+                return True
+
+        stop_event = StopDuringRetryEvent()
+
+        class AlwaysTransientFailureClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def call_tool(self, server_id: str, tool_name: str, payload: dict, **kwargs) -> dict:
+                del server_id, tool_name, payload, kwargs
+                self.calls += 1
+                return {
+                    "server_id": "github",
+                    "tool_name": "list_commits",
+                    "payload": {"owner": "llt22", "repo": "talkio", "perPage": 1},
+                    "result_text": 'failed to list commits: Get "https://api.github.com/repos/llt22/talkio/commits?page=1&per_page=1": EOF',
+                    "ok": False,
+                    "is_error": True,
+                }
+
+        client = AlwaysTransientFailureClient()
+
+        with self.assertRaises(RuntimeError) as ctx:
+            run_mcp_tool(
+                {
+                    "action": "call",
+                    "server_id": "github",
+                    "tool_name": "list_commits",
+                    "arguments": {"owner": "llt22", "repo": "talkio", "perPage": 1},
+                },
+                [server],
+                client,  # type: ignore[arg-type]
+                {"github": {"state": "configured", "tool_count": 1, "error": None}},
+                tool_context={"stop_event": stop_event},
+            )
+
+        self.assertIn("MCP_CALL_CANCELLED", str(ctx.exception))
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(stop_event.wait_calls, [3.0])
+
+    def test_mcp_family_tool_passes_timeout_override_to_client(self) -> None:
+        server = MCPServerSpec(
+            server_id="github",
+            transport="mock",
+            backend_id="github",
+            tools=[MCPToolSpec(name="list_commits", description="List GitHub commits.")],
+        )
+
+        class CapturingClient:
+            def __init__(self) -> None:
+                self.kwargs = None
+
+            def call_tool(self, server_id: str, tool_name: str, payload: dict, **kwargs) -> dict:
+                self.kwargs = kwargs
+                return {
+                    "server_id": server_id,
+                    "tool_name": tool_name,
+                    "payload": payload,
+                    "result_text": '[{"sha":"abc"}]',
+                    "ok": True,
+                    "is_error": False,
+                }
+
+            def list_tools(self, server_id: str, **kwargs):
+                return [MCPToolSpec(name="list_commits", description="List GitHub commits.")]
+
+        client = CapturingClient()
+        deadline = time.monotonic() + 1.25
+        result = run_mcp_tool(
+            {
+                "action": "call",
+                "server_id": "github",
+                "tool_name": "list_commits",
+                "arguments": {"owner": "llt22", "repo": "talkio", "perPage": 1},
+            },
+            [server],
+            client,  # type: ignore[arg-type]
+            {"github": {"state": "configured", "tool_count": 1, "error": None}},
+            tool_context={"deadline_monotonic": deadline, "timeout_seconds_override": 1.25},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIsNotNone(client.kwargs)
+        self.assertIn("deadline_monotonic", client.kwargs)
+        self.assertIn("timeout_seconds_override", client.kwargs)
+        self.assertAlmostEqual(client.kwargs["timeout_seconds_override"], 1.25, places=2)
 
     def test_mcp_family_tool_retries_twice_on_transient_transport_error_result(self) -> None:
         server = MCPServerSpec(
@@ -604,9 +797,9 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, InMemoryRunHistory())
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["echo"],
         )
 

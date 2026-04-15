@@ -11,15 +11,15 @@ from marten_runtime.gateway.models import InboundEnvelope
 class RouterTests(unittest.TestCase):
     def test_registry_returns_registered_agent(self) -> None:
         registry = AgentRegistry()
-        spec = AgentSpec(agent_id="assistant", role="general_assistant", app_id="example_assistant")
+        spec = AgentSpec(agent_id="main", role="general_assistant", app_id="main_agent")
 
         registry.register(spec)
 
-        self.assertEqual(registry.get("assistant"), spec)
+        self.assertEqual(registry.get("main"), spec)
 
-    def test_router_routes_regular_messages_to_assistant(self) -> None:
+    def test_router_routes_regular_messages_to_main(self) -> None:
         registry = AgentRegistry()
-        spec = AgentSpec(agent_id="assistant", role="general_assistant", app_id="example_assistant")
+        spec = AgentSpec(agent_id="main", role="general_assistant", app_id="main_agent")
         registry.register(spec)
         router = AgentRouter(registry)
         envelope = InboundEnvelope(
@@ -35,14 +35,33 @@ class RouterTests(unittest.TestCase):
 
         routed = router.route(envelope)
 
-        self.assertEqual(routed.agent_id, "assistant")
-        self.assertEqual(routed.app_id, "example_assistant")
+        self.assertEqual(routed.agent_id, "main")
+        self.assertEqual(routed.app_id, "main_agent")
+
+    def test_router_accepts_legacy_assistant_alias_for_requested_agent(self) -> None:
+        registry = AgentRegistry()
+        registry.register(AgentSpec(agent_id="main", role="general_assistant", app_id="main_agent"))
+        router = AgentRouter(registry, default_agent_id="main")
+        envelope = InboundEnvelope(
+            channel_id="http",
+            user_id="demo",
+            conversation_id="conv-legacy",
+            message_id="msg-legacy",
+            body="hello",
+            received_at=datetime.now(timezone.utc),
+            dedupe_key="dedupe_legacy",
+            trace_id="trace_legacy",
+        )
+
+        routed = router.route(envelope, requested_agent_id="assistant")
+
+        self.assertEqual(routed.agent_id, "main")
 
     def test_router_ignores_message_keywords_without_agent_binding(self) -> None:
         registry = AgentRegistry()
-        registry.register(AgentSpec(agent_id="assistant", role="general_assistant", app_id="example_assistant"))
-        registry.register(AgentSpec(agent_id="coding", role="coding_agent", app_id="example_assistant"))
-        router = AgentRouter(registry, default_agent_id="assistant")
+        registry.register(AgentSpec(agent_id="main", role="general_assistant", app_id="main_agent"))
+        registry.register(AgentSpec(agent_id="coding", role="coding_agent", app_id="main_agent"))
+        router = AgentRouter(registry, default_agent_id="main")
         envelope = InboundEnvelope(
             channel_id="http",
             user_id="demo",
@@ -56,13 +75,13 @@ class RouterTests(unittest.TestCase):
 
         routed = router.route(envelope)
 
-        self.assertEqual(routed.agent_id, "assistant")
+        self.assertEqual(routed.agent_id, "main")
 
     def test_router_prefers_explicit_active_agent(self) -> None:
         registry = AgentRegistry()
-        registry.register(AgentSpec(agent_id="assistant", role="general_assistant", app_id="example_assistant"))
-        registry.register(AgentSpec(agent_id="coding", role="coding_agent", app_id="example_assistant"))
-        router = AgentRouter(registry, default_agent_id="assistant")
+        registry.register(AgentSpec(agent_id="main", role="general_assistant", app_id="main_agent"))
+        registry.register(AgentSpec(agent_id="coding", role="coding_agent", app_id="main_agent"))
+        router = AgentRouter(registry, default_agent_id="main")
         envelope = InboundEnvelope(
             channel_id="http",
             user_id="demo",
@@ -80,9 +99,9 @@ class RouterTests(unittest.TestCase):
 
     def test_router_prefers_requested_agent_over_binding(self) -> None:
         registry = AgentRegistry()
-        registry.register(AgentSpec(agent_id="assistant", role="general_assistant", app_id="example_assistant"))
-        registry.register(AgentSpec(agent_id="ops", role="ops_agent", app_id="example_assistant"))
-        registry.register(AgentSpec(agent_id="coding", role="coding_agent", app_id="example_assistant"))
+        registry.register(AgentSpec(agent_id="main", role="general_assistant", app_id="main_agent"))
+        registry.register(AgentSpec(agent_id="ops", role="ops_agent", app_id="main_agent"))
+        registry.register(AgentSpec(agent_id="coding", role="coding_agent", app_id="main_agent"))
         bindings = AgentBindingRegistry(
             [
                 AgentBinding(
@@ -92,7 +111,7 @@ class RouterTests(unittest.TestCase):
                 )
             ]
         )
-        router = AgentRouter(registry, default_agent_id="assistant", bindings=bindings)
+        router = AgentRouter(registry, default_agent_id="main", bindings=bindings)
         envelope = InboundEnvelope(
             channel_id="feishu",
             user_id="demo",
@@ -110,9 +129,9 @@ class RouterTests(unittest.TestCase):
 
     def test_router_uses_conversation_binding_before_active_agent(self) -> None:
         registry = AgentRegistry()
-        registry.register(AgentSpec(agent_id="assistant", role="general_assistant", app_id="example_assistant"))
-        registry.register(AgentSpec(agent_id="ops", role="ops_agent", app_id="example_assistant"))
-        registry.register(AgentSpec(agent_id="coding", role="coding_agent", app_id="example_assistant"))
+        registry.register(AgentSpec(agent_id="main", role="general_assistant", app_id="main_agent"))
+        registry.register(AgentSpec(agent_id="ops", role="ops_agent", app_id="main_agent"))
+        registry.register(AgentSpec(agent_id="coding", role="coding_agent", app_id="main_agent"))
         bindings = AgentBindingRegistry(
             [
                 AgentBinding(
@@ -122,7 +141,7 @@ class RouterTests(unittest.TestCase):
                 )
             ]
         )
-        router = AgentRouter(registry, default_agent_id="assistant", bindings=bindings)
+        router = AgentRouter(registry, default_agent_id="main", bindings=bindings)
         envelope = InboundEnvelope(
             channel_id="feishu",
             user_id="demo",
@@ -140,8 +159,8 @@ class RouterTests(unittest.TestCase):
 
     def test_router_uses_user_binding_when_no_conversation_binding_exists(self) -> None:
         registry = AgentRegistry()
-        registry.register(AgentSpec(agent_id="assistant", role="general_assistant", app_id="example_assistant"))
-        registry.register(AgentSpec(agent_id="ops", role="ops_agent", app_id="example_assistant"))
+        registry.register(AgentSpec(agent_id="main", role="general_assistant", app_id="main_agent"))
+        registry.register(AgentSpec(agent_id="ops", role="ops_agent", app_id="main_agent"))
         bindings = AgentBindingRegistry(
             [
                 AgentBinding(
@@ -151,7 +170,7 @@ class RouterTests(unittest.TestCase):
                 )
             ]
         )
-        router = AgentRouter(registry, default_agent_id="assistant", bindings=bindings)
+        router = AgentRouter(registry, default_agent_id="main", bindings=bindings)
         envelope = InboundEnvelope(
             channel_id="feishu",
             user_id="demo",
@@ -169,8 +188,8 @@ class RouterTests(unittest.TestCase):
 
     def test_router_falls_back_to_binding_when_requested_agent_is_missing(self) -> None:
         registry = AgentRegistry()
-        registry.register(AgentSpec(agent_id="assistant", role="general_assistant", app_id="example_assistant"))
-        registry.register(AgentSpec(agent_id="ops", role="ops_agent", app_id="example_assistant"))
+        registry.register(AgentSpec(agent_id="main", role="general_assistant", app_id="main_agent"))
+        registry.register(AgentSpec(agent_id="ops", role="ops_agent", app_id="main_agent"))
         bindings = AgentBindingRegistry(
             [
                 AgentBinding(
@@ -180,7 +199,7 @@ class RouterTests(unittest.TestCase):
                 )
             ]
         )
-        router = AgentRouter(registry, default_agent_id="assistant", bindings=bindings)
+        router = AgentRouter(registry, default_agent_id="main", bindings=bindings)
         envelope = InboundEnvelope(
             channel_id="feishu",
             user_id="demo",

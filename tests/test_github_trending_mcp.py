@@ -1,4 +1,6 @@
 import sys
+import threading
+import time
 import json
 import unittest
 from datetime import datetime
@@ -8,6 +10,7 @@ from marten_runtime.mcp.client import MCPClient
 from marten_runtime.mcp.models import MCPServerSpec
 from marten_runtime.mcp_servers.github_trending import (
     TrendingRepositoriesRequest,
+    fetch_trending_html,
     parse_trending_repositories,
 )
 
@@ -132,6 +135,40 @@ class GitHubTrendingMCPTests(unittest.TestCase):
         self.assertRegex(payload["fetched_at_display"], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
         self.assertEqual(len(payload["items"]), 2)
         self.assertEqual(payload["items"][0]["full_name"], "owner-one/repo-one")
+
+    def test_fetch_trending_html_honors_timeout_override(self) -> None:
+        captured: list[float] = []
+
+        class _Response:
+            def __init__(self, text: str) -> None:
+                self.text = text
+
+            def raise_for_status(self) -> None:
+                return None
+
+        def fake_get(url: str, headers: dict[str, str], timeout: float, follow_redirects: bool):
+            del url, headers, follow_redirects
+            captured.append(timeout)
+            return _Response(self.fixture_html)
+
+        html = fetch_trending_html(
+            TrendingRepositoriesRequest(since='daily', limit=2),
+            timeout_seconds_override=1.5,
+            deadline_monotonic=time.monotonic() + 5,
+            http_get=fake_get,
+        )
+
+        self.assertIn('owner-one/repo-one', html)
+        self.assertEqual(captured, [1.5])
+
+    def test_fetch_trending_html_stops_before_http_call_when_cancelled(self) -> None:
+        stop_event = threading.Event()
+        stop_event.set()
+
+        with self.assertRaises(TimeoutError) as ctx:
+            fetch_trending_html(TrendingRepositoriesRequest(), stop_event=stop_event)
+
+        self.assertIn('HTTP_CALL_CANCELLED', str(ctx.exception))
 
 
 if __name__ == "__main__":

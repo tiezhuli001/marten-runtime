@@ -29,6 +29,8 @@ def maybe_render_tool_followup_text(
         return render_direct_tool_text(tool_name, tool_result, tool_payload=tool_payload)
     if tool_name == "mcp":
         return render_direct_tool_text(tool_name, tool_result, tool_payload=tool_payload)
+    if tool_name == "spawn_subagent":
+        return render_direct_tool_text(tool_name, tool_result, tool_payload=tool_payload)
     return ""
 
 
@@ -41,6 +43,8 @@ def render_direct_tool_text(tool_name: str, tool_result: object, *, tool_payload
         return render_automation_tool_text(tool_result)
     if tool_name == "mcp":
         return render_direct_mcp_text(tool_result, tool_payload=tool_payload)
+    if tool_name == "spawn_subagent":
+        return render_spawn_subagent_text(tool_result, tool_payload=tool_payload)
     return ""
 
 
@@ -53,6 +57,26 @@ def render_direct_mcp_text(tool_result: dict[str, object], *, tool_payload: dict
     if server_id == "github" and tool_name == "list_commits":
         return render_github_list_commits_text(tool_result, tool_payload=payload)
     return ""
+
+
+def render_spawn_subagent_text(
+    tool_result: dict[str, object],
+    *,
+    tool_payload: dict[str, object] | None = None,
+) -> str:
+    if tool_result.get("ok") is False:
+        return ""
+    if str(tool_result.get("status") or "").strip() != "accepted":
+        return ""
+    notify_on_finish = bool((tool_payload or {}).get("notify_on_finish", True))
+    queue_state = str(tool_result.get("queue_state") or "").strip()
+    if queue_state == "queued":
+        if notify_on_finish:
+            return "已受理，子 agent 已进入队列，开始后会通知你结果。"
+        return "已受理，子 agent 已进入队列。"
+    if notify_on_finish:
+        return "已受理，子 agent 正在后台执行，完成后会通知你结果。"
+    return "已受理，子 agent 正在后台执行。"
 
 
 def render_github_trending_text(tool_result: dict[str, object]) -> str:

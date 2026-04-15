@@ -28,8 +28,8 @@ class ModelSmokeTests(unittest.TestCase):
             session_id="sess_1",
             trace_id="trace_1",
             message="search release notes and tell me the time",
-            agent_id="assistant",
-            app_id="example_assistant",
+            agent_id="main",
+            app_id="main_agent",
             available_tools=["mcp", "time"],
             capability_catalog_text="Capability catalog:\n- mcp: Inspect MCP servers progressively.",
             tool_snapshot=ToolSnapshot(

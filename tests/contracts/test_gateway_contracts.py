@@ -28,7 +28,7 @@ from tests.support.scripted_llm import AuthFailingLLMClient, FailingLLMClient
 
 
 class GatewayContractTests(unittest.TestCase):
-    FAMILY_TOOLS = ["automation", "mcp", "runtime", "self_improve", "skill", "time"]
+    FAMILY_TOOLS = ["automation", "cancel_subagent", "mcp", "runtime", "self_improve", "skill", "spawn_subagent", "time"]
 
     def _assert_http_turn_keeps_family_tool_surface(
         self,
@@ -299,7 +299,7 @@ class GatewayContractTests(unittest.TestCase):
                     "name: Example Time\n"
                     "description: Return current time guidance\n"
                     "enabled: true\n"
-                    "agents: [assistant]\n"
+                    "agents: [main]\n"
                     "channels: [http]\n"
                     "---\n"
                     "Use the time tool when the user asks for the current time.\n"
@@ -445,8 +445,8 @@ class GatewayContractTests(unittest.TestCase):
             AutomationJob(
                 automation_id="paused_hot",
                 name="Paused GitHub Hot Repos",
-                app_id="example_assistant",
-                agent_id="assistant",
+                app_id="main_agent",
+                agent_id="main",
                 prompt_template="hello from paused automation",
                 schedule_kind="daily",
                 schedule_expr="21:00",
@@ -485,8 +485,8 @@ class GatewayContractTests(unittest.TestCase):
             AutomationJob(
                 automation_id="daily_hot",
                 name="Daily GitHub Hot Repos",
-                app_id="example_assistant",
-                agent_id="assistant",
+                app_id="main_agent",
+                agent_id="main",
                 prompt_template="hello from automation",
                 schedule_kind="daily",
                 schedule_expr="09:30",
@@ -523,8 +523,8 @@ class GatewayContractTests(unittest.TestCase):
             AutomationJob(
                 automation_id="plain_delivery",
                 name="plain_delivery",
-                app_id="example_assistant",
-                agent_id="assistant",
+                app_id="main_agent",
+                agent_id="main",
                 prompt_template="请只回复：实时链路验证通过。",
                 schedule_kind="daily",
                 schedule_expr="23:59",
@@ -552,8 +552,8 @@ class GatewayContractTests(unittest.TestCase):
             AutomationJob(
                 automation_id="legacy_hot",
                 name="legacy_hot",
-                app_id="example_assistant",
-                agent_id="assistant",
+                app_id="main_agent",
+                agent_id="main",
                 prompt_template="请只回复：兼容触发通过。",
                 schedule_kind="daily",
                 schedule_expr="23:59",
@@ -593,14 +593,14 @@ class GatewayContractTests(unittest.TestCase):
                 lessons_path=Path(tmpdir) / "SYSTEM_LESSONS.md",
                 judge=make_default_judge(
                     runtime.runtime_loop.llm,
-                    app_id="example_assistant",
-                    agent_id="assistant",
+                    app_id="main_agent",
+                    agent_id="main",
                 ),
             )
             runtime.self_improve_store.save_candidate(
                 LessonCandidate(
                     candidate_id="cand_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     source_fingerprints=["fp_one", "fp_one"],
                     candidate_text="候选规则一",
                     rationale="candidate rationale",
@@ -611,7 +611,7 @@ class GatewayContractTests(unittest.TestCase):
             runtime.self_improve_store.save_lesson(
                 SystemLesson(
                     lesson_id="lesson_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     topic_key="provider_timeout",
                     lesson_text="保留的 active lesson",
                     source_fingerprints=["fp_timeout"],
@@ -622,7 +622,7 @@ class GatewayContractTests(unittest.TestCase):
                 [
                     LLMReply(
                         tool_name="self_improve",
-                        tool_payload={"action": "list_candidates", "agent_id": "assistant"},
+                        tool_payload={"action": "list_candidates", "agent_id": "main"},
                     ),
                     LLMReply(final_text="当前有 1 条候选规则。"),
                     LLMReply(
@@ -659,8 +659,8 @@ class GatewayContractTests(unittest.TestCase):
             self.assertEqual(delete_response.status_code, 200)
             self.assertEqual(query_response.json()["events"][-1]["payload"]["text"], "当前有 1 条候选规则。")
             self.assertEqual(delete_response.json()["events"][-1]["payload"]["text"], "已删除候选规则 cand_1。")
-            self.assertEqual(runtime.self_improve_store.list_candidates(agent_id="assistant", limit=10), [])
-            lessons = runtime.self_improve_store.list_active_lessons(agent_id="assistant")
+            self.assertEqual(runtime.self_improve_store.list_candidates(agent_id="main", limit=10), [])
+            lessons = runtime.self_improve_store.list_active_lessons(agent_id="main")
             self.assertEqual(len(lessons), 1)
             self.assertEqual(lessons[0].lesson_id, "lesson_1")
 

@@ -13,14 +13,34 @@ from marten_runtime.channels.feishu.models import (
     FeishuWebsocketClientConfig,
 )
 from marten_runtime.channels.feishu.usage import build_usage_summary_from_history
+from marten_runtime.runtime.cooperative_stop import call_with_cooperative_timeout
 from marten_runtime.runtime.timing import elapsed_ms
 
 
 
 def default_endpoint_transport(
-    url: str, headers: dict[str, str], body: dict[str, str]
+    url: str,
+    headers: dict[str, str],
+    body: dict[str, str],
+    *,
+    stop_event=None,
+    deadline_monotonic: float | None = None,
+    timeout_seconds_override: float | None = None,
 ) -> dict[str, object]:
-    response = httpx.post(url, headers=headers, json=body, timeout=30)
+    response = call_with_cooperative_timeout(
+        lambda effective_timeout_seconds: httpx.post(
+            url,
+            headers=headers,
+            json=body,
+            timeout=effective_timeout_seconds,
+        ),
+        default_timeout_seconds=30,
+        stop_event=stop_event,
+        deadline_monotonic=deadline_monotonic,
+        timeout_seconds_override=timeout_seconds_override,
+        cancelled_message="HTTP_CALL_CANCELLED",
+        timed_out_message="HTTP_CALL_TIMED_OUT",
+    )
     response.raise_for_status()
     return response.json()
 

@@ -51,9 +51,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mock_search"],
         )
 
@@ -84,9 +84,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -130,9 +130,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mock_search"],
         )
 
@@ -184,9 +184,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -231,9 +231,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mock_search"],
         )
 
@@ -284,9 +284,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mock_search"],
         )
 
@@ -329,9 +329,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -376,9 +376,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mock_search"],
         )
 
@@ -418,9 +418,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -458,9 +458,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["broken_tool"],
         )
 
@@ -525,9 +525,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["time", "mock_search"],
         )
 
@@ -582,9 +582,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
             },
         )
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -636,9 +636,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
             },
         )
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -691,9 +691,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
             },
         )
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -723,9 +723,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(BrokenToolLLMClient(), tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["broken_tool"],
         )
 
@@ -756,9 +756,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
-            agent_id="assistant",
+            agent_id="main",
             role="general_assistant",
-            app_id="example_assistant",
+            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -793,7 +793,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
             events = runtime.run(
                 session_id="sess_fail", message="hello", trace_id="trace_fail"
             )
-            failures = store.list_recent_failures(agent_id="assistant", limit=10)
+            failures = store.list_recent_failures(agent_id="main", limit=10)
 
         self.assertEqual([event.event_type for event in events], ["progress", "error"])
         self.assertEqual(events[-1].payload["code"], "PROVIDER_TRANSPORT_ERROR")
@@ -823,7 +823,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                 message="hello",
                 trace_id="trace_fail_internal",
             )
-            failures = store.list_recent_failures(agent_id="assistant", limit=10)
+            failures = store.list_recent_failures(agent_id="main", limit=10)
 
         self.assertEqual([event.event_type for event in events], ["progress", "error"])
         self.assertEqual(events[-1].payload["code"], "RUNTIME_LOOP_FAILED")
@@ -861,7 +861,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
             success_runtime.run(
                 session_id="sess_success", message="hello", trace_id="trace_success"
             )
-            recoveries = store.list_recent_recoveries(agent_id="assistant", limit=10)
+            recoveries = store.list_recent_recoveries(agent_id="main", limit=10)
 
         self.assertEqual(len(recoveries), 1)
         self.assertEqual(recoveries[0].recovery_kind, "same_fingerprint_success")

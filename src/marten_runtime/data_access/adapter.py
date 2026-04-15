@@ -22,7 +22,7 @@ class DomainDataAdapter:
         self._validate_filters(spec, filters)
         if entity == "lesson_candidate":
             items = self.self_improve_store.list_candidates(
-                agent_id=str(filters.get("agent_id", "assistant")),
+                agent_id=str(filters.get("agent_id", "main")),
                 limit=limit,
                 status=str(filters["status"]) if "status" in filters else None,
             )

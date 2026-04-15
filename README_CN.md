@@ -121,6 +121,19 @@ flowchart LR
 
 ## Getting Started
 
+### 最快本地初始化
+
+```bash
+./init.sh
+```
+
+对 fresh checkout 来说，推荐优先执行 `./init.sh`。它会创建或复用 `.venv`、安装依赖、在缺失时从模板补齐 `.env` 和 `mcps.json`、打印 canonical 启动命令，并对 `/healthz`、`/readyz`、`/diagnostics/runtime` 跑一次临时本地 smoke。
+
+常用变体：
+
+- `./init.sh --skip-install`：复用现有虚拟环境，跳过依赖安装，但仍执行 readiness 检查和本地 smoke
+- `./init.sh --smoke-only`：假定 workspace 已完成初始化，只执行 readiness 检查和临时本地 smoke
+
 ### Requirements
 
 - Python `3.11`、`3.12` 或 `3.13`
@@ -133,8 +146,11 @@ flowchart LR
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
+pip install -r requirements.txt
 pip install -e .
 ```
+
+如果你想手动控制每一步初始化过程，可以直接使用上面的显式安装命令，而不是一键 `./init.sh`。
 
 ### Configure
 

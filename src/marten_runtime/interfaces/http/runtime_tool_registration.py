@@ -9,6 +9,8 @@ from marten_runtime.tools.builtins.automation_tool import run_automation_tool
 from marten_runtime.tools.builtins.mcp_tool import run_mcp_tool
 from marten_runtime.tools.builtins.runtime_tool import run_runtime_tool
 from marten_runtime.tools.builtins.self_improve_tool import run_self_improve_tool
+from marten_runtime.tools.builtins.spawn_subagent_tool import run_spawn_subagent_tool
+from marten_runtime.tools.builtins.cancel_subagent_tool import run_cancel_subagent_tool
 from marten_runtime.tools.builtins.skill_tool import run_skill_tool
 from marten_runtime.tools.builtins.time_tool import run_time_tool
 from marten_runtime.tools.registry import ToolRegistry
@@ -49,11 +51,12 @@ def register_family_tools(
     )
     state.tool_registry.register(
         "mcp",
-        lambda payload, runtime_state=state: run_mcp_tool(
+        lambda payload, runtime_state=state, *, tool_context=None: run_mcp_tool(
             payload,
             runtime_state.mcp_servers,
             runtime_state.mcp_client,
             runtime_state.mcp_discovery,
+            tool_context=tool_context,
         ),
         description=render_tool_description(capability_declarations["mcp"]),
         parameters_schema=get_parameters_schema(capability_declarations["mcp"]),
@@ -93,6 +96,42 @@ def register_family_tools(
         parameters_schema=get_parameters_schema(
             capability_declarations["self_improve"]
         ),
+    )
+    state.tool_registry.register(
+        "spawn_subagent",
+        lambda payload, runtime_state=state, *, tool_context=None: run_spawn_subagent_tool(
+            payload,
+            subagent_service=runtime_state.subagent_service,
+            session_store=runtime_state.session_store,
+            tool_context=tool_context,
+        ),
+        description="Spawn a background subagent task with isolated child session execution.",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "task": {"type": "string"},
+                "label": {"type": "string"},
+                "tool_profile": {"type": "string"},
+                "context_mode": {"type": "string"},
+                "notify_on_finish": {"type": "boolean"},
+                "agent_id": {"type": "string"}
+            },
+            "required": ["task"],
+        },
+    )
+    state.tool_registry.register(
+        "cancel_subagent",
+        lambda payload, runtime_state=state: run_cancel_subagent_tool(
+            payload, subagent_service=runtime_state.subagent_service
+        ),
+        description="Cancel a background subagent task by task id.",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"}
+            },
+            "required": ["task_id"],
+        },
     )
 
 

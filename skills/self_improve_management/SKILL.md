@@ -4,7 +4,7 @@ name: Self Improve Management
 description: Use when the user wants to inspect self-improve candidates, active runtime lessons, or remove an incorrect candidate.
 aliases: ["自我提升", "候选规则", "经验规则", "runtime lessons", "候选 lesson"]
 enabled: true
-agents: [assistant]
+agents: [main]
 channels: [http, feishu]
 tags: [self_improve, lessons, candidates, diagnostics]
 ---

@@ -22,7 +22,7 @@ class SelfImproveSkillTests(unittest.TestCase):
                 name: Self Improve
                 description: synthesize lesson candidates from repeated failures and later recoveries
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http, feishu]
                 tags: [self_improve, lessons, diagnostics]
                 ---
@@ -31,7 +31,7 @@ class SelfImproveSkillTests(unittest.TestCase):
             )
             loader = SkillLoader([str(shared)])
             visible = filter_skills(
-                agent_id="assistant",
+                agent_id="main",
                 channel_id="http",
                 items=loader.load_all(),
                 env={},
@@ -59,7 +59,7 @@ class SelfImproveSkillTests(unittest.TestCase):
                 name: Self Improve
                 description: synthesize lesson candidates from repeated failures and later recoveries
                 enabled: true
-                agents: [assistant]
+                agents: [main]
                 channels: [http, feishu]
                 tags: [self_improve, lessons, diagnostics]
                 ---
@@ -68,7 +68,7 @@ class SelfImproveSkillTests(unittest.TestCase):
             )
             loader = SkillLoader([str(shared)])
             visible = filter_skills(
-                agent_id="assistant",
+                agent_id="main",
                 channel_id="http",
                 items=loader.load_all(),
                 env={},

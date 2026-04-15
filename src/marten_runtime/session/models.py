@@ -49,7 +49,7 @@ class SessionRecord(BaseModel):
     state: str = "created"
     created_at: datetime
     updated_at: datetime
-    active_agent_id: str = "assistant"
+    active_agent_id: str = "main"
     parent_session_id: str | None = None
     session_kind: str = "main"
     lineage_depth: int = 0

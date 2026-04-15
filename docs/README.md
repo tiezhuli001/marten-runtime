@@ -39,18 +39,20 @@ This directory contains the public design and operations notes for `marten-runti
 
 ## Current State
 
+- the default runtime app is now `main_agent`; its prompt assets are tuned for an execution-first main agent rather than a demo helper persona
 - Milestone A of the private-agent harness is implemented
 - same-conversation FIFO queueing is implemented for HTTP `/messages` and Feishu interactive ingress
 - the narrow self-improve loop is implemented: failure/recovery evidence persists in SQLite, candidate lessons are produced through a dedicated skill, accepted lessons are exported into runtime-managed `SYSTEM_LESSONS.md`
-- the first thin domain-query adapter slice is implemented for `self_improve`: the assistant can list candidate lessons, inspect candidate detail, read self-improve summary, and delete bad candidates without raw DB exposure
+- the first thin domain-query adapter slice is implemented for `self_improve`: the default main agent can list candidate lessons, inspect candidate detail, read self-improve summary, and delete bad candidates without raw DB exposure
 - the automation resource layer is now adapter-backed as well: the model-visible `automation` family tool converges on the same thin internal adapter for register/list/detail/update/delete/pause/resume while scheduler/trigger/dispatch stay in the automation subsystem
 - the Feishu message pipeline unification and generic renderer iterations are complete enough to move into archive; current Feishu source-of-truth is the generic-card design doc plus `ARCHITECTURE_CHANGELOG.md`
 - the current runtime latency breakdown slice is complete enough to move into archive; timing truth now lives in code, tests, and `ARCHITECTURE_CHANGELOG.md`
 - the bootstrap assembly hygiene cleanup is complete enough to move into archive; current bootstrap truth now lives in code, tests, and `ARCHITECTURE_CHANGELOG.md`
 - the two adapter design docs are now archived as completed design history; current automation/self-improve truth lives in code, tests, `CONFIG_SURFACES.md`, and `ARCHITECTURE_CHANGELOG.md`
+- `assistant` is no longer baseline naming for the default runtime agent; outside archive/history and LLM message-role semantics, treat it as compatibility-only
 - live Feishu validation has already confirmed the self-improve candidate query/delete path on the real runtime chain; use `last_run_id -> diagnostics/run -> trace_id -> diagnostics/trace` for correlation
 - stable architecture truth now lives in `docs/architecture/adr/` plus `docs/ARCHITECTURE_CHANGELOG.md`
-- `apps/example_assistant/SYSTEM_LESSONS.md` is a runtime-managed artifact and is intentionally ignored by git
+- `apps/main_agent/SYSTEM_LESSONS.md` is a runtime-managed artifact and is intentionally ignored by git
 - durable session persistence is intentionally still pending
 - thin LLM context compaction is now implemented as one thin long-thread continuity slice: only oversized conversation-history prefixes are rewritten, runtime scaffolding remains intact, and HTTP `/messages` persists/reuses compact checkpoints
 - context-usage accuracy is now implemented as the current thin runtime baseline: provider actual usage is normalized first, tokenizer-family preflight estimates are computed from the final outbound payload, and deterministic rough fallback remains last-resort only

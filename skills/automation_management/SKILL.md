@@ -4,7 +4,7 @@ name: Automation Management
 description: Use when the user wants to view or manage existing 自动任务、定时任务、recurring jobs, or scheduled digests, including query, modify, pause, resume, or delete requests.
 aliases: ["自动任务管理", "定时任务管理", "自动任务", "定时任务", "automation CRUD", "任务管理"]
 enabled: true
-agents: [assistant]
+agents: [main]
 channels: [http, feishu]
 tags: [automation, recurring, schedule, tasks, management]
 ---

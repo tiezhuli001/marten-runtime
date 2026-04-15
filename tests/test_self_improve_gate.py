@@ -17,7 +17,7 @@ class SelfImproveGateTests(unittest.TestCase):
             store.save_candidate(
                 LessonCandidate(
                     candidate_id="cand_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     source_fingerprints=["fp_oneoff"],
                     candidate_text="昨天某个接口挂了，注意一下。",
                     rationale="one-off incident",
@@ -35,7 +35,7 @@ class SelfImproveGateTests(unittest.TestCase):
                 ),
             )
 
-            accepted = service.process_pending_candidates(agent_id="assistant")
+            accepted = service.process_pending_candidates(agent_id="main")
             candidate = store.get_candidate("cand_1")
 
         self.assertEqual(accepted, [])
@@ -50,7 +50,7 @@ class SelfImproveGateTests(unittest.TestCase):
             store.save_candidate(
                 LessonCandidate(
                     candidate_id="cand_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     source_fingerprints=["fp_timeout", "fp_timeout"],
                     candidate_text="先减少无关工具面。",
                     rationale="repeated timeout",
@@ -67,11 +67,11 @@ class SelfImproveGateTests(unittest.TestCase):
                     topic_key="provider_timeout",
                 ),
             )
-            service.process_pending_candidates(agent_id="assistant")
+            service.process_pending_candidates(agent_id="main")
             store.save_candidate(
                 LessonCandidate(
                     candidate_id="cand_2",
-                    agent_id="assistant",
+                    agent_id="main",
                     source_fingerprints=["fp_timeout", "fp_timeout"],
                     candidate_text="先减少无关工具面。",
                     rationale="repeated timeout again",
@@ -79,7 +79,7 @@ class SelfImproveGateTests(unittest.TestCase):
                 )
             )
 
-            accepted = service.process_pending_candidates(agent_id="assistant")
+            accepted = service.process_pending_candidates(agent_id="main")
             candidate = store.get_candidate("cand_2")
 
         self.assertEqual(accepted, [])
@@ -93,7 +93,7 @@ class SelfImproveGateTests(unittest.TestCase):
             store.save_candidate(
                 LessonCandidate(
                     candidate_id="cand_1",
-                    agent_id="assistant",
+                    agent_id="main",
                     source_fingerprints=["fp_timeout", "fp_timeout", "fp_timeout"],
                     candidate_text="遇到重复 provider timeout 时先减少无关工具面。",
                     rationale="repeated failure with later recovery",
@@ -111,8 +111,8 @@ class SelfImproveGateTests(unittest.TestCase):
                 ),
             )
 
-            accepted = service.process_pending_candidates(agent_id="assistant")
-            lessons = store.list_active_lessons(agent_id="assistant")
+            accepted = service.process_pending_candidates(agent_id="main")
+            lessons = store.list_active_lessons(agent_id="main")
             exported = lessons_path.read_text(encoding="utf-8")
 
         self.assertEqual(len(accepted), 1)
@@ -132,11 +132,11 @@ class SelfImproveGateTests(unittest.TestCase):
                 )
             ]
         )
-        judge = make_default_judge(llm, app_id="example_assistant", agent_id="assistant")
+        judge = make_default_judge(llm, app_id="main_agent", agent_id="main")
         verdict = judge(
             LessonCandidate(
                 candidate_id="cand_1",
-                agent_id="assistant",
+                agent_id="main",
                 source_fingerprints=["fp_timeout", "fp_timeout", "fp_timeout"],
                 candidate_text="遇到重复 provider timeout 时先减少无关工具面。",
                 rationale="repeated failure with later recovery",
@@ -152,12 +152,12 @@ class SelfImproveGateTests(unittest.TestCase):
 
     def test_llm_judge_rejects_invalid_payload_safely(self) -> None:
         llm = ScriptedLLMClient([LLMReply(final_text="not json")])
-        judge = make_default_judge(llm, app_id="example_assistant", agent_id="assistant")
+        judge = make_default_judge(llm, app_id="main_agent", agent_id="main")
 
         verdict = judge(
             LessonCandidate(
                 candidate_id="cand_1",
-                agent_id="assistant",
+                agent_id="main",
                 source_fingerprints=["fp_timeout", "fp_timeout", "fp_timeout"],
                 candidate_text="遇到重复 provider timeout 时先减少无关工具面。",
                 rationale="repeated failure with later recovery",

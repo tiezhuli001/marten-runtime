@@ -85,6 +85,7 @@ class InMemoryRunHistory:
         context_snapshot_id: str | None = None,
         skill_snapshot_id: str = "skill_default",
         tool_snapshot_id: str = "tool_default",
+        parent_run_id: str | None = None,
     ) -> RunRecord:
         record = RunRecord(
             run_id=f"run_{uuid4().hex[:8]}",
@@ -95,6 +96,7 @@ class InMemoryRunHistory:
             context_snapshot_id=context_snapshot_id,
             skill_snapshot_id=skill_snapshot_id,
             tool_snapshot_id=tool_snapshot_id,
+            parent_run_id=parent_run_id,
             status="running",
             started_at=datetime.now(timezone.utc),
         )

@@ -18,7 +18,7 @@ def _write_test_app(
     *,
     prompt_mode: str,
     marker: str,
-    default_agent: str = "assistant",
+    default_agent: str = "main",
 ) -> None:
     app_root = root / "apps" / app_id
     app_root.mkdir(parents=True, exist_ok=True)
@@ -52,10 +52,10 @@ def _write_test_repo(root: Path) -> None:
     (root / "data").mkdir(parents=True, exist_ok=True)
     (root / "config" / "agents.toml").write_text(
         (
-            '[agents.assistant]\n'
+            '[agents.main]\n'
             'role = "general_assistant"\n'
-            'app_id = "example_assistant"\n'
-            'allowed_tools = ["automation", "mcp", "runtime", "self_improve", "skill", "time"]\n'
+            'app_id = "main_agent"\n'
+            'allowed_tools = ["automation", "mcp", "runtime", "self_improve", "skill", "time", "spawn_subagent", "cancel_subagent"]\n'
             'prompt_mode = "full"\n'
             'model_profile = "minimax_coding"\n\n'
             '[agents.coding]\n'
@@ -70,13 +70,13 @@ def _write_test_repo(root: Path) -> None:
     (root / "config" / "bindings.toml").write_text(
         (
             '[[bindings]]\n'
-            'agent_id = "assistant"\n'
+            'agent_id = "main"\n'
             'channel_id = "http"\n'
             'default = true\n'
         ),
         encoding="utf-8",
     )
-    _write_test_app(root, "example_assistant", prompt_mode="full", marker="DEFAULT APP", default_agent="assistant")
+    _write_test_app(root, "main_agent", prompt_mode="full", marker="DEFAULT APP", default_agent="main")
     _write_test_app(root, "code_assistant", prompt_mode="child", marker="CODE APP", default_agent="coding")
 
 
@@ -297,7 +297,7 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(coding.json()["events"][-1]["payload"]["text"], "coding profile")
         self.assertEqual(assistant.json()["events"][-1]["payload"]["text"], "assistant profile")
         self.assertEqual(coding_llm.requests[0].agent_id, "coding")
-        self.assertEqual(assistant_llm.requests[0].agent_id, "assistant")
+        self.assertEqual(assistant_llm.requests[0].agent_id, "main")
 
     def test_http_runtime_switches_app_manifest_and_bootstrap_prompt_by_selected_agent(self) -> None:
         with TemporaryDirectory() as tmpdir:

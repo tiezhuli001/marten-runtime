@@ -280,6 +280,7 @@ def _run_turn(
         ),
         compact_settings=build_compaction_settings(profile),
         request_kind=request_kind,
+        channel_id=channel_id,
     )
     try:
         run = state.run_history.get(events[-1].run_id)

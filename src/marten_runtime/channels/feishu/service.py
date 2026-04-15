@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import inspect
 import json
 import logging
 import os
@@ -407,13 +408,25 @@ class FeishuWebsocketService:
             if candidate:
                 last_run_id = candidate
             delivery_started_at = time.perf_counter()
-            delivery_result = self.delivery_client.deliver(
-                self._build_delivery_payload(
-                    event=event,
-                    envelope=envelope,
-                    event_payload=event_payload,
-                )
+            delivery_payload = self._build_delivery_payload(
+                event=event,
+                envelope=envelope,
+                event_payload=event_payload,
             )
+            try:
+                deliver_signature = inspect.signature(self.delivery_client.deliver)
+            except (TypeError, ValueError):
+                deliver_signature = None
+            if (
+                deliver_signature is not None
+                and "cooperative_context" in deliver_signature.parameters
+            ):
+                delivery_result = self.delivery_client.deliver(
+                    delivery_payload,
+                    cooperative_context={"stop_event": self._stop_event},
+                )
+            else:
+                delivery_result = self.delivery_client.deliver(delivery_payload)
             delivery_results.append(delivery_result)
             if (
                 self.run_history is not None

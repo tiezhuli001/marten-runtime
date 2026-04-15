@@ -17,8 +17,8 @@ class AutomationTests(unittest.TestCase):
             AutomationJob(
                 automation_id="daily_hot",
                 name="Daily GitHub Hot Repos",
-                app_id="example_assistant",
-                agent_id="assistant",
+                app_id="main_agent",
+                agent_id="main",
                 prompt_template="Summarize today's hot repositories.",
                 schedule_kind="daily",
                 schedule_expr="09:30",
@@ -50,8 +50,8 @@ class AutomationTests(unittest.TestCase):
 [[automations]]
 automation_id = "daily_hot"
 name = "Daily GitHub Hot Repos"
-app_id = "example_assistant"
-agent_id = "assistant"
+app_id = "main_agent"
+agent_id = "main"
 prompt_template = "Summarize today's hot repositories."
 schedule_kind = "daily"
 schedule_expr = "10:00"
@@ -78,8 +78,8 @@ enabled = true
         store.save(
             AutomationJob(
                 automation_id="auto_1",
-                app_id="example_assistant",
-                agent_id="assistant",
+                app_id="main_agent",
+                agent_id="main",
                 prompt_template="daily check",
                 schedule_kind="daily",
                 schedule_expr="10:00",
@@ -103,8 +103,8 @@ enabled = true
         store.save(
             AutomationJob(
                 automation_id="self_improve_internal",
-                app_id="example_assistant",
-                agent_id="assistant",
+                app_id="main_agent",
+                agent_id="main",
                 prompt_template="Summarize repeated failures and later recoveries.",
                 schedule_kind="daily",
                 schedule_expr="03:00",

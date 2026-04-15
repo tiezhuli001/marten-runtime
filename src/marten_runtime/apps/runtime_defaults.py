@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-DEFAULT_APP_ID = "example_assistant"
-DEFAULT_AGENT_ID = "assistant"
+DEFAULT_APP_ID = "main_agent"
+DEFAULT_AGENT_ID = "main"
 
 
 def default_app_root(repo_root: Path) -> Path:

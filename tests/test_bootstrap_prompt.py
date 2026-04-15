@@ -9,11 +9,12 @@ from marten_runtime.apps.manifest import load_app_manifest
 class BootstrapPromptTests(unittest.TestCase):
     def test_bootstrap_prompt_stays_runtime_focused_and_compact(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        manifest = load_app_manifest(str(repo_root / "apps/example_assistant/app.toml"))
+        manifest = load_app_manifest(str(repo_root / "apps/main_agent/app.toml"))
 
         prompt = load_bootstrap_prompt(repo_root=repo_root, manifest=manifest)
 
-        self.assertIn("不要自称 Cursor、Claude、ChatGPT 或 Codex", prompt)
+        self.assertIn("你是默认主 agent", prompt)
+        self.assertIn("默认目标是把请求推进到下一个可验证结果", prompt)
         self.assertIn("优先调用 `automation`，并使用 `action=register` 完成注册", prompt)
         self.assertIn("不要先展示一次结果再询问是否注册", prompt)
         self.assertIn("优先依赖当前可见 skill 的描述、别名和工具描述", prompt)
@@ -25,7 +26,7 @@ class BootstrapPromptTests(unittest.TestCase):
 
     def test_bootstrap_prompt_includes_progressive_disclosure_operating_rules(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        manifest = load_app_manifest(str(repo_root / "apps/example_assistant/app.toml"))
+        manifest = load_app_manifest(str(repo_root / "apps/main_agent/app.toml"))
 
         prompt = load_bootstrap_prompt(repo_root=repo_root, manifest=manifest)
 
@@ -38,7 +39,7 @@ class BootstrapPromptTests(unittest.TestCase):
 
     def test_bootstrap_prompt_keeps_mcp_guidance_contract_based_instead_of_github_route(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        manifest = load_app_manifest(str(repo_root / "apps/example_assistant/app.toml"))
+        manifest = load_app_manifest(str(repo_root / "apps/main_agent/app.toml"))
 
         prompt = load_bootstrap_prompt(repo_root=repo_root, manifest=manifest)
 
@@ -48,14 +49,14 @@ class BootstrapPromptTests(unittest.TestCase):
 
     def test_bootstrap_prompt_appends_runtime_learned_lessons_when_present(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        manifest = load_app_manifest(str(repo_root / "apps/example_assistant/app.toml"))
+        manifest = load_app_manifest(str(repo_root / "apps/main_agent/app.toml"))
 
         with TemporaryDirectory() as tmpdir:
             temp_root = Path(tmpdir)
-            app_root = temp_root / "apps/example_assistant"
+            app_root = temp_root / "apps/main_agent"
             app_root.mkdir(parents=True)
             for filename in ("BOOTSTRAP.md", "SOUL.md", "AGENTS.md", "TOOLS.md"):
-                source = repo_root / "apps/example_assistant" / filename
+                source = repo_root / "apps/main_agent" / filename
                 (app_root / filename).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
             (app_root / "SYSTEM_LESSONS.md").write_text(
                 "# Runtime Lessons\n\n- 遇到重复失败时先读取最近失败证据再决定下一步。\n",
@@ -69,14 +70,14 @@ class BootstrapPromptTests(unittest.TestCase):
 
     def test_bootstrap_prompt_ignores_empty_runtime_learned_lessons(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        manifest = load_app_manifest(str(repo_root / "apps/example_assistant/app.toml"))
+        manifest = load_app_manifest(str(repo_root / "apps/main_agent/app.toml"))
 
         with TemporaryDirectory() as tmpdir:
             temp_root = Path(tmpdir)
-            app_root = temp_root / "apps/example_assistant"
+            app_root = temp_root / "apps/main_agent"
             app_root.mkdir(parents=True)
             for filename in ("BOOTSTRAP.md", "SOUL.md", "AGENTS.md", "TOOLS.md"):
-                source = repo_root / "apps/example_assistant" / filename
+                source = repo_root / "apps/main_agent" / filename
                 (app_root / filename).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
             (app_root / "SYSTEM_LESSONS.md").write_text("   \n", encoding="utf-8")
 
@@ -86,14 +87,14 @@ class BootstrapPromptTests(unittest.TestCase):
 
     def test_bootstrap_prompt_treats_system_lessons_as_active_only_export(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        manifest = load_app_manifest(str(repo_root / "apps/example_assistant/app.toml"))
+        manifest = load_app_manifest(str(repo_root / "apps/main_agent/app.toml"))
 
         with TemporaryDirectory() as tmpdir:
             temp_root = Path(tmpdir)
-            app_root = temp_root / "apps/example_assistant"
+            app_root = temp_root / "apps/main_agent"
             app_root.mkdir(parents=True)
             for filename in ("BOOTSTRAP.md", "SOUL.md", "AGENTS.md", "TOOLS.md"):
-                source = repo_root / "apps/example_assistant" / filename
+                source = repo_root / "apps/main_agent" / filename
                 (app_root / filename).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
             (app_root / "SYSTEM_LESSONS.md").write_text(
                 (

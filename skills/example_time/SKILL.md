@@ -4,7 +4,7 @@ name: Example Time
 description: Tell the agent to prefer real time tools.
 enabled: true
 always_on: false
-agents: [assistant]
+agents: [main]
 channels: [http]
 tags: [time]
 ---

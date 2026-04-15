@@ -43,7 +43,7 @@ class BindingTests(unittest.TestCase):
                     mention_required = true
 
                     [[bindings]]
-                    agent_id = "assistant"
+                    agent_id = "main"
                     channel_id = "http"
                     default = true
                     """
@@ -74,7 +74,7 @@ class BindingTests(unittest.TestCase):
                         "user_id": "user-1",
                     },
                     {
-                        "agent_id": "assistant",
+                        "agent_id": "main",
                         "channel_id": "feishu",
                         "default": True,
                     },
@@ -97,7 +97,7 @@ class BindingTests(unittest.TestCase):
                         "user_id": "user-1",
                     },
                     {
-                        "agent_id": "assistant",
+                        "agent_id": "main",
                         "channel_id": "feishu",
                         "default": True,
                     },
@@ -121,7 +121,7 @@ class BindingTests(unittest.TestCase):
                         "mention_required": True,
                     },
                     {
-                        "agent_id": "assistant",
+                        "agent_id": "main",
                         "channel_id": "feishu",
                         "default": True,
                     },
@@ -132,19 +132,19 @@ class BindingTests(unittest.TestCase):
         matched = registry.match(make_envelope(body="hello there"))
 
         self.assertIsNotNone(matched)
-        self.assertEqual(matched.agent_id, "assistant")
+        self.assertEqual(matched.agent_id, "main")
 
     def test_registry_returns_channel_default_when_no_exact_rule_matches(self) -> None:
         registry = AgentBindingRegistry(
             load_agent_bindings_from_payload(
-                [{"agent_id": "assistant", "channel_id": "feishu", "default": True}]
+                [{"agent_id": "main", "channel_id": "feishu", "default": True}]
             )
         )
 
         matched = registry.match(make_envelope(conversation_id="chat-9", user_id="user-9"))
 
         self.assertIsNotNone(matched)
-        self.assertEqual(matched.agent_id, "assistant")
+        self.assertEqual(matched.agent_id, "main")
 
 
 def load_agent_bindings_from_payload(items: list[dict[str, object]]):

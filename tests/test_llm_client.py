@@ -13,8 +13,8 @@ class LLMClientInstructionTests(unittest.TestCase):
             session_id="sess_test",
             trace_id="trace_test",
             message="hello",
-            agent_id="assistant",
-            app_id="example_assistant",
+            agent_id="main",
+            app_id="main_agent",
             available_tools=[],
         )
         return base.model_copy(update=updates)

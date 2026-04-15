@@ -33,6 +33,25 @@ class SessionStore:
         self._conversation_index[conversation_id] = session_id
         return record
 
+    def create_child_session(
+        self,
+        *,
+        parent_session_id: str,
+        conversation_id: str,
+        session_id: str | None = None,
+    ) -> SessionRecord:
+        parent = self._items[parent_session_id]
+        child = self.create(
+            session_id=session_id or f"sess_{uuid4().hex[:8]}",
+            conversation_id=conversation_id,
+            config_snapshot_id=parent.config_snapshot_id,
+            bootstrap_manifest_id=parent.bootstrap_manifest_id,
+        )
+        child.parent_session_id = parent.session_id
+        child.session_kind = "subagent"
+        child.lineage_depth = parent.lineage_depth + 1
+        return child
+
     def get_or_create_for_conversation(
         self,
         conversation_id: str,
