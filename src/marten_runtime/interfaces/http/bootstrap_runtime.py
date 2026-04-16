@@ -55,6 +55,7 @@ from marten_runtime.runtime.lanes import ConversationLaneManager
 from marten_runtime.runtime.llm_client import build_llm_client
 from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.self_improve.recorder import SelfImproveRecorder
+from marten_runtime.self_improve.review_dispatcher import SelfImproveReviewDispatcher
 from marten_runtime.self_improve.service import SelfImproveService, make_default_judge
 from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
 from marten_runtime.session.store import SessionStore
@@ -211,11 +212,12 @@ def build_http_runtime(
     )
     llm_client_factory.cache_client(default_profile_name, default_llm)
     session_store = SessionStore()
+    self_improve_recorder = SelfImproveRecorder(self_improve_store)
     runtime_loop = RuntimeLoop(
         default_llm,
         tool_registry,
         InMemoryRunHistory(),
-        self_improve_recorder=SelfImproveRecorder(self_improve_store),
+        self_improve_recorder=self_improve_recorder,
     )
     feishu_delivery = build_feishu_delivery_client(
         env=resolved_env,
@@ -234,6 +236,17 @@ def build_http_runtime(
         llm_client_factory=llm_client_factory,
         models_config=models_config,
     )
+    review_dispatcher = SelfImproveReviewDispatcher(
+        store=self_improve_store,
+        subagent_service=subagent_service,
+        run_history=runtime_loop.history,
+        skill_service=skill_service,
+        feishu_delivery=feishu_delivery,
+        app_id=app_manifest.app_id,
+        agent_id=default_agent.agent_id,
+    )
+    subagent_service.set_terminal_callback(review_dispatcher.handle_terminal_task)
+    runtime_loop.self_improve_post_commit_callback = review_dispatcher.dispatch_pending_triggers
     self_improve_service = SelfImproveService(
         self_improve_store,
         lessons_path=default_lessons_path(resolved_repo_root),

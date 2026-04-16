@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 from marten_runtime.self_improve.models import (
     FailureEvent,
     LessonCandidate,
     RecoveryEvent,
+    ReviewTrigger,
+    SkillCandidate,
     SystemLesson,
 )
 from marten_runtime.sqlite_support import connect_sqlite, prepare_sqlite_path
@@ -16,6 +20,7 @@ from marten_runtime.sqlite_support import connect_sqlite, prepare_sqlite_path
 class SQLiteSelfImproveStore:
     def __init__(self, path: str | Path) -> None:
         self.path = prepare_sqlite_path(path)
+        self._lock = threading.RLock()
         self._init_schema()
 
     def record_failure(self, event: FailureEvent) -> None:
@@ -267,6 +272,315 @@ class SQLiteSelfImproveStore:
             raise KeyError(lesson_id)
         return self._row_to_lesson(row)
 
+    def save_review_trigger(self, trigger: ReviewTrigger) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO review_triggers (
+                    trigger_id, agent_id, trigger_kind, source_run_id, source_trace_id,
+                    source_fingerprints, status, payload_json, semantic_fingerprint,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trigger.trigger_id,
+                    trigger.agent_id,
+                    trigger.trigger_kind,
+                    trigger.source_run_id,
+                    trigger.source_trace_id,
+                    json.dumps(trigger.source_fingerprints),
+                    trigger.status,
+                    json.dumps(trigger.payload_json),
+                    trigger.semantic_fingerprint,
+                    trigger.created_at.isoformat(),
+                    trigger.updated_at.isoformat(),
+                ),
+            )
+
+    def create_review_trigger_if_absent(self, trigger: ReviewTrigger) -> ReviewTrigger | None:
+        with self._lock:
+            with self._connect() as conn:
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO review_triggers (
+                            trigger_id, agent_id, trigger_kind, source_run_id, source_trace_id,
+                            source_fingerprints, status, payload_json, semantic_fingerprint,
+                            created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            trigger.trigger_id,
+                            trigger.agent_id,
+                            trigger.trigger_kind,
+                            trigger.source_run_id,
+                            trigger.source_trace_id,
+                            json.dumps(trigger.source_fingerprints),
+                            trigger.status,
+                            json.dumps(trigger.payload_json),
+                            trigger.semantic_fingerprint,
+                            trigger.created_at.isoformat(),
+                            trigger.updated_at.isoformat(),
+                        ),
+                    )
+                except sqlite3.IntegrityError:
+                    return None
+        return trigger
+
+    def get_review_trigger(self, trigger_id: str) -> ReviewTrigger:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT trigger_id, agent_id, trigger_kind, source_run_id, source_trace_id,
+                       source_fingerprints, status, payload_json, semantic_fingerprint,
+                       created_at, updated_at
+                FROM review_triggers
+                WHERE trigger_id = ?
+                LIMIT 1
+                """,
+                (trigger_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(trigger_id)
+        return self._row_to_review_trigger(row)
+
+    def list_review_triggers(
+        self,
+        *,
+        agent_id: str,
+        limit: int,
+        status: str | None = None,
+    ) -> list[ReviewTrigger]:
+        query = """
+            SELECT trigger_id, agent_id, trigger_kind, source_run_id, source_trace_id,
+                   source_fingerprints, status, payload_json, semantic_fingerprint,
+                   created_at, updated_at
+            FROM review_triggers
+            WHERE agent_id = ?
+        """
+        params: list[object] = [agent_id]
+        if status is not None:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [self._row_to_review_trigger(row) for row in rows]
+
+    def latest_review_trigger_by_semantic_fingerprint(
+        self,
+        *,
+        agent_id: str,
+        semantic_fingerprint: str,
+        status: str | None = None,
+    ) -> ReviewTrigger | None:
+        query = """
+            SELECT trigger_id, agent_id, trigger_kind, source_run_id, source_trace_id,
+                   source_fingerprints, status, payload_json, semantic_fingerprint,
+                   created_at, updated_at
+            FROM review_triggers
+            WHERE agent_id = ? AND semantic_fingerprint = ?
+        """
+        params: list[object] = [agent_id, semantic_fingerprint]
+        if status is not None:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY created_at DESC LIMIT 1"
+        with self._connect() as conn:
+            row = conn.execute(query, tuple(params)).fetchone()
+        return self._row_to_review_trigger(row) if row is not None else None
+
+    def latest_review_trigger(self, *, agent_id: str, status: str | None = None) -> ReviewTrigger | None:
+        query = """
+            SELECT trigger_id, agent_id, trigger_kind, source_run_id, source_trace_id,
+                   source_fingerprints, status, payload_json, semantic_fingerprint,
+                   created_at, updated_at
+            FROM review_triggers
+            WHERE agent_id = ?
+        """
+        params: list[object] = [agent_id]
+        if status is not None:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY created_at DESC LIMIT 1"
+        with self._connect() as conn:
+            row = conn.execute(query, tuple(params)).fetchone()
+        return self._row_to_review_trigger(row) if row is not None else None
+
+    def update_review_trigger_status(self, trigger_id: str, *, status: str) -> ReviewTrigger:
+        trigger = self.get_review_trigger(trigger_id)
+        updated = trigger.model_copy(
+            update={"status": status, "updated_at": datetime.now(timezone.utc)}
+        )
+        self.save_review_trigger(updated)
+        return updated
+
+    def save_skill_candidate(self, candidate: SkillCandidate) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO skill_candidates (
+                    candidate_id, agent_id, status, title, slug, summary,
+                    trigger_conditions, body_markdown, rationale, source_run_ids,
+                    source_fingerprints, confidence, semantic_fingerprint,
+                    created_at, reviewed_at, promoted_skill_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    candidate.candidate_id,
+                    candidate.agent_id,
+                    candidate.status,
+                    candidate.title,
+                    candidate.slug,
+                    candidate.summary,
+                    json.dumps(candidate.trigger_conditions),
+                    candidate.body_markdown,
+                    candidate.rationale,
+                    json.dumps(candidate.source_run_ids),
+                    json.dumps(candidate.source_fingerprints),
+                    candidate.confidence,
+                    candidate.semantic_fingerprint,
+                    candidate.created_at.isoformat(),
+                    candidate.reviewed_at.isoformat() if candidate.reviewed_at else None,
+                    candidate.promoted_skill_id,
+                ),
+            )
+
+    def get_skill_candidate(self, candidate_id: str) -> SkillCandidate:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT candidate_id, agent_id, status, title, slug, summary,
+                       trigger_conditions, body_markdown, rationale, source_run_ids,
+                       source_fingerprints, confidence, semantic_fingerprint,
+                       created_at, reviewed_at, promoted_skill_id
+                FROM skill_candidates
+                WHERE candidate_id = ?
+                LIMIT 1
+                """,
+                (candidate_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(candidate_id)
+        return self._row_to_skill_candidate(row)
+
+    def list_skill_candidates(
+        self,
+        *,
+        agent_id: str,
+        limit: int,
+        status: str | None = None,
+    ) -> list[SkillCandidate]:
+        query = """
+            SELECT candidate_id, agent_id, status, title, slug, summary,
+                   trigger_conditions, body_markdown, rationale, source_run_ids,
+                   source_fingerprints, confidence, semantic_fingerprint,
+                   created_at, reviewed_at, promoted_skill_id
+            FROM skill_candidates
+            WHERE agent_id = ?
+        """
+        params: list[object] = [agent_id]
+        if status is not None:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [self._row_to_skill_candidate(row) for row in rows]
+
+    def latest_skill_candidate_by_semantic_fingerprint(
+        self,
+        *,
+        agent_id: str,
+        semantic_fingerprint: str,
+        status: str | None = None,
+    ) -> SkillCandidate | None:
+        query = """
+            SELECT candidate_id, agent_id, status, title, slug, summary,
+                   trigger_conditions, body_markdown, rationale, source_run_ids,
+                   source_fingerprints, confidence, semantic_fingerprint,
+                   created_at, reviewed_at, promoted_skill_id
+            FROM skill_candidates
+            WHERE agent_id = ? AND semantic_fingerprint = ?
+        """
+        params: list[object] = [agent_id, semantic_fingerprint]
+        if status is not None:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY created_at DESC LIMIT 1"
+        with self._connect() as conn:
+            row = conn.execute(query, tuple(params)).fetchone()
+        return self._row_to_skill_candidate(row) if row is not None else None
+
+    def update_skill_candidate_status(
+        self,
+        candidate_id: str,
+        *,
+        status: str,
+    ) -> SkillCandidate:
+        candidate = self.get_skill_candidate(candidate_id)
+        updated = candidate.model_copy(
+            update={"status": status, "reviewed_at": datetime.now(timezone.utc)}
+        )
+        self.save_skill_candidate(updated)
+        return updated
+
+    def update_skill_candidate(
+        self,
+        candidate_id: str,
+        *,
+        title: str | None = None,
+        slug: str | None = None,
+        summary: str | None = None,
+        trigger_conditions: list[str] | None = None,
+        body_markdown: str | None = None,
+        rationale: str | None = None,
+        semantic_fingerprint: str | None = None,
+    ) -> SkillCandidate:
+        candidate = self.get_skill_candidate(candidate_id)
+        updated = candidate.model_copy(
+            update={
+                "title": title if title is not None else candidate.title,
+                "slug": slug if slug is not None else candidate.slug,
+                "summary": summary if summary is not None else candidate.summary,
+                "trigger_conditions": (
+                    trigger_conditions
+                    if trigger_conditions is not None
+                    else candidate.trigger_conditions
+                ),
+                "body_markdown": (
+                    body_markdown if body_markdown is not None else candidate.body_markdown
+                ),
+                "rationale": rationale if rationale is not None else candidate.rationale,
+                "semantic_fingerprint": (
+                    semantic_fingerprint
+                    if semantic_fingerprint is not None
+                    else candidate.semantic_fingerprint
+                ),
+            }
+        )
+        self.save_skill_candidate(updated)
+        return updated
+
+    def mark_skill_candidate_promoted(
+        self,
+        candidate_id: str,
+        *,
+        promoted_skill_id: str,
+    ) -> SkillCandidate:
+        candidate = self.get_skill_candidate(candidate_id)
+        updated = candidate.model_copy(
+            update={
+                "status": "promoted",
+                "promoted_skill_id": promoted_skill_id,
+                "reviewed_at": datetime.now(timezone.utc),
+            }
+        )
+        self.save_skill_candidate(updated)
+        return updated
+
     def _connect(self) -> sqlite3.Connection:
         return connect_sqlite(self.path)
 
@@ -333,6 +647,52 @@ class SQLiteSelfImproveStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS review_triggers (
+                    trigger_id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    trigger_kind TEXT NOT NULL,
+                    source_run_id TEXT NOT NULL,
+                    source_trace_id TEXT NOT NULL,
+                    source_fingerprints TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    semantic_fingerprint TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_review_triggers_active_semantic
+                ON review_triggers (agent_id, semantic_fingerprint)
+                WHERE status IN ('pending', 'queued', 'running')
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS skill_candidates (
+                    candidate_id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    slug TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    trigger_conditions TEXT NOT NULL,
+                    body_markdown TEXT NOT NULL,
+                    rationale TEXT NOT NULL,
+                    source_run_ids TEXT NOT NULL,
+                    source_fingerprints TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    semantic_fingerprint TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    reviewed_at TEXT,
+                    promoted_skill_id TEXT
+                )
+                """
+            )
 
     def _row_to_failure(self, row: tuple[object, ...]) -> FailureEvent:
         return FailureEvent(
@@ -385,4 +745,39 @@ class SQLiteSelfImproveStore:
             active=bool(row[5]),
             created_at=str(row[6]),
             superseded_at=str(row[7]) if row[7] is not None else None,
+        )
+
+    def _row_to_review_trigger(self, row: tuple[object, ...]) -> ReviewTrigger:
+        return ReviewTrigger(
+            trigger_id=str(row[0]),
+            agent_id=str(row[1]),
+            trigger_kind=str(row[2]),
+            source_run_id=str(row[3]),
+            source_trace_id=str(row[4]),
+            source_fingerprints=list(json.loads(str(row[5]))),
+            status=str(row[6]),
+            payload_json=dict(json.loads(str(row[7]))),
+            semantic_fingerprint=str(row[8]),
+            created_at=str(row[9]),
+            updated_at=str(row[10]),
+        )
+
+    def _row_to_skill_candidate(self, row: tuple[object, ...]) -> SkillCandidate:
+        return SkillCandidate(
+            candidate_id=str(row[0]),
+            agent_id=str(row[1]),
+            status=str(row[2]),
+            title=str(row[3]),
+            slug=str(row[4]),
+            summary=str(row[5]),
+            trigger_conditions=list(json.loads(str(row[6]))),
+            body_markdown=str(row[7]),
+            rationale=str(row[8]),
+            source_run_ids=list(json.loads(str(row[9]))),
+            source_fingerprints=list(json.loads(str(row[10]))),
+            confidence=float(row[11]),
+            semantic_fingerprint=str(row[12]),
+            created_at=str(row[13]),
+            reviewed_at=str(row[14]) if row[14] is not None else None,
+            promoted_skill_id=str(row[15]) if row[15] is not None else None,
         )

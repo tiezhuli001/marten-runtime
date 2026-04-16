@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from marten_runtime.subagents.tool_profiles import (
 
 VALID_TOOL_PROFILES = {"restricted", "standard", "elevated"}
 TOOL_PROFILE_ALIASES = {"default": "restricted"}
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -44,6 +46,7 @@ class SubagentService:
         app_runtimes: dict[str, object] | None = None,
         llm_client_factory=None,
         models_config=None,
+        terminal_callback=None,
     ) -> None:
         self.session_store = session_store
         self.run_history = run_history
@@ -59,6 +62,7 @@ class SubagentService:
         self.app_runtimes = dict(app_runtimes or {})
         self.llm_client_factory = llm_client_factory
         self.models_config = models_config
+        self.terminal_callback = terminal_callback
         self._running_tasks: set[str] = set()
         self._background_tasks: dict[str, threading.Thread] = {}
         self._execution_threads: dict[str, threading.Thread] = {}
@@ -81,6 +85,7 @@ class SubagentService:
         origin_channel_id: str | None = None,
         context_mode: str = "brief_only",
         notify_on_finish: bool = True,
+        include_parent_session_message: bool = True,
     ) -> dict[str, str]:
         if not task.strip():
             raise ValueError("task must not be empty")
@@ -124,6 +129,7 @@ class SubagentService:
                 context_mode=context_mode,
                 task_prompt=task,
                 notify_on_finish=notify_on_finish,
+                include_parent_session_message=include_parent_session_message,
             )
             queue_state = "queued"
             if len(self._running_tasks) < self.max_concurrent_subagents:
@@ -193,13 +199,15 @@ class SubagentService:
             return task
         task = self.store.mark_succeeded(task_id)
         self.store.set_terminal_payload(task_id, result_summary=summary)
-        self.session_store.append_message(
-            task.parent_session_id,
-            SessionMessage.system(
-                f"subagent task completed: {task.label}\nsummary: {summary}"
-            ),
-        )
+        if task.include_parent_session_message:
+            self.session_store.append_message(
+                task.parent_session_id,
+                SessionMessage.system(
+                    f"subagent task completed: {task.label}\nsummary: {summary}"
+                ),
+            )
         self._deliver_channel_notification(task, status="completed", text=summary)
+        self._emit_terminal_callback(task)
 
     def complete_task_failure(self, task_id: str, error_text: str) -> None:
         task = self.store.get(task_id)
@@ -207,13 +215,15 @@ class SubagentService:
             return
         task = self.store.mark_failed(task_id)
         self.store.set_terminal_payload(task_id, error_text=error_text)
-        self.session_store.append_message(
-            task.parent_session_id,
-            SessionMessage.system(
-                f"subagent task failed: {task.label}\nerror: {error_text}"
-            ),
-        )
+        if task.include_parent_session_message:
+            self.session_store.append_message(
+                task.parent_session_id,
+                SessionMessage.system(
+                    f"subagent task failed: {task.label}\nerror: {error_text}"
+                ),
+            )
         self._deliver_channel_notification(task, status="failed", text=error_text)
+        self._emit_terminal_callback(task)
 
     def complete_task_timeout(
         self,
@@ -229,31 +239,52 @@ class SubagentService:
             execution_token,
         ):
             return task
+        was_running = task.status == "running"
         self._signal_stop(task_id)
         self._invalidate_execution(task_id)
         task = self.store.mark_timed_out(task_id)
-        self.session_store.append_message(
-            task.parent_session_id,
-            SessionMessage.system(f"subagent task timed out: {task.label}"),
-        )
+        if task.include_parent_session_message:
+            self.session_store.append_message(
+                task.parent_session_id,
+                SessionMessage.system(f"subagent task timed out: {task.label}"),
+            )
         self._deliver_channel_notification(task, status="timed_out", text="subagent task timed out")
-        self._release_task_slot(task_id)
+        self._emit_terminal_callback(task)
+        if not was_running:
+            self._release_task_slot(task_id)
         return task
 
-    def cancel_task(self, task_id: str):
+    def cancel_task(
+        self,
+        task_id: str,
+        *,
+        requester_session_id: str | None = None,
+        requester_run_id: str | None = None,
+    ):
         task = self.store.get(task_id)
+        if requester_session_id is not None and task.parent_session_id != requester_session_id:
+            raise ValueError("subagent task is not owned by current session")
+        if requester_run_id is not None and task.parent_run_id != requester_run_id:
+            raise ValueError("subagent task is not owned by current run")
         if task.status in {"cancelled", "succeeded", "failed", "timed_out"}:
             return task
+        was_running = task.status == "running"
         self._signal_stop(task_id)
         self._invalidate_execution(task_id)
         task = self.store.mark_cancelled(task_id)
-        self.session_store.append_message(
-            task.parent_session_id,
-            SessionMessage.system(f"subagent task cancelled: {task.label}"),
-        )
+        if task.include_parent_session_message:
+            self.session_store.append_message(
+                task.parent_session_id,
+                SessionMessage.system(f"subagent task cancelled: {task.label}"),
+            )
         self._deliver_channel_notification(task, status="cancelled", text="subagent task cancelled")
-        self._release_task_slot(task_id)
+        self._emit_terminal_callback(task)
+        if not was_running:
+            self._release_task_slot(task_id)
         return task
+
+    def set_terminal_callback(self, callback) -> None:  # noqa: ANN001
+        self.terminal_callback = callback
 
     def shutdown(self) -> None:
         outstanding = [
@@ -364,11 +395,18 @@ class SubagentService:
                 child_run_id,
                 events[-1].created_at,
             )
-            final_text = (
-                str(events[-1].payload.get("text", "")).strip()
-                or "subagent finished"
-            )
-            self.complete_task_success(task.task_id, final_text)
+            terminal_event = events[-1]
+            terminal_text = str(terminal_event.payload.get("text", "")).strip()
+            if terminal_event.event_type == "final":
+                final_text = terminal_text or "subagent finished"
+                self.complete_task_success(task.task_id, final_text)
+                return
+            if terminal_event.event_type == "error":
+                error_code = str(terminal_event.payload.get("code", "")).strip()
+                error_text = terminal_text or error_code or "subagent failed"
+                self.complete_task_failure(task.task_id, error_text)
+                return
+            self.complete_task_failure(task.task_id, "subagent emitted no terminal event")
         except Exception as exc:  # pragma: no cover
             if self._is_execution_current(task_id, execution_token):
                 self.complete_task_failure(task.task_id, str(exc))
@@ -487,3 +525,14 @@ class SubagentService:
                 dedupe_key=f"subagent:{task.task_id}:{status}",
             )
         )
+
+    def _emit_terminal_callback(self, task) -> None:  # noqa: ANN001
+        if self.terminal_callback is None:
+            return
+        try:
+            self.terminal_callback(task)
+        except Exception:  # pragma: no cover - defensive logging path
+            logger.exception(
+                "subagent terminal callback failed",
+                extra={"task_id": getattr(task, "task_id", None)},
+            )

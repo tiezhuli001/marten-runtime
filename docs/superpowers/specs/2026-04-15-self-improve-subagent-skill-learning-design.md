@@ -10,9 +10,9 @@ This design covers three requested capability upgrades:
 2. background isolated self-improve review
 3. `skill_candidate + channel notification + user confirmation`
 
-It also records one prerequisite architecture decision driven by current repository reality and the user's preference:
+It also records one architecture decision driven by current repository reality and the user's preference:
 
-- `marten-runtime` should add a thin subagent substrate first, then build background review on top of that substrate instead of permanently coupling review to automation-only dispatch
+- background review should build directly on the repository's existing lightweight subagent runtime lane, not on automation-only dispatch
 
 ## Summary Decision
 
@@ -20,7 +20,7 @@ The recommended target state is:
 
 - **lesson** remains the narrow runtime-learning surface for short, stable execution rules
 - **skill candidates** become the narrow procedural-learning surface for reusable workflows
-- **background review** should eventually run through a thin subagent runtime, not a heavy planner/swarm system
+- **background review** should run through the existing lightweight subagent runtime lane, extended only with review-specific contracts instead of a heavy planner/swarm system
 - **system prompt assets stay stable**: do not auto-edit `AGENTS.md`, bootstrap prompt files, identity files, or other source-of-truth prompt assets
 - **skills stay self-contained**: if a promoted skill is good enough, its summary/body plus the existing selector/loading flow should be sufficient for future model use; system prompt only needs to keep the stable “how to find/use skills” protocol
 
@@ -62,22 +62,32 @@ However, Hermes is a broader agent shell than `marten-runtime`. The right move i
 - skill discovery already works through `SkillService`, visible skill summaries, and on-demand skill loading
 - runtime diagnostics already expose a self-improve status surface
 
-### What does *not* already exist
+### What already exists on the subagent side
 
-The repository does **not** currently expose a mature parent/child subagent runtime. There is no current source-of-truth implementation for:
+The repository now already exposes a real lightweight parent/child subagent runtime, including:
 
-- spawning a child agent with an isolated run/session and explicit parent linkage
-- returning structured child results back into a parent conversation contract
-- child-agent scheduling, lifecycle, or result correlation as a stable runtime subsystem
-- planner/swarm-style orchestration (explicitly deferred by repo docs)
+- `spawn_subagent` / `cancel_subagent` on the default main agent tool surface
+- isolated child sessions/runs with explicit `parent_session_id` / `parent_run_id` lineage
+- bounded child lifecycle and diagnostics through `SubagentService` and the `/diagnostics/subagents` surfaces
+- product-level prompt guidance that treats explicit “子代理 / 后台处理 / 不要污染主线程或上下文” intent as a first-class `spawn_subagent` path
+- live verification records proving the runtime can execute `main agent -> child agent -> builtin/MCP/skill -> parent summary -> delivery`
+
+### What still needs to be added for self-improve review
+
+What does **not** yet exist is the review-specific layer on top of that subagent lane. The repository still needs a source-of-truth contract for:
+
+- spawning a dedicated **review subagent** with a bounded review payload shape
+- returning structured review results (`lesson_proposals[]`, `skill_proposals[]`, review metadata) into the self-improve pipeline
+- review-specific tool/skill ceilings and budgets so the child stays narrow
+- review-trigger queueing, dedupe, and notification integration tied to self-improve state
 
 ### Consequence for this design
 
-Background review should be designed as a **subagent-backed target architecture**, but this document explicitly treats that as dependent on a prior thin subagent substrate slice.
+Background review should now be designed as a **first-class workload on the existing lightweight subagent runtime lane**. This document should no longer treat subagent support as a future prerequisite.
 
-Until that substrate exists, review can still run through the existing isolated-internal-turn path for compatibility and incremental delivery. But the long-term design in this document assumes:
+It also should not add an automation compatibility shim just to preserve a fallback path. If the review-subagent lane is unavailable or misconfigured, that should fail explicitly and surface in diagnostics rather than introducing a second execution substrate.
 
-> background review is eventually a thin, internal, isolated **review subagent** capability — not a general planner, not a swarm, and not a workflow platform.
+> background review is a thin, internal, isolated **review subagent** capability built on the existing subagent runtime — not a general planner, not a swarm, and not a workflow platform.
 
 ## Non-Goals
 
@@ -154,34 +164,22 @@ Skill promotion must be user-visible and confirmable through channel/runtime int
    - `marten-runtime` should use `skill_candidate` + explicit promotion instead
 3. **broader identity/profile modeling**
    - out of scope for the current repository target
-4. **heavy parent/child orchestration runtime as a prerequisite for all learning**
-   - the repo should only add the minimum thin subagent substrate needed for isolated review
+4. **heavy parent/child orchestration runtime beyond the existing lightweight subagent lane**
+   - the repo should only add the minimum review-specific contracts needed on top of the current isolated child-execution path
 
 ## High-Level Architecture
 
-The target architecture adds one prerequisite and three learning slices.
+The target architecture adds three learning slices on top of the repository's existing lightweight subagent lane.
 
-### Stage 0: thin subagent substrate (prerequisite)
-
-Add a minimal internal subagent capability sufficient for background review.
-
-This stage is not a planner system. It only needs to support:
-
-- spawning a child review agent with isolated session state
-- passing a structured review payload
-- capturing child result status and payload
-- correlating child review output back to the originating parent run/session
-- enforcing restricted tool/skill access for review-specific work
-
-### Stage 1: real-time lesson trigger evaluation
+### Phase 1: real-time lesson trigger evaluation
 
 Augment the current lesson system with trigger evaluation so review opportunities are detected near the moment of evidence creation.
 
-### Stage 2: background review execution
+### Phase 2: background review execution
 
-Run self-improve review in an isolated review agent (or compatibility shim using isolated internal turns until subagent support exists).
+Run self-improve review in an isolated review subagent using the existing parent/child runtime path.
 
-### Stage 3: skill candidate lifecycle
+### Phase 3: skill candidate lifecycle
 
 When background review detects reusable procedural knowledge, create a `skill_candidate`, notify the user through channel delivery, and require explicit user confirmation before promotion into official `skills/`.
 
@@ -314,12 +312,9 @@ Borrow Hermes' “background review” idea, but fit it into `marten-runtime`'s 
 
 ## Key decision
 
-The target architecture is **review subagent**, not general automation-only review. But because subagent support is not yet a stable repository capability, this proposal is intentionally split into:
+The target architecture is **review subagent on the existing lightweight subagent lane**, not general automation-only review and not a second isolated execution substrate.
 
-- target architecture
-- compatibility execution path
-
-## 2A. Target architecture: internal review subagent
+## Internal review subagent architecture
 
 ### What the review subagent is
 
@@ -334,13 +329,24 @@ It is **not**:
 
 ### Required capabilities
 
-The thin review subagent substrate only needs to support:
+The existing lightweight subagent lane plus a narrow review contract only needs to support:
 
 - spawn child with isolated session/run identity
 - pass a structured parent-linked review payload
 - restrict tools/skills visible to the child
 - return one structured result payload
 - record parent-child correlation in diagnostics
+
+### Review contract boundary
+
+The **review contract is runtime-owned first**. The repository should treat review as a dedicated self-improve execution contract that happens to run inside a child agent lane; it should **not** become a second general-purpose skill framework.
+
+That means:
+
+- the runtime owns the review payload schema, result schema, spawn policy, persistence, and diagnostics correlation
+- a review-oriented prompt/skill asset such as `self_improve_review` may be used as the child's narrow reasoning aid
+- but `self_improve_review` is **not** the source of truth for queueing, storage, promotion, or side effects
+- if the skill/prompt artifact is missing or malformed, review should fail explicitly; the runtime must not silently fall back to a different execution substrate
 
 ### Review subagent inputs
 
@@ -355,6 +361,21 @@ The child should not receive an unbounded raw conversation transcript by default
 - current pending skill candidates summary
 - currently visible skill summaries (summary-only, not all bodies)
 
+### Review payload budget and trimming
+
+To prevent the review lane from turning into an unbounded context sink, the payload should be budgeted explicitly. The implementation plan should keep one concrete budget constant, but the design intent is:
+
+- include only evidence relevant to the triggering fingerprint(s) or successful tool episode
+- prefer summaries over raw transcripts
+- cap each collection independently (for example: most recent N failures/recoveries, most recent N tool episodes, most relevant N lesson/skill summaries)
+- cap the total serialized payload size with one runtime-owned limit
+- when over budget, trim in this order:
+  1. drop oldest low-signal summaries
+  2. keep only items linked to the trigger's semantic fingerprint
+  3. preserve the source run summary and the most recent decisive evidence
+
+The key invariant is: the child receives **enough evidence to judge one learning opportunity**, not a broad replay of repository memory.
+
 ### Review subagent outputs
 
 Structured output should allow both lesson and skill proposals in one pass:
@@ -362,41 +383,59 @@ Structured output should allow both lesson and skill proposals in one pass:
 - `lesson_proposals[]`
 - `skill_proposals[]`
 - optional `nothing_to_save_reason`
+- review metadata such as confidence, evidence references, and proposal classification rationale
 
 The review agent is a proposal producer, not the final gate.
 
-## 2B. Compatibility path before subagent support exists
-
-Until thin subagent support lands, the repository can emulate review execution with the existing isolated internal-turn machinery:
-
-- internal automation-like dispatch
-- isolated session target
-- dedicated review skill id
-- final result written into the same review-output store
-
-Important: this is a compatibility path only. The design record should still preserve the subagent-backed target architecture so the repository does not accidentally hard-code learning forever into automation dispatch.
-
 ## Review execution contract
 
-### Review skills
+### Trigger ownership and spawn path
 
-Introduce one dedicated review skill, for example:
+To avoid execution drift, ownership should be explicit:
+
+- the active runtime path records evidence and may enqueue a `ReviewTrigger`
+- enqueue happens on the main runtime path, but dequeue/spawn happens only after the user-facing turn is committed so review work never blocks or pollutes the primary reply
+- one runtime-owned self-improve review dispatcher dequeues pending triggers
+- that dispatcher, not the user-facing parent agent prompt, owns `spawn_subagent` for review work
+- review failures should remain visible in diagnostics/state and should not be retried through a second background mechanism by default
+
+This keeps the product semantics narrow: user-facing subagents are one lane, and self-improve review is a runtime-owned internal workload on that same lane.
+
+### Review child tool and skill ceiling
+
+The review child should run with a review-specific minimum surface, not a generic `standard` child profile. The design intent is:
+
+Allowed:
+
+- read-only self-improve evidence access
+- read-only lesson / skill-candidate summary inspection
+- narrow write actions for saving pending `LessonCandidate` / `SkillCandidate` records
+- diagnostics correlation metadata needed to tie the child result back to the trigger
+
+Denied:
+
+- arbitrary MCP/network exploration
+- general repo mutation
+- prompt asset edits
+- direct delivery/channel sends
+- direct promotion into official `skills/`
+- nested `spawn_subagent`
+
+If a future implementation needs a new review capability, it should be added explicitly to the review contract, not inherited accidentally from broader child-agent profiles.
+
+### Review-oriented prompt asset
+
+A dedicated review-oriented prompt/skill artifact may still exist, for example:
 
 - `self_improve_review`
 
-This skill should be allowed to:
+But it should be treated as a **narrow child reasoning asset**, not as the owner of runtime side effects. Its job is to help the child classify evidence into:
 
-- inspect self-improve evidence
-- inspect lesson candidates and active lessons
-- inspect skill candidate summaries
-- save lesson candidates
-- save skill candidates
+- lesson proposal
+- skill proposal
+- nothing worth saving
 
-It must not:
-
-- edit prompt assets
-- edit AGENTS/bootstrap files
-- directly promote skills into the official skill directory
+It must not become a generic operator tool that can mutate other runtime truth layers.
 
 ## Review result handling
 
@@ -404,6 +443,7 @@ After review execution:
 
 - lesson proposals are written as pending `LessonCandidate`s and processed by the existing gate/judge path
 - skill proposals are written as pending `SkillCandidate`s and routed into the user-notification flow
+- the review child does **not** notify the end user directly; user-visible delivery remains owned by the normal runtime/channel path
 
 ## Correlation and diagnostics
 
@@ -414,6 +454,7 @@ Each review execution should be traceable from:
 - review run id / child run id
 - resulting lesson candidate ids
 - resulting skill candidate ids
+- terminal review status (`succeeded`, `failed`, `discarded`)
 
 This makes review observable without exposing raw internals to end users.
 
@@ -494,8 +535,10 @@ When a new pending skill candidate is created:
 
 1. mark candidate as `pending`
 2. create a lightweight notification event
-3. deliver one user-visible notification through the originating channel if safe
+3. deliver one user-visible notification through the originating channel **only if that channel has a runtime-owned async follow-up path** (current repo reality: Feishu yes; plain HTTP request/response no)
 4. allow later inspection through the normal runtime path
+
+Do **not** fake async notification for non-push channels by mutating the already-finished main reply or by injecting synthetic parent-session summaries. Unsupported channels should remain user-inspectable through the normal `self_improve` runtime path until a real runtime-owned follow-up surface exists.
 
 ### Notification style
 
@@ -514,6 +557,22 @@ The notification should be short and user-facing, for example:
 
 Add a narrow management surface similar to current `self_improve_management`, but for skill candidates.
 
+### User interaction contract
+
+The user-facing contract should stay narrow and explicit:
+
+- notification tells the user that a new pending skill candidate exists
+- inspection shows summary, rationale, and the candidate body draft
+- acceptance confirms the candidate is worth promoting
+- rejection archives or marks it rejected without mutating official skills
+- optional edit happens **before** promotion and only on the candidate draft
+
+To avoid product drift, the repository should keep **one** management entry surface and keep it singular:
+
+- extend the existing `self_improve` management family to include skill-candidate inspection / acceptance / rejection / promotion
+
+It should not create a second overlapping management surface for the same candidate lifecycle.
+
 ### User operations
 
 - list candidates
@@ -526,6 +585,12 @@ Add a narrow management surface similar to current `self_improve_management`, bu
 ### Promotion behavior
 
 Promotion writes a new official skill only after explicit confirmation.
+
+Ownership should also be explicit:
+
+- the runtime/main-agent management path handles the confirmation interaction
+- promotion is executed by a runtime-owned promotion path, not by the review child itself
+- the promotion path writes official skill files only after the candidate is in an accepted state
 
 Suggested path:
 
@@ -584,34 +649,27 @@ Duplicating that content into system prompt assets would create drift and merge 
 
 Although the user asked for a single combined design, the implementation order should be staged.
 
-### Phase 0 — thin subagent substrate (prerequisite)
-
-Add the narrow internal review-subagent substrate.
-
-Done when:
-
-- internal child review execution exists
-- child review is isolated and correlated to the parent run
-- child review can return structured proposals
-- no planner/swarm/general worker semantics are introduced
-
 ### Phase 1 — real-time lesson triggers
+
+This phase assumes the existing lightweight subagent runtime remains the only background execution substrate for self-improve work.
 
 Add `SelfImproveTriggerEvaluator` and review-trigger persistence.
 
 Done when:
 
 - repeated failure/recovery patterns can enqueue immediate review opportunities
-- daily automation remains as a fallback scanner, not the only trigger
+- real-time trigger capture is the primary path for new review work
+- any retained automation scanner is treated only as legacy backfill/sweep logic and must not become a second primary execution semantic
 
 ### Phase 2 — review execution path
 
-Run isolated background review for pending triggers.
+Run isolated background review for pending triggers through one runtime-owned dequeue -> `spawn_subagent` path.
 
 Done when:
 
 - review turn can emit lesson proposals and skill proposals
 - review output is stored in narrow candidate stores
+- review child payload budgeting, child tool ceilings, and diagnostics correlation are all explicit
 
 ### Phase 3 — skill candidate lifecycle
 
@@ -676,7 +734,7 @@ This design is acceptable when the repository can eventually support all of the 
 
 1. the existing lesson system can trigger review in near real time, not only through daily batch automation
 2. background review runs in isolated execution without polluting the parent user session
-3. the long-term design supports a thin review subagent substrate rather than a heavy planner runtime
+3. the long-term design uses the existing lightweight subagent runtime lane for review instead of introducing a second background execution substrate or a heavy planner runtime
 4. reusable workflows can be captured as `skill_candidate`s
 5. new skill candidates are user-visible through channel/runtime notifications
 6. official skill promotion requires explicit user confirmation
@@ -688,8 +746,8 @@ This design is acceptable when the repository can eventually support all of the 
 
 If this design is approved, the next planning document should explicitly separate:
 
-- **Phase 0 plan**: thin review-subagent substrate
-- **Phase 1 plan**: real-time lesson triggers + compatibility review execution
-- **Phase 2 plan**: full skill-candidate notification/confirmation/promotion flow
+- **Phase 1 plan**: real-time lesson triggers and review-trigger persistence
+- **Phase 2 plan**: review-subagent execution contract on the existing lightweight subagent lane
+- **Phase 3 plan**: full skill-candidate notification/confirmation/promotion flow
 
-That keeps the implementation path aligned with the current codebase and with the user's stated priority of considering subagent support before full self-improve expansion.
+That keeps the implementation path aligned with the current codebase and with the user's stated priority of using the existing subagent capability as the self-improve background lane.

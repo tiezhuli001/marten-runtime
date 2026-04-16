@@ -209,6 +209,25 @@ Latest product-usability smoke after the spawn-policy hardening:
 - child completion summary:
   - `tiezhuli001/codex-skills 最近一次提交是 **2026-04-14 20:01:21**（北京时间）...`
 
+Latest direct Feishu main-chain proof on the current runtime:
+
+- conversation/chat: `oc_5091efbdd295f49cad9bdeed9d92b7ae`
+- session: `sess_3072ef1d`
+- run: `run_3624374a`
+- trace: `trace_a579ef70`
+- latest websocket correlation fields:
+  - `last_run_id = run_3624374a`
+  - `last_runtime_trace_id = trace_a579ef70`
+  - `last_session_id = sess_3072ef1d`
+  - `dead_letter.count = 0`
+  - `delivery_sessions.closed_count = 1`
+- user prompt:
+  - `请先告诉我现在的北京时间，再用 GitHub MCP 查询 tiezhuli001/codex-skills 最近一次提交时间，最后合并成一句中文回复。`
+- verified runtime path:
+  - `Feishu -> main agent -> time -> mcp:list -> mcp:list_commits -> Feishu`
+- verified final reply:
+  - `tiezhuli001/codex-skills 最近一次提交是 **2026-04-14 20:01:21**（北京时间）...`
+
 Evidence to capture:
 
 - [x] Feishu-side screenshot or visible reply text

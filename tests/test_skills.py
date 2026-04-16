@@ -574,6 +574,20 @@ class SkillTests(unittest.TestCase):
         self.assertIn("repeated failures and later recoveries", body)
         self.assertIn("Do not edit AGENTS.md", body)
 
+    def test_self_improve_review_skill_stays_classification_only(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        skill_path = repo_root / "skills/self_improve_review/SKILL.md"
+
+        self.assertTrue(skill_path.exists())
+        body = skill_path.read_text(encoding="utf-8")
+
+        self.assertIn("classification-only", body)
+        self.assertIn("structured JSON only", body)
+        self.assertIn("Do not edit AGENTS.md", body)
+        self.assertIn("Do not directly notify the user", body)
+        self.assertIn("Do not directly promote official skills", body)
+        self.assertIn("Do not open nested subagents", body)
+
     def test_feishu_channel_formatting_skill_is_repo_bundled_and_feishu_only(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         skill_path = repo_root / "skills/feishu_channel_formatting/SKILL.md"

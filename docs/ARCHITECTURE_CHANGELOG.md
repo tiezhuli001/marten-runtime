@@ -24,6 +24,39 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
 
 ## Entries
 
+### 2026-04-16: Live Feishu Last-Hop Proof Was Closed On The Current Runtime And Review-Child Confidence Parsing Was Hardened
+
+- Change:
+  - the current runtime now has a fresh real Feishu main-chain proof on the latest shipped self-improve/subagent baseline:
+    - `Feishu -> main agent -> time -> mcp:list -> mcp:list_commits -> Feishu`
+  - the hidden self-improve review-child contract now tolerates model-returned string confidence labels:
+    - `high`
+    - `medium`
+    - `low`
+  - runtime-owned review children therefore no longer fail closed merely because the model returned structured JSON with confidence labels instead of numeric floats
+- Why:
+  - the repository still needed one fresh real last-hop proof on the current runtime state, not only historical evidence from earlier snapshots
+  - live runtime verification exposed a real drift: review children could return valid classification JSON with string confidence labels, while the parser only accepted numeric floats and incorrectly marked the review trigger as `failed`
+  - that drift affected the real post-commit self-improve path even though scripted tests were green
+- Source of truth:
+  - `src/marten_runtime/self_improve/review_child_contract.py`
+  - `tests/contracts/test_self_improve_review_contracts.py`
+  - `docs/LIVE_VERIFICATION_CHECKLIST.md`
+  - local continuity evidence in `STATUS.md`
+- Verification:
+  - fresh real Feishu last-hop proof:
+    - chat/conversation: `oc_5091efbdd295f49cad9bdeed9d92b7ae`
+    - session: `sess_3072ef1d`
+    - run: `run_3624374a`
+    - trace: `trace_a579ef70`
+    - result: inbound message reached the runtime, tool chain executed successfully, final reply returned to the same Feishu chat, `dead_letter.count = 0`
+  - live self-improve proof after the parser fix:
+    - hidden `self-improve-review:*` child spawned and completed successfully
+    - runtime diagnostics settled the review trigger to `discarded` for “nothing to save” instead of the incorrect `failed`
+  - post-fix regression:
+    - `PYTHONPATH=src python -m unittest -v tests.contracts.test_self_improve_review_contracts tests.test_self_improve_review_dispatcher tests.test_self_improve_integration tests.contracts.test_runtime_contracts tests.test_skills`
+      - pass, `58` tests green
+
 ### 2026-04-15: Lightweight Subagents Became A First-Class Runtime Path With Selector-Aware Ceilings And Cooperative MCP Cancellation
 
 - Change:

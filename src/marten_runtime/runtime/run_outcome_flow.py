@@ -33,6 +33,19 @@ def is_provider_failure(exc: Exception) -> bool:
         return True
     return str(exc).startswith("provider_")
 
+
+def _invoke_post_commit_callback_safely(
+    post_commit_callback,
+    *,
+    agent_id: str,
+) -> None:
+    if post_commit_callback is None:
+        return
+    try:
+        post_commit_callback(agent_id=agent_id)
+    except Exception:
+        logger.exception("post-commit self-improve callback failed", extra={"agent_id": agent_id})
+
 def finish_run_success(
     *,
     events: list[OutboundEvent],
@@ -50,6 +63,8 @@ def finish_run_success(
     self_improve_recorder: SelfImproveRecorder | None,
     append_post_turn_summary_callback=None,
     combined_summary_draft: ToolEpisodeSummaryDraft | None = None,
+    post_commit_callback=None,
+    channel_id: str | None = None,
 ) -> list[OutboundEvent]:
     events.append(
         OutboundEvent(
@@ -73,6 +88,19 @@ def finish_run_success(
         run_id=run_id,
         tool_snapshot=tool_snapshot,
     )
+    trigger_review_from_success(
+        history=history,
+        self_improve_recorder=self_improve_recorder,
+        user_message=message,
+        tool_history=tool_history,
+        final_text=final_text,
+        combined_summary_draft=combined_summary_draft,
+        run_id=run_id,
+        trace_id=trace_id,
+        agent_id=agent_id,
+        tool_snapshot=tool_snapshot,
+        channel_id=channel_id,
+    )
     history.finish(run_id, delivery_status="final")
     history.finalize_total_timing(run_id, elapsed_ms=elapsed_ms(run_started_at))
     history.set_llm_request_count(run_id, llm_request_count)
@@ -82,6 +110,11 @@ def finish_run_success(
         run_id=run_id,
         trace_id=trace_id,
         message=message,
+        channel_id=channel_id,
+    )
+    _invoke_post_commit_callback_safely(
+        post_commit_callback,
+        agent_id=agent_id,
     )
     return events
 
@@ -97,6 +130,8 @@ def finish_run_error(
     error_code: str,
     error_text: str,
     history: InMemoryRunHistory,
+    agent_id: str,
+    post_commit_callback=None,
 ) -> list[OutboundEvent]:
     events.append(
         OutboundEvent(
@@ -113,6 +148,10 @@ def finish_run_error(
     history.fail(run_id, error_code=error_code)
     history.finalize_total_timing(run_id, elapsed_ms=elapsed_ms(run_started_at))
     history.set_llm_request_count(run_id, llm_request_count)
+    _invoke_post_commit_callback_safely(
+        post_commit_callback,
+        agent_id=agent_id,
+    )
     return events
 
 
@@ -129,6 +168,7 @@ def record_failure(
     summary: str,
     tool_name: str | None = None,
     provider_name: str | None = None,
+    channel_id: str | None = None,
 ) -> None:
     if self_improve_recorder is None:
         return
@@ -137,6 +177,7 @@ def record_failure(
         run_id=run_id,
         trace_id=trace_id,
         session_id=session_id,
+        channel_id=channel_id,
         error_code=error_code,
         error_stage=error_stage,
         tool_name=tool_name,
@@ -153,6 +194,7 @@ def record_recovery(
     run_id: str,
     trace_id: str,
     message: str,
+    channel_id: str | None = None,
 ) -> None:
     if self_improve_recorder is None:
         return
@@ -161,6 +203,7 @@ def record_recovery(
         run_id=run_id,
         trace_id=trace_id,
         message=message,
+        channel_id=channel_id,
         fix_summary="later successful completion on a compatible request",
         success_evidence="final reply generated",
     )
@@ -201,6 +244,45 @@ def append_post_turn_summary(
     )
     if summary is not None:
         history.append_tool_outcome_summary(run_id, summary)
+
+
+def trigger_review_from_success(
+    *,
+    history: InMemoryRunHistory,
+    self_improve_recorder: SelfImproveRecorder | None,
+    user_message: str,
+    tool_history: list[ToolExchange],
+    final_text: str,
+    combined_summary_draft: ToolEpisodeSummaryDraft | None,
+    run_id: str,
+    trace_id: str,
+    agent_id: str,
+    tool_snapshot: ToolSnapshot,
+    channel_id: str | None = None,
+) -> None:
+    del history
+    if self_improve_recorder is None or not tool_history or not final_text.strip():
+        return
+    summary = summarize_completed_tool_episode(
+        user_message=user_message,
+        tool_history=tool_history,
+        final_text=final_text,
+        combined_summary_draft=combined_summary_draft,
+        run_id=run_id,
+        tool_snapshot=tool_snapshot,
+    )
+    if summary is None:
+        return
+    self_improve_recorder.record_successful_tool_episode(
+        agent_id=agent_id,
+        run_id=run_id,
+        trace_id=trace_id,
+        message=user_message,
+        tool_history=tool_history,
+        final_text=final_text,
+        summary=summary.summary_text,
+        channel_id=channel_id,
+    )
 
 
 def summarize_completed_tool_episode(

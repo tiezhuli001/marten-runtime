@@ -1,5 +1,7 @@
 # Lightweight Subagent Phase 1 Implementation Plan
 
+> **Status note (2026-04-16):** This Phase 1 plan has been executed; keep it as an implementation record, not as evidence that subagent support is still pending. Current runtime reality is documented in `/Users/litiezhu/workspace/github/marten-runtime/docs/ARCHITECTURE_CHANGELOG.md` and `/Users/litiezhu/workspace/github/marten-runtime/docs/LIVE_VERIFICATION_CHECKLIST.md`.
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Ship a thin async background subagent capability for `marten-runtime` that lets the main agent delegate bounded work to isolated child sessions, keep the service substrate restricted-by-default while allowing constrained product-level profile inference, and expose enough diagnostics to prove parent -> task -> child session -> child run traceability.
