@@ -55,6 +55,30 @@ def serialize_runtime_diagnostics(
     latest_active_lesson = runtime.self_improve_store.latest_active_lesson(
         agent_id=runtime.default_agent.agent_id
     )
+    latest_review_trigger = runtime.self_improve_store.latest_review_trigger(
+        agent_id=runtime.default_agent.agent_id
+    )
+    pending_review_triggers = runtime.self_improve_store.list_review_triggers(
+        agent_id=runtime.default_agent.agent_id,
+        limit=100,
+        status="pending",
+    )
+    queued_review_triggers = runtime.self_improve_store.list_review_triggers(
+        agent_id=runtime.default_agent.agent_id,
+        limit=100,
+        status="queued",
+    )
+    running_review_triggers = runtime.self_improve_store.list_review_triggers(
+        agent_id=runtime.default_agent.agent_id,
+        limit=100,
+        status="running",
+    )
+    pending_skill_candidates = runtime.self_improve_store.list_skill_candidates(
+        agent_id=runtime.default_agent.agent_id,
+        limit=100,
+        status="pending",
+    )
+    latest_skill_candidate = pending_skill_candidates[0] if pending_skill_candidates else None
     server_surface = resolve_runtime_server_surface(runtime, request)
     return {
         "config_snapshot_id": runtime.config_snapshot.config_snapshot_id,
@@ -116,6 +140,16 @@ def serialize_runtime_diagnostics(
                 latest_rejected_candidate.candidate_text
                 if latest_rejected_candidate is not None
                 else None
+            ),
+            "pending_review_triggers_count": len(pending_review_triggers),
+            "queued_review_triggers_count": len(queued_review_triggers),
+            "running_review_triggers_count": len(running_review_triggers),
+            "pending_skill_candidates_count": len(pending_skill_candidates),
+            "latest_pending_skill_candidate_slug": (
+                latest_skill_candidate.slug if latest_skill_candidate is not None else None
+            ),
+            "latest_review_trigger_status": (
+                latest_review_trigger.status if latest_review_trigger is not None else None
             ),
         },
         "lanes": runtime.lane_manager.stats(),

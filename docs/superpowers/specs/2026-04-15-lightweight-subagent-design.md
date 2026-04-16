@@ -1,5 +1,7 @@
 # Lightweight Subagent Design
 
+> **Status note (2026-04-16):** Lightweight subagent Phase 1 is now implemented and live-verified in this repository. Read `/Users/litiezhu/workspace/github/marten-runtime/docs/ARCHITECTURE_CHANGELOG.md` and `/Users/litiezhu/workspace/github/marten-runtime/docs/LIVE_VERIFICATION_CHECKLIST.md` for current runtime reality; this document is retained as the original design record.
+
 ## Goal
 
 Add a thin, isolated subagent capability to `marten-runtime` so the main agent can delegate suitable work to background child agents without polluting the main conversation window with tool noise, long search traces, or intermediate execution artifacts.

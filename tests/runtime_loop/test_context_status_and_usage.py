@@ -1,5 +1,7 @@
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from marten_runtime.agents.specs import AgentSpec
@@ -11,6 +13,8 @@ from marten_runtime.runtime.usage_models import NormalizedUsage
 from marten_runtime.session.compacted_context import CompactedContext
 from marten_runtime.session.compaction_trigger import build_compaction_settings
 from marten_runtime.session.models import SessionMessage
+from marten_runtime.self_improve.recorder import SelfImproveRecorder
+from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
 from marten_runtime.tools.builtins.runtime_tool import run_runtime_tool
 from marten_runtime.tools.builtins.time_tool import run_time_tool
 from marten_runtime.tools.registry import ToolRegistry, ToolSnapshot
@@ -245,6 +249,67 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
             run.compaction.estimated_input_tokens_after,
         )
         self.assertEqual(run.compaction.effective_window_tokens, 350)
+
+    def test_runtime_records_pre_compaction_learning_flush_trigger_on_proactive_compaction(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            tools = ToolRegistry()
+            history = InMemoryRunHistory()
+            store = SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3")
+            recorder = SelfImproveRecorder(store)
+            llm = ScriptedLLMClient(
+                [LLMReply(final_text="done after proactive compact")]
+            )
+            compact_llm = ScriptedLLMClient(
+                [LLMReply(final_text="当前进展：长线程已压缩。")]
+            )
+            runtime = RuntimeLoop(
+                llm,
+                tools,
+                history,
+                self_improve_recorder=recorder,
+            )
+
+            events = runtime.run(
+                session_id="sess_pre_compact_trigger",
+                message="下一步：继续处理剩余问题",
+                trace_id="trace_pre_compact_trigger",
+                system_prompt="You are marten-runtime.",
+                session_messages=[
+                    SessionMessage.user("todo：处理 chunk 1 " + "x" * 200),
+                    SessionMessage.assistant("chunk 1 完成，下一步继续 " + "y" * 200),
+                    SessionMessage.user("风险：注意不要覆盖 system prompt " + "x" * 200),
+                    SessionMessage.assistant("已收到风险，继续保留脚手架 " + "y" * 200),
+                    SessionMessage.user("下一步：继续处理剩余问题"),
+                ],
+                compact_llm_client=compact_llm,
+                compact_settings=build_compaction_settings(
+                    ModelProfile(
+                        provider="openai",
+                        model="gpt-4.1",
+                        context_window_tokens=400,
+                        reserve_output_tokens=50,
+                        compact_trigger_ratio=0.5,
+                    )
+                ),
+            )
+
+            run_id = events[-1].run_id
+            triggers = store.list_review_triggers(
+                agent_id="main",
+                limit=10,
+                status="pending",
+            )
+
+        self.assertEqual(len(triggers), 1)
+        trigger = triggers[0]
+        self.assertEqual(trigger.trigger_kind, "pre_compaction_learning_flush")
+        self.assertEqual(trigger.source_run_id, run_id)
+        self.assertGreater(
+            int(trigger.payload_json["estimated_tokens_before"]),
+            int(trigger.payload_json["estimated_tokens_after"]),
+        )
 
     def test_runtime_context_status_tool_returns_user_readable_summary_for_current_run(
         self,

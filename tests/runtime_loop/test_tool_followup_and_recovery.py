@@ -804,6 +804,43 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self.assertEqual(len(failures), 1)
         self.assertEqual(failures[0].error_code, "PROVIDER_TRANSPORT_ERROR")
 
+    def test_runtime_invokes_post_commit_callback_after_error_turn_when_failure_trigger_is_created(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            tools = ToolRegistry()
+            history = InMemoryRunHistory()
+            _, store = build_self_improve_adapter(Path(tmpdir))
+            recorder = SelfImproveRecorder(store)
+            recorder.record_failure(
+                agent_id="main",
+                run_id="run_seed_1",
+                trace_id="trace_seed_1",
+                session_id="sess_seed",
+                error_code="PROVIDER_TRANSPORT_ERROR",
+                error_stage="llm",
+                summary="provider timed out",
+                message="hello",
+            )
+            callback_calls: list[str] = []
+            runtime = RuntimeLoop(
+                FailingLLMClient(),
+                tools,
+                history,
+                self_improve_recorder=recorder,
+                self_improve_post_commit_callback=lambda *, agent_id: callback_calls.append(agent_id),
+            )
+
+            events = runtime.run(
+                session_id="sess_fail", message="hello", trace_id="trace_fail"
+            )
+            triggers = store.list_review_triggers(agent_id="main", limit=10, status="pending")
+
+        self.assertEqual([event.event_type for event in events], ["progress", "error"])
+        self.assertEqual(callback_calls, ["main"])
+        self.assertEqual(len(triggers), 1)
+        self.assertEqual(triggers[0].trigger_kind, "lesson_failure_burst")
+
     def test_runtime_keeps_runtime_loop_failed_for_unknown_internal_exceptions(
         self,
     ) -> None:
@@ -833,6 +870,64 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self.assertEqual(run.error_code, "RUNTIME_LOOP_FAILED")
         self.assertEqual(len(failures), 1)
         self.assertEqual(failures[0].error_code, "RUNTIME_LOOP_FAILED")
+
+    def test_runtime_swallow_post_commit_callback_failure_after_success(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        runtime = RuntimeLoop(
+            ScriptedLLMClient([LLMReply(final_text="done")]),
+            tools,
+            history,
+            self_improve_post_commit_callback=lambda *, agent_id: (_ for _ in ()).throw(RuntimeError(f"boom:{agent_id}")),
+        )
+
+        events = runtime.run(
+            session_id="sess_success_post_commit",
+            message="hello",
+            trace_id="trace_success_post_commit",
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.status, "succeeded")
+
+    def test_runtime_returns_controlled_error_when_tool_loop_limit_is_exceeded(
+        self,
+    ) -> None:
+        class EndlessToolLLMClient:
+            provider_name = "scripted"
+            model_name = "endless-tool"
+
+            def complete(self, request):  # noqa: ANN001
+                return LLMReply(tool_name="time", tool_payload={"timezone": "UTC"})
+
+        tools = ToolRegistry()
+        tools.register("time", run_time_tool)
+        history = InMemoryRunHistory()
+        runtime = RuntimeLoop(EndlessToolLLMClient(), tools, history)
+        runtime.max_tool_rounds = 1
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["time"],
+        )
+
+        events = runtime.run(
+            session_id="sess_tool_loop_limit",
+            message="keep calling time",
+            trace_id="trace_tool_loop_limit",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "error"])
+        self.assertEqual(events[-1].payload["code"], "TOOL_LOOP_LIMIT_EXCEEDED")
+        self.assertEqual(events[-1].payload["text"], "tool_loop_limit_exceeded")
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.status, "failed")
+        self.assertEqual(run.error_code, "TOOL_LOOP_LIMIT_EXCEEDED")
 
     def test_runtime_records_recovery_after_later_success_on_compatible_message(
         self,

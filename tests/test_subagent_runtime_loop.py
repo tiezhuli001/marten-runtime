@@ -206,6 +206,30 @@ class SubagentRuntimeLoopIntegrationTests(unittest.TestCase):
         child = session_store.get(task.child_session_id)
         self.assertEqual(child.last_run_id, task.child_run_id)
 
+    def test_hidden_review_child_does_not_append_parent_terminal_summary(self) -> None:
+        service, _runtime_loop, session_store, _run_history = self._build_service_with_runtime()
+        accepted = service.spawn(
+            task="return review json",
+            label="self-improve-review:trigger_1",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            context_mode="brief_only",
+            notify_on_finish=False,
+            include_parent_session_message=False,
+        )
+
+        service.run_next_queued_task()
+
+        parent = session_store.get("sess_parent")
+        task = service.store.get(accepted["task_id"])
+        self.assertEqual(task.status, "succeeded")
+        self.assertEqual([item.role for item in parent.history], ["system"])
+        self.assertEqual(parent.history[0].content, "created")
+
 
 if __name__ == "__main__":
     unittest.main()

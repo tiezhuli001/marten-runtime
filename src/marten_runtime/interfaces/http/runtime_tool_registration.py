@@ -91,6 +91,7 @@ def register_family_tools(
             payload,
             adapter_factory(runtime_state),
             runtime_state.self_improve_store,
+            repo_root=runtime_state.repo_root,
         ),
         description=render_tool_description(capability_declarations["self_improve"]),
         parameters_schema=get_parameters_schema(
@@ -121,8 +122,10 @@ def register_family_tools(
     )
     state.tool_registry.register(
         "cancel_subagent",
-        lambda payload, runtime_state=state: run_cancel_subagent_tool(
-            payload, subagent_service=runtime_state.subagent_service
+        lambda payload, *, tool_context=None, runtime_state=state: run_cancel_subagent_tool(
+            payload,
+            subagent_service=runtime_state.subagent_service,
+            tool_context=tool_context,
         ),
         description="Cancel a background subagent task by task id.",
         parameters_schema={

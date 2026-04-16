@@ -47,6 +47,39 @@ class LessonCandidate(BaseModel):
     created_at: datetime = Field(default_factory=_utc_now)
 
 
+class ReviewTrigger(BaseModel):
+    trigger_id: str
+    agent_id: str
+    trigger_kind: str
+    source_run_id: str
+    source_trace_id: str
+    source_fingerprints: list[str]
+    status: str = "pending"
+    payload_json: dict[str, object] = Field(default_factory=dict)
+    semantic_fingerprint: str
+    created_at: datetime = Field(default_factory=_utc_now)
+    updated_at: datetime = Field(default_factory=_utc_now)
+
+
+class SkillCandidate(BaseModel):
+    candidate_id: str
+    agent_id: str
+    status: str = "pending"
+    title: str
+    slug: str
+    summary: str
+    trigger_conditions: list[str] = Field(default_factory=list)
+    body_markdown: str
+    rationale: str
+    source_run_ids: list[str] = Field(default_factory=list)
+    source_fingerprints: list[str] = Field(default_factory=list)
+    confidence: float = 0.0
+    semantic_fingerprint: str
+    created_at: datetime = Field(default_factory=_utc_now)
+    reviewed_at: datetime | None = None
+    promoted_skill_id: str | None = None
+
+
 class SystemLesson(BaseModel):
     lesson_id: str
     agent_id: str

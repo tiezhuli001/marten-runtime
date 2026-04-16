@@ -27,6 +27,7 @@ class SubagentTask(BaseModel):
     context_mode: str
     task_prompt: str
     notify_on_finish: bool = True
+    include_parent_session_message: bool = True
     result_summary: str | None = None
     error_text: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

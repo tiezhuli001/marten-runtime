@@ -119,11 +119,13 @@ class RuntimeLoop:
         history: InMemoryRunHistory,
         *,
         self_improve_recorder: SelfImproveRecorder | None = None,
+        self_improve_post_commit_callback=None,
     ) -> None:
         self.llm = llm
         self.tools = tools
         self.history = history
         self.self_improve_recorder = self_improve_recorder
+        self.self_improve_post_commit_callback = self_improve_post_commit_callback
         self.request_count = 0
         self.last_request_count = 0
         self.max_tool_rounds = 8
@@ -380,6 +382,20 @@ class RuntimeLoop:
                 ),
             ),
         )
+        if (
+            self.self_improve_recorder is not None
+            and resolved_compacted_context is not None
+            and decision == CompactionDecision.PROACTIVE
+        ):
+            self.self_improve_recorder.record_pre_compaction_learning_flush(
+                agent_id=resolved_agent.agent_id,
+                run_id=run.run_id,
+                trace_id=trace_id,
+                message=message,
+                estimated_tokens_before=pre_compact_request_estimate,
+                estimated_tokens_after=first_request_estimate,
+                channel_id=channel_id,
+            )
         first_request_usage = estimate_request_usage(
             self._build_request_from_context(
                 **request_base,
@@ -495,7 +511,7 @@ class RuntimeLoop:
                     if tool_history:
                         recovered_text = recover_tool_result_text(tool_history)
                         if recovered_text:
-                            return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, 
+                            return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, post_commit_callback=self.self_improve_post_commit_callback,
                                 events=events,
                                 session_id=session_id,
                                 run_id=run.run_id,
@@ -507,6 +523,7 @@ class RuntimeLoop:
                                 final_text=recovered_text,
                                 tool_history=tool_history,
                                 tool_snapshot=tool_snapshot,
+                                channel_id=channel_id,
                             )
                     return finish_run_error(history=self.history, 
                         events=events,
@@ -517,6 +534,8 @@ class RuntimeLoop:
                         llm_request_count=llm_request_count,
                         error_code=exc.error_code,
                         error_text=tool_rejection_text(exc.error_code),
+                        agent_id=resolved_agent.agent_id,
+                        post_commit_callback=self.self_improve_post_commit_callback,
                     )
                 except ToolExecutionFailed as exc:
                     record_failure(self.self_improve_recorder, 
@@ -524,6 +543,7 @@ class RuntimeLoop:
                         run_id=run.run_id,
                         trace_id=trace_id,
                         session_id=session_id,
+                        channel_id=channel_id,
                         error_code=exc.error_code,
                         error_stage="tool",
                         message=message,
@@ -543,6 +563,8 @@ class RuntimeLoop:
                         llm_request_count=llm_request_count,
                         error_code=exc.error_code,
                         error_text="工具执行失败，请重试。",
+                        agent_id=resolved_agent.agent_id,
+                        post_commit_callback=self.self_improve_post_commit_callback,
                     )
             except Exception as exc:
                 provider_diagnostics = getattr(
@@ -635,7 +657,7 @@ class RuntimeLoop:
                     if tool_history:
                         recovered_text = recover_tool_result_text(tool_history)
                         if recovered_text:
-                            return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, 
+                            return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, post_commit_callback=self.self_improve_post_commit_callback,
                                 events=events,
                                 session_id=session_id,
                                 run_id=run.run_id,
@@ -647,12 +669,14 @@ class RuntimeLoop:
                                 final_text=recovered_text,
                                 tool_history=tool_history,
                                 tool_snapshot=tool_snapshot,
+                                channel_id=channel_id,
                             )
                     record_failure(self.self_improve_recorder, 
                         agent_id=resolved_agent.agent_id,
                         run_id=run.run_id,
                         trace_id=trace_id,
                         session_id=session_id,
+                        channel_id=channel_id,
                         error_code=normalized.error_code,
                         error_stage="llm",
                         message=message,
@@ -668,12 +692,15 @@ class RuntimeLoop:
                         llm_request_count=llm_request_count,
                         error_code=normalized.error_code,
                         error_text="暂时没有生成可见回复，请重试。",
+                        agent_id=resolved_agent.agent_id,
+                        post_commit_callback=self.self_improve_post_commit_callback,
                     )
                 record_failure(self.self_improve_recorder, 
                     agent_id=resolved_agent.agent_id,
                     run_id=run.run_id,
                     trace_id=trace_id,
                     session_id=session_id,
+                    channel_id=channel_id,
                     error_code="RUNTIME_LOOP_FAILED",
                     error_stage="runtime",
                     message=message,
@@ -688,6 +715,8 @@ class RuntimeLoop:
                     llm_request_count=llm_request_count,
                     error_code="RUNTIME_LOOP_FAILED",
                     error_text="暂时没有生成可见回复，请重试。",
+                    agent_id=resolved_agent.agent_id,
+                    post_commit_callback=self.self_improve_post_commit_callback,
                 )
             if tool_result is None:
                 final_text = (reply.final_text or "").strip()
@@ -705,8 +734,10 @@ class RuntimeLoop:
                         llm_request_count=llm_request_count,
                         error_code="EMPTY_FINAL_RESPONSE",
                         error_text="暂时没有生成可见回复，请重试。",
+                        agent_id=resolved_agent.agent_id,
+                        post_commit_callback=self.self_improve_post_commit_callback,
                     )
-                return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, 
+                return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, post_commit_callback=self.self_improve_post_commit_callback,
                     events=events,
                     session_id=session_id,
                     run_id=run.run_id,
@@ -719,6 +750,7 @@ class RuntimeLoop:
                     tool_history=tool_history,
                     tool_snapshot=tool_snapshot,
                     combined_summary_draft=reply.tool_episode_summary_draft,
+                    channel_id=channel_id,
                 )
             append_tool_exchange(
                 tool_history,
@@ -751,7 +783,7 @@ class RuntimeLoop:
             if isinstance(tool_result, dict):
                 tool_history[-1].tool_result = tool_result
             if rendered_followup_text:
-                return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, 
+                return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, post_commit_callback=self.self_improve_post_commit_callback,
                     events=events,
                     session_id=session_id,
                     run_id=run.run_id,
@@ -763,6 +795,7 @@ class RuntimeLoop:
                     final_text=rendered_followup_text,
                     tool_history=tool_history,
                     tool_snapshot=tool_snapshot,
+                    channel_id=channel_id,
                 )
             provisional_request = build_tool_followup_request(
                 first_request,
@@ -795,6 +828,7 @@ class RuntimeLoop:
             run_id=run.run_id,
             trace_id=trace_id,
             session_id=session_id,
+            channel_id=channel_id,
             error_code="TOOL_LOOP_LIMIT_EXCEEDED",
             error_stage="tool_loop",
             message=message,
@@ -809,4 +843,6 @@ class RuntimeLoop:
             llm_request_count=llm_request_count,
             error_code="TOOL_LOOP_LIMIT_EXCEEDED",
             error_text="tool_loop_limit_exceeded",
+            agent_id=resolved_agent.agent_id,
+            post_commit_callback=self.self_improve_post_commit_callback,
         )

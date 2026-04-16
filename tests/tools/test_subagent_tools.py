@@ -279,6 +279,58 @@ class SubagentBuiltinToolTests(unittest.TestCase):
         self.assertEqual(result["status"], "cancelled")
         self.assertEqual(runtime.subagent_service.store.get(accepted["task_id"]).status, "cancelled")
 
+    def test_cancel_subagent_tool_rejects_foreign_task(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        owner_session = runtime.session_store.create(
+            session_id="sess_parent_cancel_owner",
+            conversation_id="conv-parent-cancel-owner",
+            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
+            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+        )
+        foreign_session = runtime.session_store.create(
+            session_id="sess_parent_cancel_foreign",
+            conversation_id="conv-parent-cancel-foreign",
+            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
+            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+        )
+        owner_run = runtime.run_history.start(
+            session_id=owner_session.session_id,
+            trace_id="trace_parent_cancel_owner",
+            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
+            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+        )
+        foreign_run = runtime.run_history.start(
+            session_id=foreign_session.session_id,
+            trace_id="trace_parent_cancel_foreign",
+            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
+            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+        )
+        accepted = runtime.subagent_service.spawn(
+            task="background task",
+            label="foreign-cancel",
+            parent_session_id=owner_session.session_id,
+            parent_run_id=owner_run.run_id,
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, "subagent task is not owned by current session"
+        ):
+            runtime.tool_registry.call(
+                "cancel_subagent",
+                {"task_id": accepted["task_id"]},
+                tool_context={
+                    "session_id": foreign_session.session_id,
+                    "run_id": foreign_run.run_id,
+                },
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
