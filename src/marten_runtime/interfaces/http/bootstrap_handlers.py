@@ -310,11 +310,23 @@ def _finalize_session_turn(
         ),
     )
     state.session_store.mark_run(session_id, events[-1].run_id, events[-1].created_at)
+    try:
+        run = state.run_history.get(events[-1].run_id)
+    except KeyError:
+        run = None
+    external_refs = {
+        "langfuse_trace_id": (
+            run.external_observability.langfuse_trace_id if run is not None else None
+        ),
+        "langfuse_url": (
+            run.external_observability.langfuse_url if run is not None else None
+        ),
+    }
     state.trace_index[trace_id] = {
         "run_ids": [events[-1].run_id],
         "job_ids": job_ids,
         "event_ids": [event.event_id for event in events],
-        "external_refs": {},
+        "external_refs": external_refs,
     }
     return {
         "status": "accepted",

@@ -5,3 +5,4 @@ mcp
 python-socks
 python-dotenv
 uvicorn
+langfuse

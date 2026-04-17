@@ -35,6 +35,7 @@ This directory contains the public design and operations notes for `marten-runti
 - archive should stay intentionally small and should not become a graveyard for every stage plan or branch execution note
 - the 2026-04-09 next-branch evolution design/execution/blueprint docs now live under `docs/archive/branch-evolution/` and are no longer part of the default reading path
 - the 2026-04-11 repo slimming work is now summarized in `docs/archive/plans/2026-04-11-repo-slimming-summary.md`; durable conclusions live in `docs/ARCHITECTURE_CHANGELOG.md` and the module review docs under `docs/review/`
+- the 2026-04-17 Langfuse observability design now lives in `docs/2026-04-17-langfuse-observability-design.md`; it records the original tracing design baseline for the now-implemented Langfuse runtime observability slice
 - tracked `STATUS.md` is no longer part of the repository source of truth; local continuity can still exist in an ignored local `STATUS.md`
 
 ## Current State
@@ -51,6 +52,7 @@ This directory contains the public design and operations notes for `marten-runti
 - the two adapter design docs are now archived as completed design history; current automation/self-improve truth lives in code, tests, `CONFIG_SURFACES.md`, and `ARCHITECTURE_CHANGELOG.md`
 - `assistant` is no longer baseline naming for the default runtime agent; outside archive/history and LLM message-role semantics, treat it as compatibility-only
 - live Feishu validation has already confirmed the self-improve candidate query/delete path on the real runtime chain; use `last_run_id -> diagnostics/run -> trace_id -> diagnostics/trace` for correlation
+- Langfuse tracing is now implemented as an optional external observability surface: runtime diagnostics expose enabled/healthy/configured state, run and trace diagnostics expose Langfuse external refs, transient client errors degrade health without removing capability, and live validation has confirmed plain chat, multi-tool, and parent/child subagent traces against Langfuse cloud
 - stable architecture truth now lives in `docs/architecture/adr/` plus `docs/ARCHITECTURE_CHANGELOG.md`
 - `apps/main_agent/SYSTEM_LESSONS.md` is a runtime-managed artifact and is intentionally ignored by git
 - durable session persistence is intentionally still pending

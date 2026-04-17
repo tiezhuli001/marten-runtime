@@ -1,5 +1,6 @@
 import unittest
 
+from marten_runtime.observability.langfuse import build_langfuse_observer
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.runtime.loop import RuntimeLoop
@@ -7,6 +8,31 @@ from marten_runtime.session.compacted_context import CompactedContext
 from marten_runtime.session.models import SessionMessage
 from marten_runtime.session.store import SessionStore
 from marten_runtime.tools.registry import ToolRegistry
+
+
+class _SubagentFakeLangfuseClient:
+    def __init__(self) -> None:
+        self.traces: list[dict] = []
+
+    def create_trace(self, payload: dict) -> dict:
+        self.traces.append(payload)
+        trace_id = str(payload.get("trace_id") or "lf-child")
+        return {"trace_id": trace_id, "url": f"https://langfuse.example/trace/{trace_id}"}
+
+    def record_generation(self, payload: dict) -> None:
+        pass
+
+    def record_tool_span(self, payload: dict) -> None:
+        pass
+
+    def finalize_trace(self, payload: dict) -> None:
+        pass
+
+    def flush(self) -> None:
+        pass
+
+    def shutdown(self) -> None:
+        pass
 
 
 class SubagentRuntimeLoopIntegrationTests(unittest.TestCase):
@@ -25,6 +51,14 @@ class SubagentRuntimeLoopIntegrationTests(unittest.TestCase):
             ScriptedLLMClient([LLMReply(final_text="child finished")]),
             ToolRegistry(),
             run_history,
+            langfuse_observer=build_langfuse_observer(
+                env={
+                    "LANGFUSE_PUBLIC_KEY": "pk-test",
+                    "LANGFUSE_SECRET_KEY": "sk-test",
+                    "LANGFUSE_BASE_URL": "https://langfuse.example",
+                },
+                client=_SubagentFakeLangfuseClient(),
+            ),
         )
         service = SubagentService(
             session_store=session_store,
@@ -112,6 +146,31 @@ class SubagentRuntimeLoopIntegrationTests(unittest.TestCase):
         self.assertEqual(child_session.last_run_id, task.child_run_id)
         self.assertEqual(runtime_loop.llm.requests[-1].request_kind, "subagent")
         self.assertEqual(runtime_loop.llm.requests[-1].message, "inspect repo in background")
+
+    def test_child_run_sets_langfuse_refs_when_observer_is_enabled(self) -> None:
+        service, _runtime_loop, _session_store, run_history = self._build_service_with_runtime()
+        accepted = service.spawn(
+            task="inspect repo in background",
+            label="inspect",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        service.run_next_queued_task()
+
+        task = service.store.get(accepted["task_id"])
+        child_run = run_history.get(task.child_run_id)
+        self.assertEqual(child_run.external_observability.langfuse_trace_id, child_run.trace_id)
+        self.assertEqual(
+            child_run.external_observability.langfuse_url,
+            f"https://langfuse.example/trace/{child_run.trace_id}",
+        )
 
     def test_parent_session_receives_only_terminal_system_summary(self) -> None:
         service, _runtime_loop, session_store, _run_history = self._build_service_with_runtime()

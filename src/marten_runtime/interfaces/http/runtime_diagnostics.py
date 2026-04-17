@@ -110,6 +110,9 @@ def serialize_runtime_diagnostics(
             if retry_policy is not None and is_dataclass(retry_policy)
             else None
         ),
+        "observability": {
+            "langfuse": runtime.langfuse_observer.status(),
+        },
         "self_improve": {
             "enabled": True,
             "agent_id": runtime.default_agent.agent_id,
