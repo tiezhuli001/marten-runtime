@@ -32,6 +32,10 @@ from marten_runtime.mcp.client import MCPClient
 from marten_runtime.mcp.discovery import discover_mcp_tools
 from marten_runtime.mcp.loader import load_mcp_servers
 from marten_runtime.mcp.models import MCPServerSpec
+from marten_runtime.observability.langfuse import (
+    LangfuseObserver,
+    build_langfuse_observer,
+)
 from marten_runtime.interfaces.http.feishu_runtime_services import (
     build_feishu_delivery_client,
     build_feishu_websocket_service,
@@ -143,6 +147,7 @@ class HTTPRuntimeState:
     lane_manager: ConversationLaneManager
     app_runtimes: dict[str, AppRuntimeAssets]
     llm_client_factory: CachedLLMClientFactory
+    langfuse_observer: LangfuseObserver
     trace_index: TraceIndex = field(default_factory=dict)
 
 
@@ -171,6 +176,7 @@ def build_http_runtime(
         use_compat_json=use_compat_json,
     )
     capability_declarations = get_capability_declarations()
+    langfuse_observer = build_langfuse_observer(env=resolved_env)
     tool_registry = ToolRegistry()
     register_builtin_time_tool(tool_registry, capability_declarations)
     mcp_client = MCPClient(mcp_servers, env=resolved_env)
@@ -217,6 +223,7 @@ def build_http_runtime(
         default_llm,
         tool_registry,
         InMemoryRunHistory(),
+        langfuse_observer=langfuse_observer,
         self_improve_recorder=self_improve_recorder,
     )
     feishu_delivery = build_feishu_delivery_client(
@@ -290,6 +297,7 @@ def build_http_runtime(
         lane_manager=ConversationLaneManager(),
         app_runtimes=app_runtimes,
         llm_client_factory=llm_client_factory,
+        langfuse_observer=langfuse_observer,
     )
     register_family_tools(state, capability_declarations)
     from marten_runtime.interfaces.http.bootstrap_handlers import (

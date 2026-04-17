@@ -8,7 +8,10 @@ from fastapi.testclient import TestClient
 
 from marten_runtime.interfaces.http.bootstrap import build_http_runtime
 from marten_runtime.interfaces.http.app import create_app
+from marten_runtime.mcp.models import MCPServerSpec, MCPToolSpec
+from marten_runtime.observability.langfuse import build_langfuse_observer
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
+from marten_runtime.tools.builtins.mcp_tool import run_mcp_tool
 from tests.http_app_support import build_test_app
 
 
@@ -89,6 +92,37 @@ def _build_repo_backed_test_app(root: Path):
     )
 
 
+class _AcceptanceFakeLangfuseClient:
+    def __init__(self) -> None:
+        self.traces: list[dict] = []
+        self.generations: list[dict] = []
+        self.tool_spans: list[dict] = []
+        self.finalizations: list[dict] = []
+
+    def create_trace(self, payload: dict) -> dict:
+        self.traces.append(payload)
+        trace_id = str(payload.get("trace_id") or "lf-generated")
+        return {
+            "trace_id": trace_id,
+            "url": f"https://langfuse.example/trace/{trace_id}",
+        }
+
+    def record_generation(self, payload: dict) -> None:
+        self.generations.append(payload)
+
+    def record_tool_span(self, payload: dict) -> None:
+        self.tool_spans.append(payload)
+
+    def finalize_trace(self, payload: dict) -> None:
+        self.finalizations.append(payload)
+
+    def flush(self) -> None:
+        pass
+
+    def shutdown(self) -> None:
+        pass
+
+
 
 
 class PromptTooLongThenCompactThenFinalLLMClient:
@@ -110,6 +144,211 @@ class PromptTooLongThenCompactThenFinalLLMClient:
 
 
 class AcceptanceTests(unittest.TestCase):
+    def test_langfuse_full_chain_covers_plain_builtin_and_mcp_turns(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        fake_langfuse = _AcceptanceFakeLangfuseClient()
+        observer = build_langfuse_observer(
+            env={
+                "LANGFUSE_PUBLIC_KEY": "pk-test",
+                "LANGFUSE_SECRET_KEY": "sk-test",
+                "LANGFUSE_BASE_URL": "https://langfuse.example",
+            },
+            client=fake_langfuse,
+        )
+        runtime.langfuse_observer = observer
+        runtime.runtime_loop.langfuse_observer = observer
+
+        class AcceptanceRecoveringClient:
+            def list_tools(self, server_id: str):
+                del server_id
+                return [
+                    MCPToolSpec(
+                        name="search_repositories",
+                        description="Search repositories.",
+                    )
+                ]
+
+            def call_tool(self, server_id: str, tool_name: str, payload: dict) -> dict:
+                return {
+                    "server_id": server_id,
+                    "tool_name": tool_name,
+                    "payload": payload,
+                    "result_text": "repo_count=42",
+                    "ok": True,
+                    "is_error": False,
+                }
+
+        runtime.mcp_client = AcceptanceRecoveringClient()  # type: ignore[assignment]
+        runtime.mcp_servers = [
+            MCPServerSpec(
+                server_id="github",
+                transport="stdio",
+                backend_id="github",
+                tools=[
+                    MCPToolSpec(
+                        name="search_repositories",
+                        description="Search repositories.",
+                    )
+                ],
+            )
+        ]
+        runtime.mcp_discovery = {
+            "github": {"state": "discovered", "tool_count": 1, "error": None}
+        }
+        runtime.tool_registry.register(
+            "mcp",
+            lambda payload, runtime_state=runtime: run_mcp_tool(
+                payload,
+                runtime_state.mcp_servers,
+                runtime_state.mcp_client,
+                runtime_state.mcp_discovery,
+            ),
+            description=runtime.tool_registry._descriptors["mcp"].description,  # type: ignore[attr-defined]
+            source_kind="mcp",
+            server_id="github",
+        )
+
+        plain_llm = ScriptedLLMClient([LLMReply(final_text="plain-ok")])
+        builtin_llm = ScriptedLLMClient(
+            [
+                LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
+                LLMReply(final_text="runtime-ok"),
+            ]
+        )
+        mcp_llm = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="mcp",
+                    tool_payload={
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "search_repositories",
+                        "arguments": {"query": "release notes"},
+                    },
+                ),
+                LLMReply(final_text="mcp-ok"),
+            ]
+        )
+
+        with TestClient(app) as client:
+            runtime.runtime_loop.llm = plain_llm
+            runtime.llm_client_factory.cache_client("default", plain_llm)
+            runtime.llm_client_factory.cache_client("minimax_coding", plain_llm)
+            plain = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "acc-langfuse-plain",
+                    "message_id": "1",
+                    "body": "hello",
+                },
+            ).json()
+            plain_run_diag = client.get(
+                f"/diagnostics/run/{plain['events'][-1]['run_id']}"
+            ).json()
+            plain_trace_diag = client.get(
+                f"/diagnostics/trace/{plain['trace_id']}"
+            ).json()
+
+            runtime.runtime_loop.llm = builtin_llm
+            runtime.llm_client_factory.cache_client("default", builtin_llm)
+            runtime.llm_client_factory.cache_client("minimax_coding", builtin_llm)
+            builtin = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "acc-langfuse-builtin",
+                    "message_id": "2",
+                    "body": "当前上下文窗口多大？",
+                },
+            ).json()
+            builtin_run_diag = client.get(
+                f"/diagnostics/run/{builtin['events'][-1]['run_id']}"
+            ).json()
+            builtin_trace_diag = client.get(
+                f"/diagnostics/trace/{builtin['trace_id']}"
+            ).json()
+
+            runtime.runtime_loop.llm = mcp_llm
+            runtime.llm_client_factory.cache_client("default", mcp_llm)
+            runtime.llm_client_factory.cache_client("minimax_coding", mcp_llm)
+            mcp = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "acc-langfuse-mcp",
+                    "message_id": "3",
+                    "body": "search release notes",
+                },
+            ).json()
+            mcp_run_diag = client.get(
+                f"/diagnostics/run/{mcp['events'][-1]['run_id']}"
+            ).json()
+            mcp_trace_diag = client.get(
+                f"/diagnostics/trace/{mcp['trace_id']}"
+            ).json()
+
+        exercised_trace_ids = {
+            plain["trace_id"],
+            builtin["trace_id"],
+            mcp["trace_id"],
+        }
+        trace_ids = {item["trace_id"] for item in fake_langfuse.traces}
+        finalization_by_trace = {
+            item["trace_id"]: item for item in fake_langfuse.finalizations
+        }
+        generation_counts: dict[str, int] = {}
+        for item in fake_langfuse.generations:
+            generation_counts[item["trace_id"]] = generation_counts.get(
+                item["trace_id"], 0
+            ) + 1
+        tool_spans_by_trace: dict[str, list[dict]] = {}
+        for item in fake_langfuse.tool_spans:
+            tool_spans_by_trace.setdefault(item["trace_id"], []).append(item)
+
+        self.assertTrue(exercised_trace_ids.issubset(trace_ids))
+        self.assertEqual(finalization_by_trace[plain["trace_id"]]["status"], "succeeded")
+        self.assertEqual(
+            finalization_by_trace[builtin["trace_id"]]["status"], "succeeded"
+        )
+        self.assertEqual(finalization_by_trace[mcp["trace_id"]]["status"], "succeeded")
+        self.assertGreaterEqual(generation_counts[plain["trace_id"]], 1)
+        self.assertGreaterEqual(generation_counts[builtin["trace_id"]], 1)
+        self.assertGreaterEqual(generation_counts[mcp["trace_id"]], 1)
+        self.assertEqual(
+            [item["tool_name"] for item in tool_spans_by_trace[builtin["trace_id"]]],
+            ["runtime"],
+        )
+        self.assertEqual(
+            [item["tool_name"] for item in tool_spans_by_trace[mcp["trace_id"]]],
+            ["mcp"],
+        )
+        self.assertEqual(
+            tool_spans_by_trace[mcp["trace_id"]][0]["metadata"]["source_kind"], "mcp"
+        )
+
+        for response, run_diag, trace_diag in (
+            (plain, plain_run_diag, plain_trace_diag),
+            (builtin, builtin_run_diag, builtin_trace_diag),
+            (mcp, mcp_run_diag, mcp_trace_diag),
+        ):
+            self.assertEqual(
+                run_diag["external_observability"]["langfuse_trace_id"],
+                response["trace_id"],
+            )
+            self.assertEqual(
+                trace_diag["external_refs"]["langfuse_trace_id"],
+                response["trace_id"],
+            )
+            self.assertEqual(
+                trace_diag["external_refs"]["langfuse_url"],
+                f"https://langfuse.example/trace/{response['trace_id']}",
+            )
+
     def test_repo_default_channel_template_keeps_feishu_disabled(self) -> None:
         runtime = build_http_runtime(
             env={"MINIMAX_API_KEY": "test-key"},

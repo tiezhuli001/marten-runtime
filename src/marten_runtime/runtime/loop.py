@@ -6,6 +6,10 @@ from uuid import uuid4
 
 
 from marten_runtime.agents.specs import AgentSpec
+from marten_runtime.observability.langfuse import (
+    LangfuseObserver,
+    build_langfuse_observer,
+)
 from marten_runtime.runtime.context import RuntimeContext, assemble_runtime_context
 from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.history import CompactionDiagnostics, InMemoryRunHistory
@@ -118,17 +122,60 @@ class RuntimeLoop:
         tools: ToolRegistry,
         history: InMemoryRunHistory,
         *,
+        langfuse_observer: LangfuseObserver | None = None,
         self_improve_recorder: SelfImproveRecorder | None = None,
         self_improve_post_commit_callback=None,
     ) -> None:
         self.llm = llm
         self.tools = tools
         self.history = history
+        self.langfuse_observer = (
+            langfuse_observer if langfuse_observer is not None else build_langfuse_observer(env={})
+        )
         self.self_improve_recorder = self_improve_recorder
         self.self_improve_post_commit_callback = self_improve_post_commit_callback
         self.request_count = 0
         self.last_request_count = 0
         self.max_tool_rounds = 8
+
+    @staticmethod
+    def _usage_payload(usage) -> dict[str, int] | None:  # noqa: ANN001
+        if usage is None:
+            return None
+        return {
+            "input_tokens": int(usage.input_tokens),
+            "output_tokens": int(usage.output_tokens),
+            "total_tokens": int(usage.total_tokens),
+        }
+
+    @staticmethod
+    def _cumulative_usage_payload(run) -> dict[str, int] | None:  # noqa: ANN001
+        total_tokens = int(run.actual_cumulative_total_tokens)
+        if total_tokens <= 0:
+            return None
+        return {
+            "input_tokens": int(run.actual_cumulative_input_tokens),
+            "output_tokens": int(run.actual_cumulative_output_tokens),
+            "total_tokens": total_tokens,
+        }
+
+    @staticmethod
+    def _generation_input_payload(request: LLMRequest) -> dict[str, object]:
+        return {
+            "message": request.message,
+            "available_tools": list(request.available_tools),
+            "requested_tool_name": request.requested_tool_name,
+            "tool_history_count": len(request.tool_history),
+        }
+
+    @staticmethod
+    def _generation_output_payload(reply: LLMReply) -> dict[str, object]:
+        if reply.tool_name:
+            return {
+                "tool_name": reply.tool_name,
+                "tool_payload": dict(reply.tool_payload),
+            }
+        return {"final_text": reply.final_text or ""}
 
     @staticmethod
     def _build_request_from_context(
@@ -339,6 +386,28 @@ class RuntimeLoop:
             tool_snapshot_id=tool_snapshot.tool_snapshot_id,
             parent_run_id=parent_run_id,
         )
+        trace_handle = self.langfuse_observer.start_run_trace(
+            name="runtime.turn",
+            trace_id=trace_id,
+            input_text=message,
+            metadata={
+                "run_id": run.run_id,
+                "session_id": session_id,
+                "agent_id": resolved_agent.agent_id,
+                "app_id": resolved_agent.app_id,
+                "channel_id": channel_id,
+                "request_kind": request_kind,
+                "config_snapshot_id": config_snapshot_id,
+                "bootstrap_manifest_id": bootstrap_manifest_id,
+                "parent_run_id": parent_run_id,
+            },
+            tags=[request_kind],
+        )
+        self.history.set_external_observability_refs(
+            run.run_id,
+            langfuse_trace_id=trace_handle.trace_id,
+            langfuse_url=trace_handle.url,
+        )
         request_base = dict(
             session_id=session_id,
             trace_id=trace_id,
@@ -422,6 +491,50 @@ class RuntimeLoop:
                 created_at=datetime.now(timezone.utc),
             )
         ]
+
+        def finalize_success(*, final_text: str) -> None:
+            run_record = self.history.get(run.run_id)
+            cumulative_usage_payload = self._cumulative_usage_payload(run_record)
+            self.history.set_external_observability_refs(
+                run.run_id,
+                langfuse_trace_id=trace_handle.trace_id,
+                langfuse_url=trace_handle.url,
+            )
+            self.langfuse_observer.finalize_run(
+                trace_handle,
+                status="succeeded",
+                final_text=final_text,
+                usage=cumulative_usage_payload,
+                total_ms=elapsed_ms(run_started_at),
+                metadata={
+                    "llm_request_count": llm_request_count,
+                    "request_kind": request_kind,
+                    "agent_id": resolved_agent.agent_id,
+                    "channel_id": channel_id,
+                },
+            )
+
+        def finalize_error(*, error_code: str) -> None:
+            run_record = self.history.get(run.run_id)
+            cumulative_usage_payload = self._cumulative_usage_payload(run_record)
+            self.history.set_external_observability_refs(
+                run.run_id,
+                langfuse_trace_id=trace_handle.trace_id,
+                langfuse_url=trace_handle.url,
+            )
+            self.langfuse_observer.finalize_run(
+                trace_handle,
+                status="failed",
+                error_code=error_code,
+                usage=cumulative_usage_payload,
+                total_ms=elapsed_ms(run_started_at),
+                metadata={
+                    "llm_request_count": llm_request_count,
+                    "request_kind": request_kind,
+                    "agent_id": resolved_agent.agent_id,
+                    "channel_id": channel_id,
+                },
+            )
         first_request = self._build_request_from_context(
             **request_base,
             ctx=runtime_context,
@@ -436,6 +549,9 @@ class RuntimeLoop:
         current_request = first_request
         latest_actual_usage = None
         for _ in range(self.max_tool_rounds + 1):
+            generation_name = "llm.first" if not tool_history else "llm.followup"
+            generation_stage = "llm_first" if not tool_history else "llm_second"
+            generation_observed = False
             try:
                 self._raise_if_interrupted(stop_event, deadline_monotonic)
                 self.request_count += 1
@@ -451,6 +567,24 @@ class RuntimeLoop:
                     }
                 )
                 reply = resolved_llm.complete(current_request)
+                self.langfuse_observer.observe_generation(
+                    trace_handle,
+                    name=generation_name,
+                    model=getattr(resolved_llm, "model_name", None),
+                    provider=getattr(resolved_llm, "provider_name", None),
+                    input_payload=self._generation_input_payload(current_request),
+                    output_payload=self._generation_output_payload(reply),
+                    usage=self._usage_payload(reply.usage),
+                    status="success",
+                    latency_ms=elapsed_ms(llm_started_at),
+                    metadata={
+                        "stage": generation_stage,
+                        "request_kind": request_kind,
+                        "model_profile": model_profile_name
+                        or getattr(resolved_llm, "profile_name", None),
+                    },
+                )
+                generation_observed = True
                 provider_diagnostics = getattr(
                     resolved_llm, "last_call_diagnostics", None
                 )
@@ -502,12 +636,47 @@ class RuntimeLoop:
                         },
                     )
                     if tool_result is not None:
+                        tool_metadata = tool_snapshot.tool_metadata.get(
+                            reply.tool_name or "", {}
+                        )
+                        self.langfuse_observer.observe_tool_call(
+                            trace_handle,
+                            name="tool.call",
+                            tool_name=reply.tool_name or "",
+                            tool_payload=reply.tool_payload,
+                            tool_result=tool_result,
+                            status="success",
+                            latency_ms=elapsed_ms(tool_started_at),
+                            metadata={
+                                "stage": "tool",
+                                "source_kind": tool_metadata.get("source_kind"),
+                                "server_id": tool_metadata.get("server_id"),
+                            },
+                        )
                         self.history.set_stage_timing(
                             run.run_id,
                             stage="tool",
                             elapsed_ms=elapsed_ms(tool_started_at),
                         )
                 except ToolCallRejected as exc:
+                    tool_metadata = tool_snapshot.tool_metadata.get(
+                        reply.tool_name or "", {}
+                    )
+                    self.langfuse_observer.observe_tool_call(
+                        trace_handle,
+                        name="tool.call",
+                        tool_name=reply.tool_name or "",
+                        tool_payload=reply.tool_payload,
+                        tool_result={},
+                        status="error",
+                        latency_ms=elapsed_ms(tool_started_at),
+                        metadata={
+                            "stage": "tool",
+                            "source_kind": tool_metadata.get("source_kind"),
+                            "server_id": tool_metadata.get("server_id"),
+                        },
+                        error_code=exc.error_code,
+                    )
                     self.history.record_tool_call(
                         run.run_id,
                         tool_name=reply.tool_name or "",
@@ -522,6 +691,7 @@ class RuntimeLoop:
                     if tool_history:
                         recovered_text = recover_tool_result_text(tool_history)
                         if recovered_text:
+                            finalize_success(final_text=recovered_text)
                             return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, post_commit_callback=self.self_improve_post_commit_callback,
                                 events=events,
                                 session_id=session_id,
@@ -536,6 +706,7 @@ class RuntimeLoop:
                                 tool_snapshot=tool_snapshot,
                                 channel_id=channel_id,
                             )
+                    finalize_error(error_code=exc.error_code)
                     return finish_run_error(history=self.history, 
                         events=events,
                         session_id=session_id,
@@ -549,6 +720,24 @@ class RuntimeLoop:
                         post_commit_callback=self.self_improve_post_commit_callback,
                     )
                 except ToolExecutionFailed as exc:
+                    tool_metadata = tool_snapshot.tool_metadata.get(
+                        reply.tool_name or "", {}
+                    )
+                    self.langfuse_observer.observe_tool_call(
+                        trace_handle,
+                        name="tool.call",
+                        tool_name=reply.tool_name or "",
+                        tool_payload=reply.tool_payload,
+                        tool_result={},
+                        status="error",
+                        latency_ms=elapsed_ms(tool_started_at),
+                        metadata={
+                            "stage": "tool",
+                            "source_kind": tool_metadata.get("source_kind"),
+                            "server_id": tool_metadata.get("server_id"),
+                        },
+                        error_code=exc.error_code,
+                    )
                     record_failure(self.self_improve_recorder, 
                         agent_id=resolved_agent.agent_id,
                         run_id=run.run_id,
@@ -576,6 +765,7 @@ class RuntimeLoop:
                         stage="tool",
                         elapsed_ms=elapsed_ms(tool_started_at),
                     )
+                    finalize_error(error_code=exc.error_code)
                     return finish_run_error(history=self.history, 
                         events=events,
                         session_id=session_id,
@@ -589,6 +779,30 @@ class RuntimeLoop:
                         post_commit_callback=self.self_improve_post_commit_callback,
                     )
             except Exception as exc:
+                if not generation_observed:
+                    error_code = (
+                        normalize_provider_error(exc).error_code
+                        if is_provider_failure(exc)
+                        else "RUNTIME_LOOP_FAILED"
+                    )
+                    self.langfuse_observer.observe_generation(
+                        trace_handle,
+                        name=generation_name,
+                        model=getattr(resolved_llm, "model_name", None),
+                        provider=getattr(resolved_llm, "provider_name", None),
+                        input_payload=self._generation_input_payload(current_request),
+                        output_payload={},
+                        usage=None,
+                        status="error",
+                        latency_ms=elapsed_ms(llm_started_at),
+                        metadata={
+                            "stage": generation_stage,
+                            "request_kind": request_kind,
+                            "model_profile": model_profile_name
+                            or getattr(resolved_llm, "profile_name", None),
+                        },
+                        error_code=error_code,
+                    )
                 provider_diagnostics = getattr(
                     resolved_llm, "last_call_diagnostics", None
                 )
@@ -679,6 +893,7 @@ class RuntimeLoop:
                     if tool_history:
                         recovered_text = recover_tool_result_text(tool_history)
                         if recovered_text:
+                            finalize_success(final_text=recovered_text)
                             return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, post_commit_callback=self.self_improve_post_commit_callback,
                                 events=events,
                                 session_id=session_id,
@@ -705,6 +920,7 @@ class RuntimeLoop:
                         summary=str(exc),
                         provider_name=getattr(resolved_llm, "provider_name", None),
                     )
+                    finalize_error(error_code=normalized.error_code)
                     return finish_run_error(history=self.history, 
                         events=events,
                         session_id=session_id,
@@ -728,6 +944,7 @@ class RuntimeLoop:
                     message=message,
                     summary=str(exc),
                 )
+                finalize_error(error_code="RUNTIME_LOOP_FAILED")
                 return finish_run_error(history=self.history, 
                     events=events,
                     session_id=session_id,
@@ -747,6 +964,7 @@ class RuntimeLoop:
                     if recovered_text:
                         final_text = recovered_text
                 if not final_text:
+                    finalize_error(error_code="EMPTY_FINAL_RESPONSE")
                     return finish_run_error(history=self.history, 
                         events=events,
                         session_id=session_id,
@@ -759,6 +977,7 @@ class RuntimeLoop:
                         agent_id=resolved_agent.agent_id,
                         post_commit_callback=self.self_improve_post_commit_callback,
                     )
+                finalize_success(final_text=final_text)
                 return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, post_commit_callback=self.self_improve_post_commit_callback,
                     events=events,
                     session_id=session_id,
@@ -806,10 +1025,11 @@ class RuntimeLoop:
             )
             if isinstance(tool_result, dict):
                 tool_history[-1].tool_result = tool_result
-            if rendered_followup_text:
-                return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, post_commit_callback=self.self_improve_post_commit_callback,
-                    events=events,
-                    session_id=session_id,
+                if rendered_followup_text:
+                    finalize_success(final_text=rendered_followup_text)
+                    return finish_run_success(history=self.history, self_improve_recorder=self.self_improve_recorder, append_post_turn_summary_callback=self._append_post_turn_summary, post_commit_callback=self.self_improve_post_commit_callback,
+                        events=events,
+                        session_id=session_id,
                     run_id=run.run_id,
                     trace_id=trace_id,
                     run_started_at=run_started_at,
@@ -858,6 +1078,7 @@ class RuntimeLoop:
             message=message,
             summary="tool loop limit exceeded",
         )
+        finalize_error(error_code="TOOL_LOOP_LIMIT_EXCEEDED")
         return finish_run_error(history=self.history, 
             events=events,
             session_id=session_id,

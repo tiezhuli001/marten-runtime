@@ -196,6 +196,7 @@ Configuration boundaries:
 Minimal practical setup:
 
 - set one provider key in `.env`, for example `MINIMAX_API_KEY` or `OPENAI_API_KEY`
+- set `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY` in `.env` when you want external tracing in Langfuse
 - optionally copy `config/*.example.toml` to `config/*.toml` only for local overrides
 - add MCP servers to `mcps.json` only when you need external tools
 - enable Feishu through a local `config/channels.toml` only when you have a live bot app
@@ -236,6 +237,15 @@ Useful endpoints:
 - `GET /diagnostics/trace/{trace_id}`
 
 Run diagnostics include `llm_request_count` and `tool_calls`, so operator checks can verify whether a turn stayed on the intended `LLM -> tool -> LLM` path.
+
+Langfuse observability is now supported as an optional tracing surface:
+
+- `GET /diagnostics/runtime` exposes `observability.langfuse.enabled`, `healthy`, `configured`, `base_url`, and the current config reason
+- `GET /diagnostics/run/{run_id}` exposes `external_observability.langfuse_trace_id` and `external_observability.langfuse_url`
+- `GET /diagnostics/trace/{trace_id}` exposes `external_refs.langfuse_trace_id` and `external_refs.langfuse_url`
+- one runtime turn maps to one Langfuse trace, each LLM round maps to one generation, and builtin/MCP tool calls map to tool spans
+- `enabled` reports whether the runtime still has Langfuse capability wired in, while `healthy` reports whether the most recent Langfuse client call succeeded
+- live validation in this environment confirmed plain chat, multi-tool, and parent/child subagent traces against Langfuse cloud
 
 For Feishu live debugging, use this correlation path:
 

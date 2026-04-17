@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from uuid import uuid4
@@ -21,6 +22,9 @@ from marten_runtime.interfaces.http.runtime_diagnostics import (
 )
 from marten_runtime.runtime.lanes import LaneLease
 from marten_runtime.runtime.event_loop_cleanup import close_idle_event_loops
+
+
+logger = logging.getLogger(__name__)
 
 
 class MessageRequest(BaseModel):
@@ -58,9 +62,46 @@ def create_app(
         try:
             yield
         finally:
-            runtime.subagent_service.shutdown()
-            await runtime.feishu_socket_service.stop_background()
-            close_idle_event_loops()
+            try:
+                runtime.subagent_service.shutdown()
+            except Exception as exc:
+                logger.warning("subagent_service.shutdown failed: %s", exc, exc_info=True)
+            finally:
+                try:
+                    await runtime.feishu_socket_service.stop_background()
+                except Exception as exc:
+                    logger.warning(
+                        "feishu_socket_service.stop_background failed: %s",
+                        exc,
+                        exc_info=True,
+                    )
+                finally:
+                    try:
+                        runtime.langfuse_observer.flush()
+                    except Exception as exc:
+                        logger.warning(
+                            "langfuse_observer.flush failed: %s",
+                            exc,
+                            exc_info=True,
+                        )
+                    finally:
+                        try:
+                            runtime.langfuse_observer.shutdown()
+                        except Exception as exc:
+                            logger.warning(
+                                "langfuse_observer.shutdown failed: %s",
+                                exc,
+                                exc_info=True,
+                            )
+                        finally:
+                            try:
+                                close_idle_event_loops()
+                            except Exception as exc:
+                                logger.warning(
+                                    "close_idle_event_loops failed: %s",
+                                    exc,
+                                    exc_info=True,
+                                )
 
     app = FastAPI(title="marten-runtime", lifespan=lifespan)
     app.state.runtime = runtime

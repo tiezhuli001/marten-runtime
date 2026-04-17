@@ -47,6 +47,18 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(runtime.agent_router.default_agent_id, DEFAULT_AGENT_ID)
         self.assertEqual(runtime.agent_router.registry.get("assistant").agent_id, DEFAULT_AGENT_ID)
 
+    def test_runtime_diagnostics_include_langfuse_observability_block(self) -> None:
+        app = build_test_app()
+
+        with TestClient(app) as client:
+            runtime_diag = client.get("/diagnostics/runtime")
+
+        self.assertEqual(runtime_diag.status_code, 200)
+        self.assertIn("observability", runtime_diag.json())
+        self.assertIn("langfuse", runtime_diag.json()["observability"])
+        self.assertFalse(runtime_diag.json()["observability"]["langfuse"]["enabled"])
+        self.assertFalse(runtime_diag.json()["observability"]["langfuse"]["healthy"])
+
     def test_runtime_bootstrap_registers_automation_tool(self) -> None:
         app = build_test_app()
 

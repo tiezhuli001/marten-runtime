@@ -170,6 +170,7 @@ cp mcps.example.json mcps.json
 最小可运行配置：
 
 - 在 `.env` 设置一个 provider key，例如 `MINIMAX_API_KEY` 或 `OPENAI_API_KEY`
+- 如果要启用 Langfuse 外部 tracing，在 `.env` 里补齐 `LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`
 - 只有需要本地覆盖时才把 `config/*.example.toml` 复制成 `config/*.toml`
 - 只有需要外部工具时才在 `mcps.json` 配置 MCP
 - 只有准备好了 Feishu bot 时才通过本地 `config/channels.toml` 打开 Feishu
@@ -210,6 +211,15 @@ PYTHONPATH=src python -m marten_runtime.interfaces.http.serve
 - `GET /diagnostics/trace/{trace_id}`
 
 其中 `GET /diagnostics/run/{run_id}` 会暴露 `llm_request_count` 和 `tool_calls`，便于确认一次 turn 是否真的走了预期的 `LLM -> tool -> LLM` 主链。
+
+Langfuse 可观测性现在已经是可选的 tracing 面：
+
+- `GET /diagnostics/runtime` 会暴露 `observability.langfuse.enabled`、`healthy`、`configured`、`base_url` 和当前配置原因
+- `GET /diagnostics/run/{run_id}` 会暴露 `external_observability.langfuse_trace_id` 和 `external_observability.langfuse_url`
+- `GET /diagnostics/trace/{trace_id}` 会暴露 `external_refs.langfuse_trace_id` 和 `external_refs.langfuse_url`
+- 一次 runtime turn 对应一条 Langfuse trace，每一轮 LLM 调用对应一条 generation，builtin/MCP tool 调用对应 tool span
+- `enabled` 表示当前 runtime 仍然具备 Langfuse 接线能力，`healthy` 表示最近一次 Langfuse client 调用是否成功
+- 当前环境的 live 验证已经确认 plain chat、多轮 tool、以及 parent/child subagent tracing 可以在 Langfuse cloud 中看到
 
 ## Testing
 

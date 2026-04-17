@@ -32,6 +32,11 @@ class RunQueueDiagnostics(BaseModel):
     waited_in_lane: bool = False
 
 
+class ExternalObservabilityRefs(BaseModel):
+    langfuse_trace_id: str | None = None
+    langfuse_url: str | None = None
+
+
 class RunRecord(BaseModel):
     run_id: str
     trace_id: str
@@ -72,6 +77,7 @@ class RunRecord(BaseModel):
     timings: RunTimings = Field(default_factory=RunTimings)
     queue: RunQueueDiagnostics = Field(default_factory=RunQueueDiagnostics)
     compaction: CompactionDiagnostics = Field(default_factory=CompactionDiagnostics)
+    external_observability: ExternalObservabilityRefs = Field(default_factory=ExternalObservabilityRefs)
 
 
 class InMemoryRunHistory:
@@ -251,3 +257,16 @@ class InMemoryRunHistory:
 
     def set_compaction(self, run_id: str, diagnostics: CompactionDiagnostics) -> None:
         self._items[run_id].compaction = diagnostics
+
+    def set_external_observability_refs(
+        self,
+        run_id: str,
+        *,
+        langfuse_trace_id: str | None = None,
+        langfuse_url: str | None = None,
+    ) -> None:
+        record = self._items[run_id]
+        record.external_observability = ExternalObservabilityRefs(
+            langfuse_trace_id=langfuse_trace_id,
+            langfuse_url=langfuse_url,
+        )
