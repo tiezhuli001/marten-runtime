@@ -561,6 +561,9 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         self.assertEqual(run.actual_peak_output_tokens, 196)
         self.assertEqual(run.actual_peak_total_tokens, 14066)
         self.assertEqual(run.actual_peak_stage, "llm_second")
+        self.assertEqual(run.actual_cumulative_input_tokens, 16270)
+        self.assertEqual(run.actual_cumulative_output_tokens, 316)
+        self.assertEqual(run.actual_cumulative_total_tokens, 16586)
 
     def test_runtime_does_not_generate_cross_turn_summary_for_runtime_context_status(
         self,

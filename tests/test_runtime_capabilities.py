@@ -14,8 +14,17 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         declarations = get_capability_declarations()
 
         self.assertEqual(
-            list(declarations.keys()),
-            ["automation", "mcp", "runtime", "self_improve", "skill", "time"],
+            set(declarations.keys()),
+            {
+                "automation",
+                "mcp",
+                "runtime",
+                "self_improve",
+                "skill",
+                "time",
+                "spawn_subagent",
+                "cancel_subagent",
+            },
         )
         self.assertTrue(all(isinstance(item, CapabilityDeclaration) for item in declarations.values()))
 

@@ -136,6 +136,46 @@ class SelfImproveTriggerEvaluatorTests(unittest.TestCase):
             created.trigger_kind if created else None, "complex_successful_tool_episode"
         )
 
+    def test_complex_successful_tool_episode_payload_keeps_full_tool_chain_facts(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3")
+            evaluator = SelfImproveTriggerEvaluator(store)
+
+            created = evaluator.evaluate_complex_successful_tool_episode(
+                agent_id="main",
+                run_id="run_multi",
+                trace_id="trace_multi",
+                user_message="按顺序调用 time runtime mcp",
+                tool_history=[
+                    ToolExchange(
+                        tool_name="time",
+                        tool_payload={"timezone": "Asia/Shanghai"},
+                        tool_result={"iso_time": "2026-04-17T14:30:10+08:00"},
+                    ),
+                    ToolExchange(
+                        tool_name="runtime",
+                        tool_payload={"action": "context_status"},
+                        tool_result={"ok": True},
+                    ),
+                    ToolExchange(
+                        tool_name="mcp",
+                        tool_payload={"action": "list"},
+                        tool_result={"ok": True},
+                    ),
+                ],
+                final_text="done",
+                summary="used time then runtime then mcp and succeeded",
+            )
+
+        self.assertIsNotNone(created)
+        self.assertEqual(
+            created.payload_json["tool_names"] if created else None,
+            ["time", "runtime", "mcp"],
+        )
+        self.assertEqual(created.payload_json["tool_call_count"] if created else None, 3)
+
     def test_pre_compaction_learning_flush_enqueues_once_per_message_fingerprint(self) -> None:
         with TemporaryDirectory() as tmpdir:
             store = SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3")

@@ -7,7 +7,12 @@ from unittest import mock
 from marten_runtime.runtime.llm_client import (
     LLMRequest,
     OpenAIChatLLMClient,
+    ToolExchange,
     _default_transport,
+)
+from marten_runtime.runtime.capabilities import (
+    get_capability_declarations,
+    render_capability_catalog,
 )
 from marten_runtime.runtime.provider_retry import ProviderTransportError
 from marten_runtime.tools.registry import ToolSnapshot
@@ -442,6 +447,59 @@ class OpenAIChatClientTests(unittest.TestCase):
         self.assertIn("在正常回答用户后，请在末尾追加一个", joined)
         self.assertIn("```tool_episode_summary```", joined)
 
+    def test_openai_client_injects_exact_multi_round_fact_for_late_tool_followup(
+        self,
+    ) -> None:
+        captured: list[dict] = []
+
+        def fake_transport(url: str, headers: dict[str, str], body: dict) -> dict:
+            del url, headers
+            captured.append(body)
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+        client = OpenAIChatLLMClient(
+            api_key="secret",
+            model="gpt-4.1",
+            profile_name="default",
+            transport=fake_transport,
+        )
+        request = LLMRequest(
+            session_id="sess_roundtrip",
+            trace_id="trace_roundtrip",
+            message="请总结这次链路",
+            agent_id="main",
+            app_id="main_agent",
+            tool_history=[
+                ToolExchange(tool_name="time", tool_payload={}, tool_result={"iso_time": "t"}),
+                ToolExchange(
+                    tool_name="runtime",
+                    tool_payload={"action": "context_status"},
+                    tool_result={"summary": "ok"},
+                ),
+                ToolExchange(
+                    tool_name="mcp",
+                    tool_payload={"action": "list"},
+                    tool_result={"servers": [{"server_id": "github"}]},
+                ),
+            ],
+            tool_result={"servers": [{"server_id": "github"}]},
+            requested_tool_name="mcp",
+            requested_tool_payload={"action": "list"},
+            available_tools=["time", "runtime", "mcp"],
+            tool_snapshot=ToolSnapshot(
+                tool_snapshot_id="tool_1",
+                builtin_tools=["time", "runtime", "mcp"],
+            ),
+        )
+
+        client.complete(request)
+
+        joined = "\n".join(
+            str(item.get("content", "")) for item in captured[0]["messages"]
+        )
+        self.assertIn("你现在正在第 4 次模型请求", joined)
+        self.assertIn("不得写成单次模型执行", joined)
+
     def test_openai_client_extracts_embedded_tool_episode_summary_from_followup_reply(
         self,
     ) -> None:
@@ -571,9 +629,9 @@ class OpenAIChatClientTests(unittest.TestCase):
         joined = "\n".join(
             str(item.get("content", "")) for item in captured[0]["messages"]
         )
-        self.assertIn("这是当前会话的实时上下文查询", joined)
+        self.assertIn("这是实时上下文查询", joined)
         self.assertIn("请先读取当前 runtime 状态", joined)
-        self.assertIn("不要直接复用上一轮记忆里的上下文数字", joined)
+        self.assertIn("不要直接凭记忆概括当前上下文占用", joined)
 
     def test_openai_client_adds_direct_github_repo_mcp_hint_for_explicit_repo_query(
         self,
@@ -655,7 +713,92 @@ class OpenAIChatClientTests(unittest.TestCase):
         self.assertNotIn("server_id", joined)
         self.assertNotIn("arguments", joined)
 
-    def test_openai_client_adds_runtime_guard_for_context_detail_query(self) -> None:
+    def test_openai_client_exposes_spawn_subagent_capability_guidance(self) -> None:
+        captured: list[dict] = []
+
+        def fake_transport(url: str, headers: dict[str, str], body: dict) -> dict:
+            del url, headers
+            captured.append(body)
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+        client = OpenAIChatLLMClient(
+            api_key="secret",
+            model="MiniMax-M2.5",
+            profile_name="minimax_coding",
+            transport=fake_transport,
+        )
+        declarations = get_capability_declarations()
+        request = LLMRequest(
+            session_id="sess_1",
+            trace_id="trace_1",
+            message="开启子代理查询 https://github.com/CloudWide851/easy-agent 最近一次提交是什么时候？",
+            agent_id="main",
+            app_id="main_agent",
+            capability_catalog_text=render_capability_catalog(declarations),
+            available_tools=["mcp", "spawn_subagent", "cancel_subagent"],
+            tool_snapshot=ToolSnapshot(
+                tool_snapshot_id="tool_1",
+                builtin_tools=["mcp", "spawn_subagent", "cancel_subagent"],
+                tool_metadata={
+                    "mcp": {
+                        "description": declarations["mcp"].summary,
+                        "parameters_schema": declarations["mcp"].parameters_schema,
+                    },
+                    "spawn_subagent": {
+                        "description": " ".join(
+                            [
+                                declarations["spawn_subagent"].summary,
+                                f"Rules: {' '.join(declarations['spawn_subagent'].usage_rules)}",
+                            ]
+                        ),
+                        "parameters_schema": declarations["spawn_subagent"].parameters_schema,
+                    },
+                    "cancel_subagent": {
+                        "description": " ".join(
+                            [
+                                declarations["cancel_subagent"].summary,
+                                f"Rules: {' '.join(declarations['cancel_subagent'].usage_rules)}",
+                            ]
+                        ),
+                        "parameters_schema": declarations["cancel_subagent"].parameters_schema,
+                    },
+                },
+            ),
+        )
+
+        client.complete(request)
+
+        joined = "\n".join(
+            str(item.get("content", "")) for item in captured[0]["messages"]
+        )
+        self.assertIn(
+            "If the user explicitly requests an available execution mode, tool family, or delivery mode",
+            joined,
+        )
+        self.assertIn(
+            "Treat historical summaries and prior-turn tool results as background only",
+            joined,
+        )
+        self.assertIn("spawn_subagent: Delegate a background task to an isolated child session", joined)
+        self.assertIn("When the user explicitly asks to 开启子代理/后台执行, prefer this", joined)
+        self.assertIn("cancel_subagent: Cancel a background subagent task", joined)
+        self.assertIn("Only use acceptance/waiting wording such as 已受理", joined)
+        tool_defs = captured[0]["tools"]
+        spawn_desc = next(
+            item["function"]["description"]
+            for item in tool_defs
+            if item["function"]["name"] == "spawn_subagent"
+        )
+        self.assertIn(
+            "When the user explicitly asks to 开启子代理/后台执行, prefer this",
+            spawn_desc,
+        )
+        self.assertIn(
+            "Only use acceptance/waiting wording such as 已受理",
+            spawn_desc,
+        )
+
+    def test_openai_client_adds_time_specific_instruction_for_live_time_query(self) -> None:
         captured: list[dict] = []
 
         def fake_transport(url: str, headers: dict[str, str], body: dict) -> dict:
@@ -672,12 +815,12 @@ class OpenAIChatClientTests(unittest.TestCase):
         request = LLMRequest(
             session_id="sess_1",
             trace_id="trace_1",
-            message="当前上下文的具体使用详情是什么？",
+            message="请告诉我现在几点了？",
             agent_id="main",
             app_id="main_agent",
-            available_tools=["runtime"],
+            available_tools=["time"],
             tool_snapshot=ToolSnapshot(
-                tool_snapshot_id="tool_1", builtin_tools=["runtime"]
+                tool_snapshot_id="tool_1", builtin_tools=["time"]
             ),
         )
 
@@ -686,8 +829,9 @@ class OpenAIChatClientTests(unittest.TestCase):
         joined = "\n".join(
             str(item.get("content", "")) for item in captured[0]["messages"]
         )
-        self.assertIn("实时", joined)
-        self.assertTrue("runtime" in joined.lower() or "上下文" in joined)
+        self.assertIn("这是当前时间查询", joined)
+        self.assertIn("请先读取当前时间工具结果", joined)
+        self.assertIn("不要直接凭记忆猜测现在时间", joined)
 
     def test_openai_client_injects_channel_protocol_instruction_when_provided(
         self,

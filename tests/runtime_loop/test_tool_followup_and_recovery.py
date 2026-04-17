@@ -546,6 +546,65 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         run = history.get(events[-1].run_id)
         self.assertEqual(run.llm_request_count, 3)
 
+    def test_runtime_does_not_finalize_early_when_runtime_tool_is_only_one_step_in_user_requested_sequence(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        tools.register("time", run_time_tool)
+        tools.register(
+            "runtime",
+            lambda payload: {
+                "ok": True,
+                "action": "context_status",
+                "estimated_usage": 1234,
+                "effective_window": 184000,
+            },
+        )
+        tools.register(
+            "mcp",
+            lambda payload: {
+                "ok": True,
+                "action": payload.get("action", "list"),
+                "servers": [{"server_id": "github", "tool_count": 38}],
+                "result_text": '{"servers":[{"server_id":"github","tool_count":38}]}',
+            },
+        )
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(tool_name="time", tool_payload={"timezone": "Asia/Shanghai"}),
+                LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
+                LLMReply(tool_name="mcp", tool_payload={"action": "list"}),
+                LLMReply(final_text="done"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["time", "runtime", "mcp"],
+        )
+
+        events = runtime.run(
+            session_id="sess_runtime_sequence_keeps_going",
+            message=(
+                "先看当前时间，再检查上下文占用，"
+                "最后列出当前可用 MCP 服务并汇总。"
+            ),
+            trace_id="trace_runtime_sequence_keeps_going",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "done")
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.llm_request_count, 4)
+        self.assertEqual(
+            [item["tool_name"] for item in run.tool_calls],
+            ["time", "runtime", "mcp"],
+        )
+
     def test_runtime_recovers_when_followup_returns_generic_tool_failure_after_successful_commit_tool(
         self,
     ) -> None:
@@ -741,6 +800,16 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         run = history.get(events[0].run_id)
         self.assertEqual(run.status, "failed")
         self.assertEqual(run.error_code, "TOOL_EXECUTION_FAILED")
+        self.assertEqual(len(run.tool_calls), 1)
+        self.assertEqual(run.tool_calls[0]["tool_name"], "broken_tool")
+        self.assertEqual(run.tool_calls[0]["tool_payload"], {"value": "x"})
+        self.assertFalse(run.tool_calls[0]["tool_result"]["ok"])
+        self.assertTrue(run.tool_calls[0]["tool_result"]["is_error"])
+        self.assertEqual(
+            run.tool_calls[0]["tool_result"]["error_code"],
+            "TOOL_EXECUTION_FAILED",
+        )
+        self.assertIn("tool blew up", run.tool_calls[0]["tool_result"]["error_text"])
 
     def test_runtime_returns_error_when_final_text_is_empty_after_tool_call(
         self,

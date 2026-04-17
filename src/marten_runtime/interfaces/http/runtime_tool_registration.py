@@ -106,19 +106,8 @@ def register_family_tools(
             session_store=runtime_state.session_store,
             tool_context=tool_context,
         ),
-        description="Spawn a background subagent task with isolated child session execution.",
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "task": {"type": "string"},
-                "label": {"type": "string"},
-                "tool_profile": {"type": "string"},
-                "context_mode": {"type": "string"},
-                "notify_on_finish": {"type": "boolean"},
-                "agent_id": {"type": "string"}
-            },
-            "required": ["task"],
-        },
+        description=render_tool_description(capability_declarations["spawn_subagent"]),
+        parameters_schema=get_parameters_schema(capability_declarations["spawn_subagent"]),
     )
     state.tool_registry.register(
         "cancel_subagent",
@@ -127,14 +116,8 @@ def register_family_tools(
             subagent_service=runtime_state.subagent_service,
             tool_context=tool_context,
         ),
-        description="Cancel a background subagent task by task id.",
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string"}
-            },
-            "required": ["task_id"],
-        },
+        description=render_tool_description(capability_declarations["cancel_subagent"]),
+        parameters_schema=get_parameters_schema(capability_declarations["cancel_subagent"]),
     )
 
 

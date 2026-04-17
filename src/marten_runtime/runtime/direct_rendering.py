@@ -157,6 +157,7 @@ def render_github_list_commits_text(
         return ""
     commit_at = str(author.get("date") or "").strip()
     message = str(commit.get("message") or "").strip()
+    message = " ".join(message.split())
     if not commit_at:
         return ""
     displayed_at, timezone_suffix = _format_commit_timestamp_for_local_display(commit_at)

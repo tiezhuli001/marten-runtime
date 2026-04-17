@@ -13,6 +13,12 @@ class CapabilityDeclaration(BaseModel):
     )
 
 
+GLOBAL_CAPABILITY_RULES: tuple[str, ...] = (
+    "If the user explicitly requests an available execution mode, tool family, or delivery mode, treat that as part of the task contract and honor it first instead of silently substituting a different path just because it could also answer the question.",
+    "Treat historical summaries and prior-turn tool results as background only; any claim about the current turn's accepted/running/completed/cancelled/delivered state must be grounded in actions or tool results that actually happened in this turn.",
+)
+
+
 def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
     return {
         "automation": CapabilityDeclaration(
@@ -166,6 +172,46 @@ def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
                 "additionalProperties": False,
             },
         ),
+        "spawn_subagent": CapabilityDeclaration(
+            name="spawn_subagent",
+            summary="Delegate a background task to an isolated child session and return an immediate acceptance reply.",
+            actions=[],
+            usage_rules=[
+                "Use this when the user explicitly asks for a subagent/background/async child task, or when isolating tool-heavy side work from the main thread would keep the primary conversation cleaner.",
+                "When the user explicitly asks to 开启子代理/后台执行, prefer this instead of directly using main-thread tools to finish the task yourself.",
+                "Infer a concise task brief, label, context_mode, and minimal sufficient tool profile; do not ask the user for internal field names.",
+                "Only use acceptance/waiting wording such as 已受理, 后台执行中, or 请等待子 agent 返回结果 after this turn actually called spawn_subagent and received an accepted/queued/running result; do not infer current task state from historical summaries."
+            ],
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string"},
+                    "label": {"type": "string"},
+                    "tool_profile": {"type": "string"},
+                    "context_mode": {"type": "string"},
+                    "notify_on_finish": {"type": "boolean"},
+                    "agent_id": {"type": "string"},
+                },
+                "required": ["task"],
+                "additionalProperties": False,
+            },
+        ),
+        "cancel_subagent": CapabilityDeclaration(
+            name="cancel_subagent",
+            summary="Cancel a background subagent task by task id when the user wants to stop an already accepted child task.",
+            actions=[],
+            usage_rules=[
+                "Use this only when the user is asking to stop or cancel an existing subagent/background task."
+            ],
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                },
+                "required": ["task_id"],
+                "additionalProperties": False,
+            },
+        ),
     }
 
 
@@ -177,6 +223,7 @@ def render_capability_catalog(
     if not declarations:
         return None
     lines = ["Capability catalog:"]
+    lines.extend(f"- Global rule: {rule}" for rule in GLOBAL_CAPABILITY_RULES)
     for name, declaration in declarations.items():
         action_text = (
             f" Actions: {', '.join(declaration.actions)}."

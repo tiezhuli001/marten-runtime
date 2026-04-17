@@ -43,7 +43,7 @@ class LLMClientInstructionTests(unittest.TestCase):
 
         self.assertIsNone(instruction)
 
-    def test_request_specific_instruction_keeps_runtime_and_time_guidance_live_but_not_payload_shaped(
+    def test_request_specific_instruction_does_not_reintroduce_runtime_or_time_specific_hardening(
         self,
     ) -> None:
         runtime_request = self._build_request(
@@ -58,13 +58,10 @@ class LLMClientInstructionTests(unittest.TestCase):
         runtime_instruction = _request_specific_instruction(runtime_request) or ""
         time_instruction = _request_specific_instruction(time_request) or ""
 
-        self.assertIn("实时上下文查询", runtime_instruction)
+        self.assertIn("实时", runtime_instruction)
         self.assertIn("runtime", runtime_instruction)
-        self.assertNotIn("action=context_status", runtime_instruction)
-        self.assertNotIn("{", runtime_instruction)
-        self.assertIn("实时当前时间查询", time_instruction)
         self.assertIn("当前时间", time_instruction)
-        self.assertNotIn("{", time_instruction)
+        self.assertIn("请先", time_instruction)
 
     def test_request_specific_instruction_uses_channel_owned_feishu_guard_text(
         self,
@@ -100,6 +97,32 @@ class LLMClientInstructionTests(unittest.TestCase):
         self.assertIn("精确 tool_name", instruction)
         self.assertIn("arguments", instruction)
         self.assertIn("不要自造别名", instruction)
+
+    def test_tool_followup_instruction_for_skill_prevents_reloading_same_skill_body(
+        self,
+    ) -> None:
+        instruction = _tool_followup_instruction("skill") or ""
+
+        self.assertIn("已经加载了刚刚那个 skill 正文", instruction)
+        self.assertIn("不要重复调用 skill 去再次加载同一个 skill", instruction)
+
+    def test_tool_followup_instruction_for_multi_step_sequence_forces_round_trip_wording_to_match_history(
+        self,
+    ) -> None:
+        instruction = _tool_followup_instruction("mcp", tool_history_count=3) or ""
+
+        self.assertIn("已经发生多次模型/工具往返", instruction)
+        self.assertIn("不要写成单次", instruction)
+        self.assertIn("不要写成未发生多次", instruction)
+
+    def test_tool_followup_instruction_for_multi_step_sequence_distinguishes_tool_calls_from_model_requests(
+        self,
+    ) -> None:
+        instruction = _tool_followup_instruction("mcp", tool_history_count=3) or ""
+
+        self.assertIn("当前已发生 3 次工具调用", instruction)
+        self.assertIn("你现在正在第 4 次模型请求", instruction)
+        self.assertIn("不要把工具调用次数和模型请求次数写成同一个数字概念", instruction)
 
 
 if __name__ == "__main__":

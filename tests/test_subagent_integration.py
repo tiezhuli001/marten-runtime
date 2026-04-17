@@ -5,6 +5,7 @@ from threading import Event
 from fastapi.testclient import TestClient
 
 from marten_runtime.runtime.llm_client import LLMReply
+from marten_runtime.runtime.usage_models import NormalizedUsage
 from tests.http_app_support import build_test_app
 
 
@@ -25,6 +26,37 @@ class SubagentEndToEndLLM:
                 tool_payload={
                     "task": "run child repo inspection",
                     "label": "repo-child",
+                },
+            )
+        return LLMReply(final_text="background subagent accepted")
+
+
+class SubagentUsageEndToEndLLM:
+    provider_name = "subagent-usage-e2e"
+    model_name = "subagent-usage-e2e-local"
+
+    def __init__(self) -> None:
+        self.requests = []
+
+    def complete(self, request):  # noqa: ANN001
+        self.requests.append(request)
+        if request.request_kind == "subagent":
+            return LLMReply(
+                final_text="child finished with usage",
+                usage=NormalizedUsage(
+                    input_tokens=321,
+                    output_tokens=45,
+                    total_tokens=366,
+                    provider_name="subagent-usage-e2e",
+                    model_name="subagent-usage-e2e-local",
+                ),
+            )
+        if request.tool_result is None:
+            return LLMReply(
+                tool_name="spawn_subagent",
+                tool_payload={
+                    "task": "run child repo inspection",
+                    "label": "repo-child-usage",
                 },
             )
         return LLMReply(final_text="background subagent accepted")
@@ -147,6 +179,35 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
 
             llm.release.set()
             self._wait_for_task_status(client, task_id, {"succeeded"})
+
+    def test_http_message_path_syncs_child_session_latest_actual_usage(self) -> None:
+        app = self._configure_runtime_with_llm(SubagentUsageEndToEndLLM())
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "test",
+                    "user_id": "u1",
+                    "conversation_id": "conv-subagent-usage-http",
+                    "message_id": "msg-usage-1",
+                    "body": "please inspect this repo in background",
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            task = self._wait_for_task_status(
+                client,
+                client.get("/diagnostics/subagents").json()["items"][0]["task_id"],
+                {"succeeded"},
+            )
+
+            child_session = client.get(f"/diagnostics/session/{task['child_session_id']}")
+            self.assertEqual(child_session.status_code, 200)
+            latest_usage = child_session.json()["latest_actual_usage"]
+            self.assertIsNotNone(latest_usage)
+            self.assertEqual(latest_usage["input_tokens"], 321)
+            self.assertEqual(latest_usage["output_tokens"], 45)
+            self.assertEqual(latest_usage["total_tokens"], 366)
 
     def test_default_runtime_allows_five_concurrent_children_before_queueing_the_sixth(self) -> None:
         class ManyBlockingChildrenLLM:

@@ -54,6 +54,44 @@ def is_time_query(message: str) -> bool:
     return any(token in normalized or token in message for token in tokens)
 
 
+def is_explicit_multi_step_tool_request(message: str) -> bool:
+    normalized = message.lower()
+    step_markers = (
+        "先",
+        "然后",
+        "接着",
+        "最后",
+        "再看",
+        "再查",
+        "再检查",
+        "再读取",
+        "再获取",
+        "再列出",
+        "再调用",
+        "按顺序",
+        "依次",
+        "缺一不可",
+        "must",
+        "strictly",
+    )
+    if not any(marker in normalized or marker in message for marker in step_markers):
+        return False
+    capability_marker_groups = (
+        ("time", "当前时间", "现在几点", "几点了", "时间"),
+        ("runtime", "上下文", "context", "压缩", "占用", "窗口", "usage", "status"),
+        ("mcp", "mcp", "mcp 服务", "可用 mcp 服务", "server_id", "tool_name", "github"),
+        ("automation", "automation", "自动化", "定时任务", "cron"),
+        ("skill", "skill", "技能", "加载 skill", "加载技能"),
+        ("self_improve", "self_improve", "self-improve", "自我改进", "复盘"),
+        ("spawn_subagent", "spawn_subagent", "子代理", "子 agent", "后台任务", "后台执行"),
+    )
+    mentioned_capabilities = 0
+    for markers in capability_marker_groups:
+        if any(marker in normalized or marker in message for marker in markers):
+            mentioned_capabilities += 1
+    return mentioned_capabilities >= 2
+
+
 def is_github_repo_commit_query(message: str) -> bool:
     normalized = message.lower()
     commit_tokens = (

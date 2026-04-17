@@ -16,6 +16,9 @@ def build_usage_summary_from_record(record: RunRecord | None) -> UsageSummary | 
             "input_tokens": int(record.actual_peak_input_tokens or 0),
             "output_tokens": int(record.actual_peak_output_tokens or 0),
             "peak_tokens": int(record.actual_peak_total_tokens or 0),
+            "cumulative_input_tokens": int(record.actual_cumulative_input_tokens or 0),
+            "cumulative_output_tokens": int(record.actual_cumulative_output_tokens or 0),
+            "cumulative_tokens": int(record.actual_cumulative_total_tokens or 0),
             "estimated_only": False,
         }
     if (record.peak_preflight_input_tokens_estimate or 0) > 0:
@@ -47,7 +50,19 @@ def format_usage_summary(usage_summary: Mapping[str, Any] | None) -> str | None:
     input_tokens = int(usage_summary.get("input_tokens", 0) or 0)
     output_tokens = usage_summary.get("output_tokens")
     peak_tokens = int(usage_summary.get("peak_tokens", 0) or 0)
+    cumulative_input_tokens = int(usage_summary.get("cumulative_input_tokens", 0) or 0)
+    cumulative_output_tokens = usage_summary.get("cumulative_output_tokens", 0) or 0
+    cumulative_tokens = int(usage_summary.get("cumulative_tokens", 0) or 0)
     if input_tokens <= 0 and peak_tokens <= 0 and output_tokens in (None, 0):
         return None
+    if cumulative_tokens > 0:
+        return (
+            "本轮模型 token："
+            f"累计输入 {cumulative_input_tokens}｜"
+            f"累计输出 {int(cumulative_output_tokens)}｜"
+            f"累计 {cumulative_tokens}｜"
+            f"峰值 {peak_tokens}"
+            f"（峰值轮输入 {input_tokens}｜输出 {int(output_tokens or 0)}）"
+        )
     output_display = "-" if output_tokens is None else str(int(output_tokens))
     return f"本轮模型 token：输入 {input_tokens}｜输出 {output_display}｜峰值 {peak_tokens}"

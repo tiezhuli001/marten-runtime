@@ -58,6 +58,9 @@ class RunRecord(BaseModel):
     actual_input_tokens: int | None = None
     actual_output_tokens: int | None = None
     actual_total_tokens: int | None = None
+    actual_cumulative_input_tokens: int = 0
+    actual_cumulative_output_tokens: int = 0
+    actual_cumulative_total_tokens: int = 0
     actual_peak_input_tokens: int | None = None
     actual_peak_output_tokens: int | None = None
     actual_peak_total_tokens: int | None = None
@@ -200,6 +203,9 @@ class InMemoryRunHistory:
         record.actual_input_tokens = usage.input_tokens
         record.actual_output_tokens = usage.output_tokens
         record.actual_total_tokens = usage.total_tokens
+        record.actual_cumulative_input_tokens += usage.input_tokens
+        record.actual_cumulative_output_tokens += usage.output_tokens
+        record.actual_cumulative_total_tokens += usage.total_tokens
         if record.actual_peak_total_tokens is None or usage.total_tokens >= record.actual_peak_total_tokens:
             record.actual_peak_input_tokens = usage.input_tokens
             record.actual_peak_output_tokens = usage.output_tokens

@@ -160,9 +160,23 @@ def _is_transient_mcp_error_result(result: dict) -> bool:
 
 
 def _is_transient_mcp_exception(exc: Exception | type[Exception]) -> bool:
+    nested = _flatten_exception_group(exc)
+    if nested:
+        return any(_is_transient_mcp_exception(item) for item in nested)
     if isinstance(exc, (TimeoutError, ConnectionError, OSError, EOFError, BrokenPipeError)):
         return True
     return _looks_like_transient_transport_text(str(exc))
+
+
+def _flatten_exception_group(exc: Exception | type[Exception]) -> list[BaseException]:
+    nested = getattr(exc, "exceptions", None)
+    if not isinstance(nested, tuple):
+        return []
+    flattened: list[BaseException] = []
+    for item in nested:
+        if isinstance(item, BaseException):
+            flattened.append(item)
+    return flattened
 
 
 def _looks_like_transient_transport_text(text: str) -> bool:

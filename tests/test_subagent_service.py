@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.history import InMemoryRunHistory
+from marten_runtime.runtime.usage_models import NormalizedUsage
 from marten_runtime.session.store import SessionStore
 from marten_runtime.tools.registry import ToolRegistry
 from tests.support.feishu_builders import FakeDeliveryClient
@@ -963,6 +964,108 @@ class SubagentServiceContractTests(unittest.TestCase):
         self.assertEqual(payload.run_id, "run_child_notify")
         self.assertIn("后台任务已完成", payload.text)
         self.assertIn("child finished summary", payload.text)
+
+    def test_successful_feishu_origin_task_notification_carries_child_run_usage_summary(self) -> None:
+        from marten_runtime.runtime.events import OutboundEvent
+        from marten_runtime.subagents.service import SubagentService
+
+        history = InMemoryRunHistory()
+
+        class SuccessRuntimeLoop:
+            def run(self, session_id, message, trace_id=None, agent=None, session_messages=None, compacted_context=None, request_kind="interactive", parent_run_id=None):  # noqa: ANN001,E501
+                run = history.start(
+                    session_id=session_id,
+                    trace_id=trace_id or "trace_child_notify_usage",
+                    config_snapshot_id="cfg_bootstrap",
+                    bootstrap_manifest_id="boot_default",
+                    parent_run_id=parent_run_id,
+                )
+                history.set_actual_usage(
+                    run.run_id,
+                    NormalizedUsage(
+                        input_tokens=700,
+                        output_tokens=33,
+                        total_tokens=733,
+                        provider_name="test",
+                        model_name="test-model",
+                    ),
+                    stage="llm_first",
+                )
+                history.set_actual_usage(
+                    run.run_id,
+                    NormalizedUsage(
+                        input_tokens=900,
+                        output_tokens=44,
+                        total_tokens=944,
+                        provider_name="test",
+                        model_name="test-model",
+                    ),
+                    stage="llm_second",
+                )
+                return [
+                    OutboundEvent(
+                        session_id=session_id,
+                        run_id=run.run_id,
+                        event_id="evt_child_notify_usage",
+                        event_type="final",
+                        sequence=2,
+                        trace_id=trace_id or "trace_child_notify_usage",
+                        payload={"text": "child finished summary"},
+                        created_at=datetime.now(timezone.utc),
+                    )
+                ]
+
+        session_store = SessionStore()
+        session_store.create(
+            session_id="sess_parent",
+            conversation_id="oc_test_chat",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        delivery = FakeDeliveryClient()
+        service = SubagentService(
+            session_store=session_store,
+            run_history=history,
+            tool_registry=ToolRegistry(),
+            runtime_loop=SuccessRuntimeLoop(),
+            max_concurrent_subagents=1,
+            max_queued_subagents=4,
+            subagent_timeout_seconds=5,
+            feishu_delivery=delivery,
+        )
+        accepted = service.spawn(
+            task="background followup",
+            label="notify-feishu-usage",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            parent_allowed_tools=["runtime", "skill", "time"],
+            origin_channel_id="feishu",
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        service.run_next_queued_task()
+
+        task = service.store.get(accepted["task_id"])
+        payload = delivery.payloads[0]
+        self.assertEqual(task.status, "succeeded")
+        self.assertEqual(payload.run_id, task.child_run_id)
+        self.assertEqual(
+            payload.usage_summary,
+            {
+                "input_tokens": 900,
+                "output_tokens": 44,
+                "peak_tokens": 944,
+                "cumulative_input_tokens": 1600,
+                "cumulative_output_tokens": 77,
+                "cumulative_tokens": 1677,
+                "estimated_only": False,
+            },
+        )
 
 
 if __name__ == "__main__":

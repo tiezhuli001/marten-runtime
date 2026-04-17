@@ -107,14 +107,16 @@ class SelfImproveTriggerEvaluator:
         summary: str,
         channel_id: str | None = None,
     ) -> ReviewTrigger | None:
+        full_tool_history = list(tool_history)
         filtered_history = [
             item
-            for item in tool_history
+            for item in full_tool_history
             if item.tool_name not in {"self_improve", "automation", "runtime"}
         ]
         if len(filtered_history) < self.complex_episode_min_tool_calls:
             return None
         tool_names = [item.tool_name for item in filtered_history]
+        full_tool_names = [item.tool_name for item in full_tool_history]
         semantic_fingerprint = (
             f"{agent_id}|complex_successful_tool_episode|"
             f"{'|'.join(tool_names[:4])}|{user_message.strip().lower()[:80]}"
@@ -127,8 +129,8 @@ class SelfImproveTriggerEvaluator:
             source_trace_id=trace_id,
             source_fingerprints=[],
             payload_json={
-                "tool_names": tool_names,
-                "tool_call_count": len(filtered_history),
+                "tool_names": full_tool_names,
+                "tool_call_count": len(full_tool_history),
                 "summary": summary,
                 "final_text": final_text[:500],
                 "source_channel_id": channel_id,

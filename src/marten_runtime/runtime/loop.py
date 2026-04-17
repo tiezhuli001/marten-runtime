@@ -508,6 +508,17 @@ class RuntimeLoop:
                             elapsed_ms=elapsed_ms(tool_started_at),
                         )
                 except ToolCallRejected as exc:
+                    self.history.record_tool_call(
+                        run.run_id,
+                        tool_name=reply.tool_name or "",
+                        tool_payload=reply.tool_payload,
+                        tool_result={
+                            "ok": False,
+                            "is_error": True,
+                            "error_code": exc.error_code,
+                            "error_text": tool_rejection_text(exc.error_code),
+                        },
+                    )
                     if tool_history:
                         recovered_text = recover_tool_result_text(tool_history)
                         if recovered_text:
@@ -548,6 +559,17 @@ class RuntimeLoop:
                         error_stage="tool",
                         message=message,
                         summary=str(exc),
+                    )
+                    self.history.record_tool_call(
+                        run.run_id,
+                        tool_name=reply.tool_name or "",
+                        tool_payload=reply.tool_payload,
+                        tool_result={
+                            "ok": False,
+                            "is_error": True,
+                            "error_code": exc.error_code,
+                            "error_text": str(exc),
+                        },
                     )
                     self.history.set_stage_timing(
                         run.run_id,
@@ -779,6 +801,8 @@ class RuntimeLoop:
                 actual_peak_output_tokens=run_record.actual_peak_output_tokens,
                 actual_peak_total_tokens=run_record.actual_peak_total_tokens,
                 actual_peak_stage=run_record.actual_peak_stage,
+                message=message,
+                tool_history_count=len(tool_history),
             )
             if isinstance(tool_result, dict):
                 tool_history[-1].tool_result = tool_result

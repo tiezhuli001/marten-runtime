@@ -41,6 +41,27 @@ class FeishuCardProtocol(BaseModel):
     sections: list[FeishuCardSection] = []
 
 
+class SubagentTerminalCard(BaseModel):
+    title: str
+    summary: str | None = None
+    visible_text: str | None = None
+
+
+_SUBAGENT_SYSTEM_COMPLETED_RE = re.compile(
+    r"^subagent task completed:\s*(?P<label>[^\n]+?)(?:\nsummary:\s*(?P<detail>[\s\S]*))?$"
+)
+_SUBAGENT_SYSTEM_FAILED_RE = re.compile(
+    r"^subagent task failed:\s*(?P<label>[^\n]+?)(?:\nerror:\s*(?P<detail>[\s\S]*))?$"
+)
+_SUBAGENT_SYSTEM_TIMED_OUT_RE = re.compile(r"^subagent task timed out:\s*(?P<label>[^\n]+?)\s*$")
+_SUBAGENT_SYSTEM_CANCELLED_RE = re.compile(r"^subagent task cancelled:\s*(?P<label>[^\n]+?)\s*$")
+_BACKGROUND_COMPLETED_RE = re.compile(
+    r"^后台任务已完成[:：]\s*(?P<label>[^\n]+?)(?:\n(?P<detail>[\s\S]*))?$"
+)
+_BACKGROUND_STATUS_RE = re.compile(
+    r"^后台任务(?P<status>failed|timed_out|cancelled)[:：]\s*(?P<label>[^\n]+?)(?:\n(?P<detail>[\s\S]*))?$"
+)
+
 
 
 def build_feishu_card_protocol_guard_instruction() -> str:
@@ -187,6 +208,17 @@ def render_final_reply_card(
     event_type: str = "final",
     usage_summary: dict[str, int] | None = None,
 ) -> dict[str, object]:
+    subagent_terminal = _parse_subagent_terminal_card(text)
+    if subagent_terminal is not None:
+        return _build_generic_card(
+            title=subagent_terminal.title,
+            visible_text=subagent_terminal.visible_text,
+            summary=subagent_terminal.summary,
+            sections=[],
+            fallback_text=text,
+            header_template=default_card_template(event_type),
+            usage_summary=usage_summary,
+        )
     visible_text, protocol = parse_feishu_card_protocol(text)
     if protocol is not None:
         visible_text = dedupe_visible_text_against_protocol(visible_text, protocol)
@@ -208,6 +240,40 @@ def render_final_reply_card(
         header_template=default_card_template(event_type),
         usage_summary=usage_summary,
     )
+
+
+def _parse_subagent_terminal_card(text: str) -> SubagentTerminalCard | None:
+    stripped = text.strip()
+    patterns: list[tuple[re.Pattern[str], str, str | None]] = [
+        (_BACKGROUND_COMPLETED_RE, "后台任务完成", "任务"),
+        (_SUBAGENT_SYSTEM_COMPLETED_RE, "子任务完成", "任务"),
+        (_BACKGROUND_STATUS_RE, _map_background_status_title, "任务"),
+        (_SUBAGENT_SYSTEM_FAILED_RE, "子任务失败", "任务"),
+        (_SUBAGENT_SYSTEM_TIMED_OUT_RE, "子任务超时", "任务"),
+        (_SUBAGENT_SYSTEM_CANCELLED_RE, "子任务已取消", "任务"),
+    ]
+    for pattern, title, summary_prefix in patterns:
+        match = pattern.match(stripped)
+        if match is None:
+            continue
+        resolved_title = title(match.group("status")) if callable(title) else title
+        label = (match.groupdict().get("label") or "").strip()
+        detail = (match.groupdict().get("detail") or "").strip() or None
+        summary = f"{summary_prefix}：{label}" if label else None
+        return SubagentTerminalCard(
+            title=resolved_title,
+            summary=summary,
+            visible_text=detail,
+        )
+    return None
+
+
+def _map_background_status_title(status: str) -> str:
+    return {
+        "failed": "后台任务失败",
+        "timed_out": "后台任务超时",
+        "cancelled": "后台任务已取消",
+    }.get(status, default_card_title("error"))
 
 
 def _render_fallback_structured_card(
