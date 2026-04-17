@@ -769,6 +769,56 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
             [3.0, 5.0],
         )
 
+    def test_mcp_family_tool_retries_on_transient_exception_group(self) -> None:
+        server = MCPServerSpec(
+            server_id="github",
+            transport="mock",
+            backend_id="github",
+            tools=[MCPToolSpec(name="list_commits", description="List GitHub commits.")],
+        )
+
+        class FlakyExceptionGroupClient:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str, dict]] = []
+
+            def call_tool(self, server_id: str, tool_name: str, payload: dict) -> dict:
+                self.calls.append((server_id, tool_name, payload))
+                if len(self.calls) < 3:
+                    raise BaseExceptionGroup(
+                        "unhandled errors in a TaskGroup",
+                        [RuntimeError('Get "https://api.github.com/repos/llt22/talkio/commits?page=1&per_page=1": EOF')],
+                    )
+                return {
+                    "server_id": server_id,
+                    "tool_name": tool_name,
+                    "payload": payload,
+                    "result_text": '[{"sha":"abc"}]',
+                    "ok": True,
+                    "is_error": False,
+                }
+
+        client = FlakyExceptionGroupClient()
+
+        with patch("marten_runtime.tools.builtins.mcp_tool.time.sleep") as sleep_mock:
+            result = run_mcp_tool(
+                {
+                    "action": "call",
+                    "server_id": "github",
+                    "tool_name": "list_commits",
+                    "arguments": {"owner": "llt22", "repo": "talkio", "perPage": 1},
+                },
+                [server],
+                client,  # type: ignore[arg-type]
+                {"github": {"state": "configured", "tool_count": 1, "error": None}},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(client.calls), 3)
+        self.assertEqual(
+            [call.args[0] for call in sleep_mock.call_args_list],
+            [3.0, 5.0],
+        )
+
     def test_runtime_can_call_real_stdio_mcp_tool(self) -> None:
         fixture = Path(__file__).resolve().parents[1] / "fixtures" / "mcp_stdio_server.py"
         server = MCPServerSpec(

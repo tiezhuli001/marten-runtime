@@ -10,6 +10,7 @@ from marten_runtime.runtime.llm_provider_support import (
 )
 from marten_runtime.runtime.llm_request_instructions import (
     request_specific_instruction as _request_specific_instruction,
+    should_lock_runtime_context_followup as _should_lock_runtime_context_followup,
     tool_followup_instruction as _tool_followup_instruction,
 )
 
@@ -33,8 +34,17 @@ def build_openai_messages(request: "LLMRequest") -> list[dict[str, object]]:
     _append_system_message(messages, request.tool_outcome_summary_text)
     _append_system_message(messages, request.working_context_text)
     _append_system_message(messages, _request_specific_instruction(request))
+    lock_runtime_context_followup = _should_lock_runtime_context_followup(
+        message=request.message,
+        tool_history_count=len(request.tool_history),
+    )
     _append_system_message(
-        messages, _tool_followup_instruction(request.requested_tool_name)
+        messages,
+        _tool_followup_instruction(
+            request.requested_tool_name,
+            lock_runtime_context_followup=lock_runtime_context_followup,
+            tool_history_count=len(request.tool_history),
+        ),
     )
     for body in request.activated_skill_bodies:
         _append_system_message(messages, body)

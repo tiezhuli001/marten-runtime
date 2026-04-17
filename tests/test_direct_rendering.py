@@ -72,6 +72,34 @@ class DirectRenderingTests(unittest.TestCase):
             "CloudWide851/easy-agent 最近一次提交是 **2026-04-01 10:24:49**（北京时间），commit 信息为 `chore(release):发布0.3.3版本`。",
         )
 
+    def test_render_direct_tool_text_flattens_multiline_commit_message(self) -> None:
+        with patch.dict("os.environ", {"TZ": "Asia/Shanghai"}):
+            text = render_direct_tool_text(
+                "mcp",
+                {
+                    "server_id": "github",
+                    "tool_name": "list_commits",
+                    "arguments": {"owner": "tiezhuli001", "repo": "codex-skills"},
+                    "result_text": (
+                        '[{"sha":"abc","commit":{"message":"Merge pull request #1 from tiezhuli001/sync-skill-updates-2026-04-14\\n\\n'
+                        'sync ai-repo-cleanup and long-run-execution",'
+                        '"author":{"date":"2026-04-14T12:01:21Z"}}}]'
+                    ),
+                    "ok": True,
+                    "is_error": False,
+                },
+                tool_payload={
+                    "server_id": "github",
+                    "tool_name": "list_commits",
+                    "arguments": {"owner": "tiezhuli001", "repo": "codex-skills"},
+                },
+            )
+
+        self.assertEqual(
+            text,
+            "tiezhuli001/codex-skills 最近一次提交是 **2026-04-14 20:01:21**（北京时间），commit 信息为 `Merge pull request #1 from tiezhuli001/sync-skill-updates-2026-04-14 sync ai-repo-cleanup and long-run-execution`。",
+        )
+
     def test_render_direct_tool_text_does_not_expand_to_repo_metadata_rendering(self) -> None:
         text = render_direct_tool_text(
             "mcp",

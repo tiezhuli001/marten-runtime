@@ -4,6 +4,7 @@ from marten_runtime.runtime.query_hardening import (
     extract_github_repo_query,
     is_github_repo_commit_query,
     is_github_repo_metadata_query,
+    is_explicit_multi_step_tool_request,
     is_runtime_context_query,
     is_time_query,
 )
@@ -29,3 +30,30 @@ class QueryHardeningTests(unittest.TestCase):
 
     def test_time_query_detects_realtime_time_prompt(self) -> None:
         self.assertTrue(is_time_query("请告诉我现在几点了？"))
+
+    def test_multi_step_tool_request_detects_natural_language_runtime_then_mcp_sequence(
+        self,
+    ) -> None:
+        self.assertTrue(
+            is_explicit_multi_step_tool_request(
+                "先看当前时间，再检查上下文占用，最后列出可用 MCP 服务。"
+            )
+        )
+
+    def test_multi_step_tool_request_does_not_mistake_runtime_then_summary_as_cross_tool_sequence(
+        self,
+    ) -> None:
+        self.assertFalse(
+            is_explicit_multi_step_tool_request(
+                "先看当前上下文占用，再总结这次工具调用情况。"
+            )
+        )
+
+    def test_multi_step_tool_request_does_not_mistake_runtime_then_repo_explanation_as_cross_tool_sequence(
+        self,
+    ) -> None:
+        self.assertFalse(
+            is_explicit_multi_step_tool_request(
+                "先看当前上下文占用，再说明这个仓库上下文是否需要压缩。"
+            )
+        )

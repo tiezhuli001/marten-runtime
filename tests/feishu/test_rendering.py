@@ -410,14 +410,21 @@ class FeishuRenderingTests(unittest.TestCase):
     def test_render_final_reply_card_appends_usage_footer_when_summary_present(self) -> None:
         card = render_final_reply_card(
             "处理完成。",
-            usage_summary={"input_tokens": 3198, "output_tokens": 82, "peak_tokens": 3280},
+            usage_summary={
+                "input_tokens": 3198,
+                "output_tokens": 82,
+                "peak_tokens": 3280,
+                "cumulative_input_tokens": 4510,
+                "cumulative_output_tokens": 143,
+                "cumulative_tokens": 4653,
+            },
         )
 
         elements = card["body"]["elements"]
         self.assertEqual(elements[-2]["tag"], "hr")
         self.assertEqual(
             elements[-1]["content"],
-            "<font color='grey'>本轮模型 token：输入 3198｜输出 82｜峰值 3280</font>",
+            "<font color='grey'>本轮模型 token：累计输入 4510｜累计输出 143｜累计 4653｜峰值 3280（峰值轮输入 3198｜输出 82）</font>",
         )
 
     def test_render_final_reply_card_omits_usage_footer_when_summary_absent(self) -> None:
@@ -480,6 +487,93 @@ class FeishuRenderingTests(unittest.TestCase):
         )
 
         self.assertEqual(card["header"]["title"]["content"], "llt22/talkio 最近提交")
+
+    def test_render_final_reply_card_derives_background_task_completed_title(self) -> None:
+        card = render_final_reply_card(
+            "后台任务已完成：调研 codex-skills 仓库能力\n tiezhuli001/codex-skills 最近一次提交是 **2026-04-14 20:01:21**（北京时间）。"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "后台任务完成")
+
+    def test_render_final_reply_card_structures_background_task_completion_message(self) -> None:
+        card = render_final_reply_card(
+            "后台任务已完成：调研 codex-skills 仓库能力\n"
+            "tiezhuli001/codex-skills 最近一次提交是 **2026-04-14 20:01:21**（北京时间）。"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "后台任务完成")
+        elements = card["body"]["elements"]
+        self.assertEqual(
+            elements[0]["content"],
+            "tiezhuli001/codex-skills 最近一次提交是 **2026-04-14 20:01:21**（北京时间）。",
+        )
+        self.assertEqual(elements[2]["content"], "**📌 任务：调研 codex-skills 仓库能力**")
+        joined = "\n".join(element["content"] for element in elements if element["tag"] == "markdown")
+        self.assertNotIn("后台任务已完成：", joined)
+
+    def test_render_final_reply_card_structures_subagent_system_completion_message(self) -> None:
+        card = render_final_reply_card(
+            "subagent task completed: 查询 codex-skills 最近提交\n"
+            "summary: tiezhuli001/codex-skills 最近一次提交是 **2026-04-17 17:55:00**（北京时间），"
+            "commit 信息为 `Merge pull request #2 from tiezhuli001/docs/add-linuxdo-link docs: add linux do community link to readme`。"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "子任务完成")
+        elements = card["body"]["elements"]
+        self.assertIn("tiezhuli001/codex-skills 最近一次提交是", elements[0]["content"])
+        self.assertEqual(elements[2]["content"], "**📌 任务：查询 codex-skills 最近提交**")
+        joined = "\n".join(element["content"] for element in elements if element["tag"] == "markdown")
+        self.assertNotIn("subagent task completed:", joined)
+        self.assertNotIn("summary:", joined)
+
+    def test_render_final_reply_card_structures_subagent_system_failure_message(self) -> None:
+        card = render_final_reply_card(
+            "subagent task failed: 查询 codex-skills 最近提交\n"
+            "error: github mcp request timed out"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "子任务失败")
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "github mcp request timed out")
+        self.assertEqual(elements[2]["content"], "**📌 任务：查询 codex-skills 最近提交**")
+
+    def test_render_final_reply_card_structures_subagent_system_timeout_message(self) -> None:
+        card = render_final_reply_card("subagent task timed out: 查询 codex-skills 最近提交")
+
+        self.assertEqual(card["header"]["title"]["content"], "子任务超时")
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "**📌 任务：查询 codex-skills 最近提交**")
+
+    def test_render_final_reply_card_structures_subagent_system_cancelled_message(self) -> None:
+        card = render_final_reply_card("subagent task cancelled: 查询 codex-skills 最近提交")
+
+        self.assertEqual(card["header"]["title"]["content"], "子任务已取消")
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "**📌 任务：查询 codex-skills 最近提交**")
+
+    def test_render_final_reply_card_structures_background_task_failure_message(self) -> None:
+        card = render_final_reply_card(
+            "后台任务failed：调研 codex-skills 仓库能力\ngithub mcp request timed out"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "后台任务失败")
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "github mcp request timed out")
+        self.assertEqual(elements[2]["content"], "**📌 任务：调研 codex-skills 仓库能力**")
+
+    def test_render_final_reply_card_structures_background_task_timeout_message(self) -> None:
+        card = render_final_reply_card("后台任务timed_out：调研 codex-skills 仓库能力")
+
+        self.assertEqual(card["header"]["title"]["content"], "后台任务超时")
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "**📌 任务：调研 codex-skills 仓库能力**")
+
+    def test_render_final_reply_card_structures_background_task_cancelled_message(self) -> None:
+        card = render_final_reply_card("后台任务cancelled：调研 codex-skills 仓库能力")
+
+        self.assertEqual(card["header"]["title"]["content"], "后台任务已取消")
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "**📌 任务：调研 codex-skills 仓库能力**")
 
     def test_render_final_reply_card_uses_default_title_for_short_literal_reply(self) -> None:
         card = render_final_reply_card("main")

@@ -418,6 +418,9 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
         self.assertEqual(result["current_run"]["initial_input_tokens_estimate"], 220)
         self.assertEqual(result["current_run"]["peak_input_tokens_estimate"], 960)
         self.assertEqual(result["current_run"]["peak_stage"], "tool_followup")
+        self.assertEqual(result["current_run"]["actual_cumulative_input_tokens"], 910)
+        self.assertEqual(result["current_run"]["actual_cumulative_output_tokens"], 70)
+        self.assertEqual(result["current_run"]["actual_cumulative_total_tokens"], 980)
         self.assertEqual(result["current_run"]["actual_peak_total_tokens"], 980)
         self.assertEqual(result["current_run"]["actual_peak_stage"], "llm_second")
 
@@ -462,6 +465,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
         )
 
         self.assertIn("本轮首发请求约 220 tokens", result["summary"])
+        self.assertIn("本轮累计约 980 tokens（输入 910 + 输出 70）", result["summary"])
         self.assertIn("本轮 actual-peak 约 980 tokens", result["summary"])
         self.assertIn(
             "峰值主要来自工具结果注入后的 follow-up 模型调用", result["summary"]
@@ -484,6 +488,9 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
                     "initial_input_tokens_estimate": 3604,
                     "peak_input_tokens_estimate": 3743,
                     "peak_stage": "tool_followup",
+                    "actual_cumulative_input_tokens": 4510,
+                    "actual_cumulative_output_tokens": 143,
+                    "actual_cumulative_total_tokens": 4653,
                     "actual_peak_input_tokens": 3198,
                     "actual_peak_output_tokens": 82,
                     "actual_peak_total_tokens": 3280,
@@ -499,6 +506,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
         )
 
         self.assertIn("当前上下文使用详情", text)
+        self.assertIn("本轮累计模型调用：4653 tokens（输入 4510 + 输出 143）", text)
         self.assertIn("本轮 actual-peak：3280 tokens", text)
         self.assertIn("模型输入：3198", text)
         self.assertIn("模型输出：82", text)

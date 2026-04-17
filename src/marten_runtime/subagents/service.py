@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from marten_runtime.agents.specs import AgentSpec
 from marten_runtime.channels.feishu.delivery import FeishuDeliveryPayload
+from marten_runtime.channels.feishu.usage import build_usage_summary_from_history
 from marten_runtime.config.models_loader import resolve_model_profile
 from marten_runtime.session.models import SessionMessage
 from marten_runtime.subagents.store import InMemorySubagentStore
@@ -395,6 +396,21 @@ class SubagentService:
                 child_run_id,
                 events[-1].created_at,
             )
+            try:
+                child_run = self.run_history.get(child_run_id)
+            except KeyError:
+                child_run = None
+            if child_run is not None and child_run.latest_actual_usage is not None:
+                self.session_store.set_latest_actual_usage(
+                    task.child_session_id,
+                    child_run.latest_actual_usage,
+                )
+            if child_run is not None:
+                for summary in child_run.tool_outcome_summaries:
+                    self.session_store.append_tool_outcome_summary(
+                        task.child_session_id,
+                        summary,
+                    )
             terminal_event = events[-1]
             terminal_text = str(terminal_event.payload.get("text", "")).strip()
             if terminal_event.event_type == "final":
@@ -523,6 +539,7 @@ class SubagentService:
                 sequence=1,
                 text=summary,
                 dedupe_key=f"subagent:{task.task_id}:{status}",
+                usage_summary=build_usage_summary_from_history(self.run_history, run_id),
             )
         )
 

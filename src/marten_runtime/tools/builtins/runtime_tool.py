@@ -51,6 +51,9 @@ def _build_context_status(
         "initial_input_tokens_estimate": request_estimate.input_tokens_estimate,
         "peak_input_tokens_estimate": request_estimate.input_tokens_estimate,
         "peak_stage": "initial_request",
+        "actual_cumulative_input_tokens": 0,
+        "actual_cumulative_output_tokens": 0,
+        "actual_cumulative_total_tokens": 0,
         "actual_peak_input_tokens": None,
         "actual_peak_output_tokens": None,
         "actual_peak_total_tokens": None,
@@ -67,6 +70,9 @@ def _build_context_status(
                 run_record.peak_preflight_input_tokens_estimate or request_estimate.input_tokens_estimate
             ),
             "peak_stage": run_record.peak_preflight_stage or "initial_request",
+            "actual_cumulative_input_tokens": run_record.actual_cumulative_input_tokens,
+            "actual_cumulative_output_tokens": run_record.actual_cumulative_output_tokens,
+            "actual_cumulative_total_tokens": run_record.actual_cumulative_total_tokens,
             "actual_peak_input_tokens": run_record.actual_peak_input_tokens,
             "actual_peak_output_tokens": run_record.actual_peak_output_tokens,
             "actual_peak_total_tokens": run_record.actual_peak_total_tokens,
@@ -99,6 +105,9 @@ def _build_context_status(
     if previous_run is not None:
         last_completed_run = {
             "run_id": previous_run.run_id,
+            "actual_cumulative_input_tokens": previous_run.actual_cumulative_input_tokens,
+            "actual_cumulative_output_tokens": previous_run.actual_cumulative_output_tokens,
+            "actual_cumulative_total_tokens": previous_run.actual_cumulative_total_tokens,
             "actual_peak_input_tokens": previous_run.actual_peak_input_tokens,
             "actual_peak_output_tokens": previous_run.actual_peak_output_tokens,
             "actual_peak_total_tokens": previous_run.actual_peak_total_tokens,
@@ -212,9 +221,14 @@ def _build_summary(
     actual_peak_input = int(current_run.get("actual_peak_input_tokens") or 0)
     actual_peak_output = int(current_run.get("actual_peak_output_tokens") or 0)
     actual_peak_stage = str(current_run.get("actual_peak_stage") or "").strip()
+    cumulative_total = int(current_run.get("actual_cumulative_total_tokens") or 0)
+    cumulative_input = int(current_run.get("actual_cumulative_input_tokens") or 0)
+    cumulative_output = int(current_run.get("actual_cumulative_output_tokens") or 0)
     if actual_peak_total > 0:
         run_pressure_text = (
-            f"本轮首发请求约 {initial_tokens} tokens，本轮 actual-peak 约 {actual_peak_total} tokens"
+            f"本轮首发请求约 {initial_tokens} tokens，本轮累计约 {cumulative_total} tokens"
+            f"（输入 {cumulative_input} + 输出 {cumulative_output}），"
+            f"本轮 actual-peak 约 {actual_peak_total} tokens"
             f"（输入 {actual_peak_input} + 输出 {actual_peak_output}）"
         )
         if actual_peak_stage == "llm_second":
@@ -292,7 +306,14 @@ def render_runtime_context_status_text(result: dict[str, Any]) -> str:
     actual_peak_input = int(current_run.get("actual_peak_input_tokens") or 0)
     actual_peak_output = int(current_run.get("actual_peak_output_tokens") or 0)
     actual_peak_stage = str(current_run.get("actual_peak_stage") or "").strip()
+    cumulative_total = int(current_run.get("actual_cumulative_total_tokens") or 0)
+    cumulative_input = int(current_run.get("actual_cumulative_input_tokens") or 0)
+    cumulative_output = int(current_run.get("actual_cumulative_output_tokens") or 0)
     if actual_peak_total > 0:
+        lines.append(
+            f"- 本轮累计模型调用：{cumulative_total} tokens"
+            f"（输入 {cumulative_input} + 输出 {cumulative_output}）"
+        )
         peak_line = (
             f"- 本轮首发请求：{initial_tokens} tokens；本轮 actual-peak：{actual_peak_total} tokens"
             f"（输入 {actual_peak_input} + 输出 {actual_peak_output}）"

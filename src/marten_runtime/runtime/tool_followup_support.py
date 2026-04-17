@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from marten_runtime.runtime.direct_rendering import maybe_render_tool_followup_text
 from marten_runtime.runtime.llm_client import LLMRequest, ToolExchange
+from marten_runtime.runtime.llm_request_instructions import (
+    should_lock_runtime_context_followup,
+)
 from marten_runtime.tools.builtins.runtime_tool import (
     annotate_runtime_context_status_peak,
     render_runtime_context_status_text,
@@ -35,6 +38,8 @@ def normalize_tool_result_for_followup(
     actual_peak_output_tokens: int | None,
     actual_peak_total_tokens: int | None,
     actual_peak_stage: str | None,
+    message: str = "",
+    tool_history_count: int = 1,
 ) -> tuple[object, str | None]:
     if isinstance(tool_result, dict) and tool_name == "runtime":
         annotated = annotate_runtime_context_status_peak(
@@ -46,7 +51,12 @@ def normalize_tool_result_for_followup(
             actual_peak_total_tokens=actual_peak_total_tokens,
             actual_peak_stage=actual_peak_stage,
         )
-        return annotated, render_runtime_context_status_text(annotated)
+        if should_lock_runtime_context_followup(
+            message=message,
+            tool_history_count=tool_history_count,
+        ):
+            return annotated, render_runtime_context_status_text(annotated)
+        return annotated, None
     return tool_result, maybe_render_tool_followup_text(
         tool_name,
         tool_result,

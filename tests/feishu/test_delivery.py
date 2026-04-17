@@ -303,6 +303,9 @@ class FeishuDeliveryTests(unittest.TestCase):
         run.actual_peak_input_tokens = 3198
         run.actual_peak_output_tokens = 82
         run.actual_peak_total_tokens = 3280
+        run.actual_cumulative_input_tokens = 4510
+        run.actual_cumulative_output_tokens = 143
+        run.actual_cumulative_total_tokens = 4653
 
         service = FeishuWebsocketService(
             receipt_store=InMemoryReceiptStore(),
@@ -338,6 +341,9 @@ class FeishuDeliveryTests(unittest.TestCase):
                 "input_tokens": 3198,
                 "output_tokens": 82,
                 "peak_tokens": 3280,
+                "cumulative_input_tokens": 4510,
+                "cumulative_output_tokens": 143,
+                "cumulative_tokens": 4653,
                 "estimated_only": False,
             },
         )
