@@ -1,7 +1,7 @@
 [project]
 name = "marten-runtime"
 version = "0.1.0"
-description = "Simplified private-agent runtime for channel, binding, LLM, MCP, and skills."
+description = "Simplified agent runtime harness for channel, binding, LLM, MCP, and skills."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}

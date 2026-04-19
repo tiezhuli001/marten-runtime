@@ -4,11 +4,11 @@ This page records the current architecture judgment for `marten-runtime`.
 
 ## Short Answer
 
-`marten-runtime` is already a real private-agent runtime for:
+`marten-runtime` is already a real agent runtime harness for:
 
 `gateway -> binding -> agent router -> runtime context assembly -> LLM/tool loop -> channel delivery`
 
-Milestone A from the private harness design is implemented and test-covered:
+Milestone A from the agent runtime harness design is implemented and test-covered:
 
 1. gateway binding + multi-agent routing
 2. runtime context assembly + live context rehydration
@@ -21,7 +21,7 @@ Milestone B is intentionally still pending in part:
 
 Interactive conversation serialization is already implemented as single-process FIFO conversation lanes for HTTP `/messages` and Feishu interactive ingress.
 
-That means the repository is correctly shaped as a simplified openclaw-style private agent runtime, but it is still an MVP harness rather than a fully hardened multi-session runtime.
+That means the repository is correctly shaped as a simplified openclaw-style agent runtime harness, but it is still an MVP harness rather than a fully hardened multi-session runtime.
 
 ## What Is Implemented
 

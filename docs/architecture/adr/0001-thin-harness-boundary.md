@@ -5,7 +5,7 @@
 
 ## Context
 
-`marten-runtime` is intended to be a private-agent runtime harness, not a general workflow platform or host-side decision engine.
+`marten-runtime` is intended to be an agent runtime harness, not a general workflow platform or host-side decision engine.
 
 Without an explicit boundary, the host tends to grow toward:
 
@@ -48,5 +48,5 @@ The host must not become:
 
 ## References
 
-- [Private Agent Harness Design](../../2026-03-29-private-agent-harness-design.md)
+- [Agent Runtime Harness Design](../../2026-03-29-private-agent-harness-design.md)
 - [Architecture Changelog](../../ARCHITECTURE_CHANGELOG.md)

@@ -1,10 +1,10 @@
-# Select the active profile here for local overrides.
+# Default runtime profile for local overrides.
 # Provider secrets still belong in .env.
-default_profile = "minimax_coding"
+default_profile = "default"
 
 [profiles.default]
 provider = "openai"
-model = "gpt-4.1"
+model = "gpt-5.4"
 tokenizer_family = "openai_o200k"
 supports_provider_usage = true
 

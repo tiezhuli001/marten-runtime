@@ -209,10 +209,10 @@ fi
 if has_provider_key '.env'; then
   ok 'provider credential detected'
 else
-  blocked 'provider credential missing: set OPENAI_API_KEY or MINIMAX_API_KEY in .env or shell environment'
+  blocked 'provider credential missing: set the API key required by the active profile in .env or shell environment; the committed default path is OPENAI_API_KEY'
   print_startup_command
   section 'Next Actions'
-  printf '1. Edit .env and set OPENAI_API_KEY or MINIMAX_API_KEY.\n'
+  printf '1. Edit .env and set the API key required by the active profile; the committed default path is OPENAI_API_KEY.\n'
   printf '2. Re-run ./init.sh to execute the local smoke check.\n'
   exit 1
 fi

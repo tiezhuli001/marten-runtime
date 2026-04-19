@@ -332,7 +332,7 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
     - time forced route
     - request-specific GitHub instruction shaping
   - Feishu card protocol ownership is now documented as a remove-when-replacement-verified boundary: the behavior remains required, but direct Feishu protocol inference should move toward the Feishu channel layer once verified
-  - Stage 2 now also has a function-level `runtime/loop.py` split blueprint that freezes the extraction order and stop rules before code movement
+  - the accepted Stage 2 exit conditions for `runtime/loop.py` splitting were recorded for later cleanup work and are now summarized directly in this changelog entry
 - Why:
   - the 2026-04-09 review correctly called out that several fast paths had become de facto architecture decisions without being written down as such
   - before further extraction work, the repo needed explicit answers for:
@@ -341,14 +341,13 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
     - which `runtime/loop.py` seams are real versus only superficially separable
 - Source of truth:
   - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
-  - [2026-04-09 Next-Branch Evolution Design](./archive/branch-evolution/2026-04-09-next-branch-evolution-design.md)
   - [2026-04-09 Fast-Path Inventory And Exit Strategy](./archive/branch-evolution/2026-04-09-fast-path-inventory-and-exit-strategy.md)
-  - [2026-04-09 Next-Branch Evolution Stage 2 Blueprint](./archive/branch-evolution/2026-04-09-next-branch-evolution-stage-2-blueprint.md)
+  - this changelog entry, which now carries the durable Stage 2 split-boundary summary
 - Verification:
   - documentation consistency checks:
     - confirmed the fast-path inventory no longer contains `pending-stage-2-decision` rows
-    - confirmed the Stage 2 blueprint exists and names the first approved code slice
-    - confirmed the Stage 2 reference plan includes both `_is_*_query` shared-helper convergence and Feishu-guard migration tasks
+    - confirmed the surviving Stage 2 durable truth is the split-order / stop-rule summary preserved here
+    - confirmed the accepted follow-up checks still cover both `_is_*_query` shared-helper convergence and Feishu-guard migration work
 
 ### 2026-04-08: Tool-Result Recovery Now Wins Over Late Follow-Up Failures During GitHub MCP Turns
 
@@ -713,7 +712,7 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
   - [ADR 0002: Progressive Disclosure Default Surface](./architecture/adr/0002-progressive-disclosure-default-surface.md)
   - [ADR 0003: Self-Improve Is Runtime Learning, Not Architecture Memory](./architecture/adr/0003-self-improve-runtime-learning-not-architecture-memory.md)
 - Supporting design docs:
-  - [Private Agent Harness Design](./2026-03-29-private-agent-harness-design.md)
+  - [Agent Runtime Harness Design](./2026-03-29-private-agent-harness-design.md)
   - [Progressive Disclosure Capability Design](./2026-03-31-progressive-disclosure-llm-first-capability-design.md)
 - Verification:
   - `PYTHONPATH=src python -m unittest -v`

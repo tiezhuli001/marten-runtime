@@ -201,7 +201,7 @@ class GatewayContractTests(unittest.TestCase):
         tool_result = runtime.run_history.get(run_id).tool_calls[0]["tool_result"]
         self.assertTrue(tool_result["ok"])
         self.assertEqual(tool_result["action"], "context_status")
-        self.assertEqual(tool_result["model_profile"], "minimax_coding")
+        self.assertEqual(tool_result["model_profile"], "default")
         self.assertIn("summary", tool_result)
         self.assertIn("usage_percent", tool_result)
         self.assertIn("effective_window", tool_result)

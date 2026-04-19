@@ -2,17 +2,17 @@
 
 <div align="center">
 
-面向私有 agent 场景的 simplified openclaw-style runtime，聚焦 `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel` 主链。
+面向自托管场景的 simplified openclaw-style agent runtime harness，聚焦 `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel` 主链。
 
-[English](./README.md) · [文档索引](./docs/README.md) · [架构演进](./docs/ARCHITECTURE_EVOLUTION_CN.md) · [架构时间线](./docs/ARCHITECTURE_CHANGELOG.md) · [ADR 索引](./docs/architecture/adr/README.md) · [配置面说明](./docs/CONFIG_SURFACES.md)
+[English](./README.md) · [文档索引](./docs/README.md) · [部署指南](./docs/DEPLOYMENT_CN.md) · [架构演进](./docs/ARCHITECTURE_EVOLUTION_CN.md) · [架构时间线](./docs/ARCHITECTURE_CHANGELOG.md) · [ADR 索引](./docs/architecture/adr/README.md) · [配置面说明](./docs/CONFIG_SURFACES.md)
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
-![Runtime](https://img.shields.io/badge/runtime-private--agent-black?style=flat-square)
+![Runtime](https://img.shields.io/badge/runtime-agent--runtime--harness-black?style=flat-square)
 
 </div>
 
-`marten-runtime` 是一个收敛的私有 agent runtime。它的目标不是做重型 workflow 平台，而是先把你自己的 agent、MCP 和 skill 托管到一条稳定、可诊断、可扩展的执行主链上。
+`marten-runtime` 是一个收敛的 agent runtime harness。它的目标是先把你自己的 agent、MCP 和 skill 托管到一条稳定、可诊断、可扩展的执行主链上。
 
 ## Overview
 
@@ -26,7 +26,7 @@
 
 ## Why This Exists
 
-很多 agent 项目要么停在 prompt demo，要么过早扩张到 queue、planner、复杂 worker 编排。`marten-runtime` 刻意不走那条路线，而是先把真正要跑通的私有 agent 主链打稳。
+很多 agent 项目要么停在 prompt demo，要么过早扩张到 queue、planner、复杂 worker 编排。`marten-runtime` 刻意不走那条路线，而是先把真正要跑通的 agent runtime 主链打稳。
 
 当前唯一优先的链路是：
 
@@ -134,6 +134,10 @@ flowchart LR
 - `./init.sh --skip-install`：复用现有虚拟环境，跳过依赖安装，但仍执行 readiness 检查和本地 smoke
 - `./init.sh --smoke-only`：假定 workspace 已完成初始化，只执行 readiness 检查和临时本地 smoke
 
+如果你想走最短的部署阅读路径，直接先看 [docs/DEPLOYMENT_CN.md](./docs/DEPLOYMENT_CN.md)。
+
+如果你想走最短的容器部署入口，直接在仓库根目录执行 `docker compose up -d --build`。
+
 ### Requirements
 
 - Python `3.11`、`3.12` 或 `3.13`
@@ -169,7 +173,8 @@ cp mcps.example.json mcps.json
 
 最小可运行配置：
 
-- 在 `.env` 设置一个 provider key，例如 `MINIMAX_API_KEY` 或 `OPENAI_API_KEY`
+- 在 `.env` 设置共享 `default` profile 需要的 provider key；当前最短路径是 `OPENAI_API_KEY`
+- 如果你想切到别的 provider 或模型，在本地 `config/models.toml` 里重定义 `profiles.default`
 - 如果要启用 Langfuse 外部 tracing，在 `.env` 里补齐 `LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`
 - 只有需要本地覆盖时才把 `config/*.example.toml` 复制成 `config/*.toml`
 - 只有需要外部工具时才在 `mcps.json` 配置 MCP

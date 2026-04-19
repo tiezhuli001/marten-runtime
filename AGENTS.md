@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`marten-runtime` is a lightweight private-agent runtime optimized for one narrow path:
+`marten-runtime` is a lightweight agent runtime harness optimized for one narrow path:
 
 `channel -> binding -> runtime loop -> builtin tool / MCP / skill -> delivery / diagnostics`
 

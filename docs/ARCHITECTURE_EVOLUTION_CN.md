@@ -12,6 +12,17 @@
 
 **`marten-runtime` 是如何沿着一条主链逐步演进成现在这个样子的？为什么当前边界会收敛成今天这样？**
 
+## 这份文档对 Harness 工程化的价值
+
+这份文档不只是在描述一个仓库。它也在记录一个 agent runtime harness 是怎样一步步工程化出来的：
+
+- 每个阶段新增了什么边界
+- 哪类真实压力或失败促成了这次演进
+- 仓库是怎样在增强可靠性、连续性、可观测性的同时，始终把 runtime spine 放在中心
+- 哪些看起来很诱人的平台化方向，被刻意留在基线之外
+
+如果你想学习怎样把 agent harness 做成可运行、可治理、可诊断的系统，同时又避免它膨胀成 workflow platform，可以把每个阶段同时看成项目历史和可复用的工程模式。
+
 ## 演进总览
 
 从一开始，这个项目就围绕一条非常明确的执行主链展开：
@@ -59,6 +70,36 @@ flowchart LR
 | 5 | Channel boundary | generic Feishu rendering，而不是渲染器扩张 |
 | 6 | Long conversations | compaction、usage accuracy、runtime context status |
 | 7 | Continuity & extensions | tool summaries、MCP sidecars、direct render、窄扩展 |
+| 8 | Execution surfaces | `main_agent`、lightweight subagents、执行型默认 prompt |
+| 9 | Observability hardening | Langfuse tracing、run/trace correlation、实链验证 |
+
+## 当前架构快照
+
+今天这套架构最适合按“五层主面 + 四个支撑切片”来理解：
+
+- **执行主链**
+  - `channel -> binding -> agent -> runtime context -> LLM -> builtin/MCP/skill -> LLM -> channel`
+- **治理层**
+  - same-conversation FIFO lanes
+  - provider retry/backoff normalization
+  - long-thread compaction 与 context-usage accounting
+- **能力面**
+  - LLM-first tool selection
+  - builtin family tools、MCP servers、file-based skills
+- **窄扩展**
+  - automation
+  - self-improve
+  - lightweight subagents
+- **可观测性**
+  - runtime diagnostics
+  - run / trace correlation
+  - 可选的 Langfuse tracing
+
+当前部署相关的结论也很直接：
+
+- runtime 主链已经完整到可以进入部署阶段
+- durable session persistence 仍然是当前最主要的 deferred durability slice
+- queue-first execution、planner/swarm orchestration、general memory-platform growth 继续留在当前基线之外
 
 ## 架构护栏
 
@@ -119,9 +160,9 @@ flowchart LR
 ### 关键引用
 
 - [`README_CN.md`](../README_CN.md)
-- [`2026-03-29-private-agent-harness-design.md`](./2026-03-29-private-agent-harness-design.md)
+- [`Agent Runtime Harness Design`](./2026-03-29-private-agent-harness-design.md)
 
-## 第 2 阶段：Private-Agent Harness 成为第一层正式基线
+## 第 2 阶段：Agent Runtime Harness 成为第一层正式基线
 
 ### 时间范围
 
@@ -140,7 +181,7 @@ runtime 被明确收敛到一个第一里程碑：
 
 ### 为什么重要
 
-这一阶段意味着项目从“私有 agent 运行时的想法”变成了“有严格执行顺序的真实 program”：
+这一阶段意味着项目从“agent runtime harness 的想法”变成了“有严格执行顺序的真实 program”：
 
 - 先打通主链
 - 再围绕主链补硬化
@@ -166,7 +207,7 @@ flowchart LR
 
 ### 关键引用
 
-- [`2026-03-29-private-agent-harness-design.md`](./2026-03-29-private-agent-harness-design.md)
+- [`Agent Runtime Harness Design`](./2026-03-29-private-agent-harness-design.md)
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 
 ## 第 3 阶段：会话治理与 Runtime Learning 在不改变主链的前提下加入
@@ -449,6 +490,115 @@ Narrow Adapters"] -.-> F
 - [`archive/plans/2026-04-05-github-trending-mcp-plan.md`](./archive/plans/2026-04-05-github-trending-mcp-plan.md)
 - [`2026-04-09-fast-path-inventory-and-exit-strategy.md`](./archive/branch-evolution/2026-04-09-fast-path-inventory-and-exit-strategy.md)
 
+## 第 8 阶段：默认运行时表面转向执行型 Agent
+
+### 时间范围
+
+2026-04-14 到 2026-04-15。
+
+### 新增了什么
+
+仓库把默认运行时表面进一步收敛成“真正执行 agent”的形态：
+
+- 默认 app 变成 `main_agent`
+- 默认 agent id 变成 `main`
+- prompt 姿态从 demo helper 转向 execution-first default agent
+- lightweight subagents 进入正式运行时路径，具备 policy、selector-aware ceiling、registry-backed agent resolution，以及 cooperative MCP cancellation
+
+### 为什么重要
+
+这一阶段让运行时作为产品表面更容易理解：
+
+- 默认 agent 身份终于和仓库的真实姿态一致
+- 隔离后台工作成为正式 runtime path，而不是只靠 prompt 约定
+- parent/child 执行仍然留在 thin-harness 模型里，没有演进成 planner platform
+
+### 这一阶段的主链
+
+`channel -> binding -> main_agent -> runtime -> LLM -> builtin/MCP/skill or spawn_subagent -> child runtime -> parent summary -> channel`
+
+```mermaid
+flowchart LR
+    A["Channel"] --> B["Binding"]
+    B --> C["main_agent"]
+    C --> D["Runtime"]
+    D --> E["LLM"]
+    E --> F["Builtin / MCP / Skill"]
+    F --> E
+    E --> G["Channel Delivery"]
+
+    H["Execution-First Default Surface"] -.-> C
+    I["Lightweight Subagent Lane"] -.-> E
+    I --> J["Child Agent Runtime"]
+    J --> K["Child Builtin / MCP / Skill"]
+    K --> J
+    J -.-> E
+
+    style H fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+    style I fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+    style J fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+```
+
+### 关键引用
+
+- [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
+- [`LIVE_VERIFICATION_CHECKLIST.md`](./LIVE_VERIFICATION_CHECKLIST.md)
+
+## 第 9 阶段：外部可观测性进入运行时基线
+
+### 时间范围
+
+2026-04-17 到 2026-04-18。
+
+### 新增了什么
+
+runtime 新增了一层很窄但很关键的 external observability slice：
+
+- Langfuse observer bootstrap
+- root trace、generation、tool span 生命周期上报
+- runtime/run/trace diagnostics 暴露 external correlation refs
+- fail-open hardening，确保 tracing 不会影响主执行链
+- cleanup 与 transient-error recovery 收口，既保留 tracing capability，也暴露 degraded health
+
+### 为什么重要
+
+这一阶段补上了“本地诊断”到“服务侧实证”的最后一段链路：
+
+- operator 可以从 runtime diagnostics 直接关联到外部 trace
+- multi-tool 和 parent/child subagent 路径现在都有外部验证证据
+- observability 继续保持为 support slice，没有扩成 analytics platform
+
+### 这一阶段的主链
+
+`channel -> binding -> agent -> runtime -> LLM -> builtin/MCP/skill -> LLM -> channel`，同时在同一次 run 上具备本地诊断与外部 Langfuse trace correlation
+
+```mermaid
+flowchart LR
+    A["Channel"] --> B["Binding"]
+    B --> C["Agent"]
+    C --> D["Runtime"]
+    D --> E["LLM"]
+    E --> F["Builtin / MCP / Skill"]
+    F --> E
+    E --> G["Channel Delivery"]
+
+    H["Run / Trace Diagnostics"] -.-> D
+    I["Langfuse Observer"] -.-> D
+    I -.-> E
+    I -.-> F
+    I --> J["External Trace / Generations / Tool Spans"]
+
+    style H fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+    style I fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+    style J fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+```
+
+### 关键引用
+
+- [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
+- [`2026-04-17-langfuse-observability-design.md`](./2026-04-17-langfuse-observability-design.md)
+- [`LIVE_VERIFICATION_CHECKLIST.md`](./LIVE_VERIFICATION_CHECKLIST.md)
+
 ## 明确未构建的能力
 
 | Capability | 状态 | 为什么暂不进入基线 |
@@ -467,7 +617,7 @@ Narrow Adapters"] -.-> F
 - harness 仍然刻意保持 thin
 - capability choice 继续由模型负责
 - 长线程治理与跨轮治理已经进入基线，但都以 bounded runtime slice 的形式存在
-- channel formatting、automation、self-improve、deterministic recovery 都被视为 narrow extension，而不是系统中心重构的理由
+- channel formatting、automation、self-improve、lightweight subagents、deterministic recovery、Langfuse tracing 都被视为 narrow extension，而不是系统中心重构的理由
 
 换句话说，新工作更容易被接受，如果它能做到三件事之一：
 
@@ -475,11 +625,45 @@ Narrow Adapters"] -.-> F
 2. 让主链周围的 runtime 更稳
 3. 新增一个有价值但不会重塑系统中心的窄扩展边界
 
+## Harness 工程化经验总结 / Lessons
+
+这 9 个阶段可以压缩成一组可复用的 agent runtime harness 工程化经验：
+
+1. **先把一条执行主链打稳，再考虑横向扩张**
+   - 这个仓库一直反复回到同一条路径：`channel -> binding -> agent -> runtime -> LLM -> tool/skill -> channel`。
+   - 这让后续所有架构取舍都有了统一判断标准：新边界必须解释自己怎样增强主链。
+
+2. **只有在真实运行压力出现后，才引入治理层**
+   - conversation lanes、provider resilience、compaction、cross-turn continuity 都是在真实交互故障暴露后进入基线。
+   - 这样得到的是实战型治理，而不是预设过多的抽象层。
+
+3. **宿主保持 thin，capability choice 默认继续交给模型**
+   - harness 负责上下文组装、工具执行、错误归一化和诊断。
+   - 同时它持续避免演进成 host-side intent router 或 message classifier。
+
+4. **当确定性薄边界可以减少实链漂移时，可以接受它**
+   - direct render、deterministic recovery、bounded diagnostics 都属于这种薄支撑层。
+   - 它们之所以能进入基线，是因为它们缩短或稳定了主链，同时没有把系统中心挪走。
+
+5. **把扩展能力做成 bounded slice，而不是平台化入口**
+   - automation、self-improve、lightweight subagents、Langfuse tracing 都是以窄扩展形式进入系统。
+   - 它们都继续挂靠在主 runtime contract 上，而没有长成新的 orchestration center。
+
+6. **把时间线真相和验证证据也视为架构的一部分**
+   - changelog、ADR、live verification、runtime diagnostics 一起构成了系统的可理解性和可运维性。
+   - 对 harness 来说，可观测性和边界决策文档本身就是架构组成部分。
+
+7. **把诱人的平台化方向明确留在基线之外，直到主链真的要求它们进入**
+   - durable queue、planner/swarm orchestration、general memory-platform growth、worker-first execution 目前都没有进入基线。
+   - 这种克制正是仓库能在不断增强的同时仍然保持可理解的原因之一。
+
+如果别人想从这个仓库学习，最值得带走的一条经验是：先把 runtime path 做成真的，再只补那一层能解决下一个真实压力的最小边界。
+
 ## 继续阅读
 
 - [`../README_CN.md`](../README_CN.md)
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 - [`architecture/adr/README.md`](./architecture/adr/README.md)
-- [`2026-03-29-private-agent-harness-design.md`](./2026-03-29-private-agent-harness-design.md)
-- [`2026-03-31-progressive-disclosure-llm-first-capability-design.md`](./2026-03-31-progressive-disclosure-llm-first-capability-design.md)
+- [`CONFIG_SURFACES.md`](./CONFIG_SURFACES.md)
+- [`LIVE_VERIFICATION_CHECKLIST.md`](./LIVE_VERIFICATION_CHECKLIST.md)
 - [`archive/README.md`](./archive/README.md)

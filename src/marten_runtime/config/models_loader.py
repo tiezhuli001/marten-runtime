@@ -26,11 +26,11 @@ def load_models_config(path: str) -> ModelsConfig:
     resolved = resolve_config_path(path)
     if resolved is None:
         data = {
-            "default_profile": "minimax_coding",
+            "default_profile": "default",
             "profiles": {
                 "default": {
                     "provider": "openai",
-                    "model": "gpt-4.1",
+                    "model": "gpt-5.4",
                 },
                 "minimax_coding": {
                     "provider": "openai",

@@ -45,7 +45,7 @@ The work stayed behavior-preserving:
 
 ## Guardrails That Still Matter
 
-- Optimize for the thin private-agent runtime path, not workflow-platform growth.
+- Optimize for the thin agent runtime harness path, not workflow-platform growth.
 - Prefer deleting orphan helpers, false-alive tests, and unjustified wrappers before touching active seams.
 - Treat support/helper splits as valid when they reduce real caller complexity or carry clear ownership.
 - Keep docs/archive cleanup behind source-code and active-test cleanup unless docs are actively blocking execution.
