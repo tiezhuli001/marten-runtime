@@ -502,7 +502,7 @@ The current rule-based governance is enough for short and medium sessions, but i
 - coding-style execution threads
 - multi-step debugging
 - extended operator conversations
-- private-agent sessions that need continuity over many turns
+- agent runtime sessions that need continuity over many turns
 
 Adding a **thin compaction layer now** is the smallest next architecture move that:
 

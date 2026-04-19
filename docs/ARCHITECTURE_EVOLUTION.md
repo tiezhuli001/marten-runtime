@@ -12,6 +12,17 @@ Instead, this guide answers a simpler question:
 
 **How did the runtime spine become the current architecture, and why do the current boundaries look the way they do?**
 
+## Why This Document Matters For Harness Engineering
+
+This guide is meant to do more than describe one repository. It records how an agent runtime harness was engineered step by step:
+
+- which boundary was added at each stage
+- which pressure or failure forced that change
+- how the repo kept the runtime spine as the center while still improving reliability, continuity, and observability
+- which tempting platform directions were deliberately kept out of the baseline
+
+If you are studying how to engineer an agent harness without letting it sprawl into a workflow platform, read each stage as both project history and a reusable engineering pattern.
+
 ## Evolution At A Glance
 
 From the beginning, the project optimized for one narrow execution spine:
@@ -59,6 +70,36 @@ flowchart LR
 | 5 | Channel boundary | generic Feishu rendering instead of renderer proliferation |
 | 6 | Long conversations | compaction, usage accuracy, runtime context status |
 | 7 | Continuity and narrow extensions | tool summaries, MCP sidecars, direct render, bounded extensions |
+| 8 | Execution surfaces | `main_agent`, lightweight subagents, execution-first prompt posture |
+| 9 | Observability hardening | Langfuse tracing, run/trace correlation, live proof |
+
+## Current Snapshot
+
+Today the architecture is easiest to read as five active layers plus four supporting slices:
+
+- **Execution spine**
+  - `channel -> binding -> agent -> runtime context -> LLM -> builtin/MCP/skill -> LLM -> channel`
+- **Governance**
+  - same-conversation FIFO lanes
+  - provider retry/backoff normalization
+  - long-thread compaction and context-usage accounting
+- **Capability surface**
+  - LLM-first tool selection
+  - builtin family tools, MCP servers, file-based skills
+- **Narrow extensions**
+  - automation
+  - self-improve
+  - lightweight subagents
+- **Observability**
+  - runtime diagnostics
+  - run / trace correlation
+  - optional Langfuse tracing
+
+The deployment-facing conclusion is now straightforward:
+
+- the runtime path is complete enough for deployment work
+- durable session persistence remains the main still-deferred durability slice
+- queue-first execution, planner/swarm orchestration, and general memory-platform growth remain outside the current baseline
 
 ## Architectural Guardrails
 
@@ -119,9 +160,9 @@ flowchart LR
 ### Key references
 
 - [`README.md`](../README.md)
-- [`2026-03-29-private-agent-harness-design.md`](./2026-03-29-private-agent-harness-design.md)
+- [`Agent Runtime Harness Design`](./2026-03-29-private-agent-harness-design.md)
 
-## Stage 2 · Private-Agent Harness Became The First Real Baseline
+## Stage 2 · Agent Runtime Harness Became The First Real Baseline
 
 ### Period
 
@@ -140,7 +181,7 @@ At the same time, several tempting expansions were deliberately deferred, includ
 
 ### Why it mattered
 
-This was the moment the project stopped being just a private-agent idea and became a concrete runtime program with a strict execution order:
+This was the moment the project stopped being just an agent runtime idea and became a concrete runtime program with a strict execution order:
 
 - first make the spine executable
 - then add hardening around it
@@ -166,7 +207,7 @@ flowchart LR
 
 ### Key references
 
-- [`2026-03-29-private-agent-harness-design.md`](./2026-03-29-private-agent-harness-design.md)
+- [`Agent Runtime Harness Design`](./2026-03-29-private-agent-harness-design.md)
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 
 ## Stage 3 · Conversation Governance And Runtime Learning Were Added Without Changing The Spine
@@ -449,6 +490,115 @@ Narrow Adapters"] -.-> F
 - [`archive/plans/2026-04-05-github-trending-mcp-plan.md`](./archive/plans/2026-04-05-github-trending-mcp-plan.md)
 - [`2026-04-09-fast-path-inventory-and-exit-strategy.md`](./archive/branch-evolution/2026-04-09-fast-path-inventory-and-exit-strategy.md)
 
+## Stage 8 · The Default Runtime Surface Shifted Toward Execution-First Agents
+
+### Period
+
+April 14 to April 15, 2026.
+
+### What changed
+
+The repository tightened the runtime surface around the idea of a real execution agent:
+
+- the default app became `main_agent`
+- the default agent id became `main`
+- the prompt posture moved away from a demo helper and toward an execution-first default agent
+- lightweight subagents became a real runtime lane with policy, selector-aware ceilings, registry-backed agent resolution, and cooperative MCP cancellation
+
+### Why it mattered
+
+This stage made the runtime easier to reason about as a product surface:
+
+- the default agent identity now matches the repository’s actual posture
+- isolated background work became a supported runtime path instead of a prompt-only convention
+- parent/child execution stayed inside the thin-harness model instead of turning into a planner platform
+
+### Main path at this stage
+
+`channel -> binding -> main_agent -> runtime -> LLM -> builtin/MCP/skill or spawn_subagent -> child runtime -> parent summary -> channel`
+
+```mermaid
+flowchart LR
+    A["Channel"] --> B["Binding"]
+    B --> C["main_agent"]
+    C --> D["Runtime"]
+    D --> E["LLM"]
+    E --> F["Builtin / MCP / Skill"]
+    F --> E
+    E --> G["Channel Delivery"]
+
+    H["Execution-First Default Surface"] -.-> C
+    I["Lightweight Subagent Lane"] -.-> E
+    I --> J["Child Agent Runtime"]
+    J --> K["Child Builtin / MCP / Skill"]
+    K --> J
+    J -.-> E
+
+    style H fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+    style I fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+    style J fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+```
+
+### Key references
+
+- [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
+- [`LIVE_VERIFICATION_CHECKLIST.md`](./LIVE_VERIFICATION_CHECKLIST.md)
+
+## Stage 9 · External Observability Became Part Of The Runtime Baseline
+
+### Period
+
+April 17 to April 18, 2026.
+
+### What changed
+
+The runtime gained one narrow external observability slice:
+
+- Langfuse observer bootstrap
+- root trace, generation, and tool-span lifecycle reporting
+- runtime/run/trace diagnostics that expose external correlation refs
+- fail-open hardening so tracing cannot break the main runtime path
+- cleanup and transient-error recovery that preserve tracing capability while exposing degraded health
+
+### Why it mattered
+
+This stage closed the gap between local diagnostics and service-side proof:
+
+- operators can correlate one real turn from runtime diagnostics to an external trace
+- multi-tool and parent/child subagent paths now have external verification evidence
+- observability remains a support slice instead of turning the runtime into an analytics platform
+
+### Main path at this stage
+
+`channel -> binding -> agent -> runtime -> LLM -> builtin/MCP/skill -> LLM -> channel`, with local diagnostics plus external Langfuse trace correlation on the same run
+
+```mermaid
+flowchart LR
+    A["Channel"] --> B["Binding"]
+    B --> C["Agent"]
+    C --> D["Runtime"]
+    D --> E["LLM"]
+    E --> F["Builtin / MCP / Skill"]
+    F --> E
+    E --> G["Channel Delivery"]
+
+    H["Run / Trace Diagnostics"] -.-> D
+    I["Langfuse Observer"] -.-> D
+    I -.-> E
+    I -.-> F
+    I --> J["External Trace / Generations / Tool Spans"]
+
+    style H fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+    style I fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+    style J fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+```
+
+### Key references
+
+- [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
+- [`2026-04-17-langfuse-observability-design.md`](./2026-04-17-langfuse-observability-design.md)
+- [`LIVE_VERIFICATION_CHECKLIST.md`](./LIVE_VERIFICATION_CHECKLIST.md)
+
 ## Deliberately Excluded Capabilities
 
 | Capability | Status | Why it stays out of the baseline |
@@ -467,7 +617,7 @@ Today, `marten-runtime` can be summarized like this:
 - the harness remains intentionally thin
 - the model remains responsible for capability choice
 - long-thread and cross-turn governance now exist, but as bounded runtime slices
-- channel formatting, automation, self-improve, and deterministic recovery are all treated as narrow extensions, not as excuses to recenter the system around orchestration
+- channel formatting, automation, self-improve, lightweight subagents, deterministic recovery, and Langfuse tracing are all treated as narrow extensions, not as excuses to recenter the system around orchestration
 
 In practice, that means new work is favored when it does one of three things:
 
@@ -475,11 +625,45 @@ In practice, that means new work is favored when it does one of three things:
 2. hardens the runtime around the main spine
 3. adds a narrow extension without moving the architectural center away from the spine
 
+## Harness Engineering Lessons
+
+These nine stages compress into a small set of reusable lessons for engineering an agent runtime harness:
+
+1. **Stabilize one execution spine before expanding sideways**
+   - The repo kept returning to one path: `channel -> binding -> agent -> runtime -> LLM -> tool/skill -> channel`.
+   - That decision made later trade-offs easier because every new slice had to justify how it strengthened the spine.
+
+2. **Add governance only when real runtime pressure proves the need**
+   - conversation lanes, provider resilience, compaction, and cross-turn continuity all entered because real interactive failures exposed them.
+   - This kept governance practical instead of speculative.
+
+3. **Keep the host thin and let the model keep capability choice by default**
+   - The harness assembled context, executed tools, and normalized errors.
+   - It still avoided turning into a host-side intent router or message classifier.
+
+4. **Accept narrow deterministic seams when they reduce drift on the live path**
+   - direct render, deterministic recovery, and bounded diagnostics all entered as thin support seams.
+   - They were accepted because they shortened or stabilized the runtime path without moving the system center.
+
+5. **Treat extensions as bounded slices, not as permission to build a platform**
+   - automation, self-improve, lightweight subagents, and Langfuse tracing were all added as narrow extensions.
+   - Each one stayed attached to the main runtime contracts instead of becoming a new orchestration center.
+
+6. **Make timeline truth and verification part of the architecture**
+   - changelog entries, ADRs, live verification, and runtime diagnostics all became part of how the system is operated and understood.
+   - For a harness, observability and documented boundary decisions are part of the architecture itself.
+
+7. **Keep tempting platform directions explicit and outside the baseline until the spine demands them**
+   - durable queues, planner/swarm orchestration, general memory-platform growth, and worker-first execution remained outside the baseline.
+   - That restraint is part of why the harness stayed understandable while still becoming more production-like.
+
+If another team wants to learn from this repository, the deepest lesson is simple: make the runtime path real first, then add only the smallest boundary that solves the next real pressure.
+
 ## Where To Read Next
 
 - [`../README.md`](../README.md)
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 - [`architecture/adr/README.md`](./architecture/adr/README.md)
-- [`2026-03-29-private-agent-harness-design.md`](./2026-03-29-private-agent-harness-design.md)
-- [`2026-03-31-progressive-disclosure-llm-first-capability-design.md`](./2026-03-31-progressive-disclosure-llm-first-capability-design.md)
+- [`CONFIG_SURFACES.md`](./CONFIG_SURFACES.md)
+- [`LIVE_VERIFICATION_CHECKLIST.md`](./LIVE_VERIFICATION_CHECKLIST.md)
 - [`archive/README.md`](./archive/README.md)

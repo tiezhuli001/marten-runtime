@@ -1,4 +1,4 @@
-# Private Agent Harness First-Wave Design
+# Agent Runtime Harness First-Wave Design
 
 ## Decision
 
@@ -10,7 +10,7 @@
 - 支持多 agent
 - 支持用户自定义 MCPs
 - 支持用户自定义 skills
-- 最终承载“我自己的私有 agent 和 skills”
+- 最终承载“我自己的 agent 和 skills”
 
 下面 5 个 harness 需要进入当前 program，但要分成两个里程碑，而不是一起并行堆工程。
 
@@ -252,7 +252,7 @@ SQLite-first 即可，不需要现在做多节点。
 
 这样可以支持:
 
-- 某个 Feishu 私聊固定绑定某个私有 agent
+- 某个 Feishu 私聊固定绑定某个 agent
 - 某个群只绑定某个 agent
 - HTTP channel 用默认 agent
 

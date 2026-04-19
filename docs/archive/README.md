@@ -29,8 +29,7 @@ This directory holds completed plans and one-off audits that remain useful for t
 ## Archive Groups
 
 - `branch-evolution/`
-  - 2026-04-09 next-branch evolution design / blueprint evidence that remained after the redundant execution-only docs were deleted
-  - 2026-04-09 fast-path inventory / exit strategy, preserved as branch-phase decision evidence rather than an active architecture entry doc
+  - 2026-04-09 fast-path inventory / exit strategy, preserved as the only remaining branch-phase decision note from that slice
 
 ## Rules
 
@@ -41,5 +40,5 @@ This directory holds completed plans and one-off audits that remain useful for t
 
 - some historical design docs were removed instead of archived once their durable truth was absorbed into ADRs and `docs/ARCHITECTURE_CHANGELOG.md`
 - the 2026-04-01 runtime-latency / 2026-04-02 Feishu generic-renderer / 2026-04-07 tool-outcome-summary execution plans were removed after their durable truth was absorbed into code, tests, `docs/README.md`, and `docs/ARCHITECTURE_CHANGELOG.md`
-- the 2026-04-09 stage-1 / pre-commit-closure process docs were removed after their durable truth and surviving branch-evolution evidence were absorbed into `docs/ARCHITECTURE_CHANGELOG.md` and `docs/archive/branch-evolution/`
+- the 2026-04-09 branch-evolution design / blueprint docs were removed after their durable truth was absorbed into `docs/ARCHITECTURE_CHANGELOG.md`, `docs/ARCHITECTURE_EVOLUTION*.md`, and the retained fast-path inventory note
 - the 2026-03-31 progressive-disclosure capability-refinement plan was removed after its remaining audit references were compressed into durable-truth pointers to ADR/changelog/evolution docs

@@ -2,17 +2,17 @@
 
 <div align="center">
 
-Simplified openclaw-style private agent runtime for `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel`.
+Simplified openclaw-style agent runtime harness for `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel`.
 
-[中文文档](./README_CN.md) · [Docs Index](./docs/README.md) · [Architecture Evolution](./docs/ARCHITECTURE_EVOLUTION.md) · [Architecture Changelog](./docs/ARCHITECTURE_CHANGELOG.md) · [ADR Index](./docs/architecture/adr/README.md) · [Config Surfaces](./docs/CONFIG_SURFACES.md)
+[中文文档](./README_CN.md) · [Docs Index](./docs/README.md) · [Deployment Guide](./docs/DEPLOYMENT.md) · [Architecture Evolution](./docs/ARCHITECTURE_EVOLUTION.md) · [Architecture Changelog](./docs/ARCHITECTURE_CHANGELOG.md) · [ADR Index](./docs/architecture/adr/README.md) · [Config Surfaces](./docs/CONFIG_SURFACES.md)
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
-![Runtime](https://img.shields.io/badge/runtime-private--agent-black?style=flat-square)
+![Runtime](https://img.shields.io/badge/runtime-agent--runtime--harness-black?style=flat-square)
 
 </div>
 
-`marten-runtime` is a lightweight private-agent runtime built around one narrow goal: host your own agents, MCP servers, and skills without turning the harness into a workflow platform. The project keeps the control surface thin and pushes most intelligence into `LLM + agent + MCP + skill`.
+`marten-runtime` is a lightweight agent runtime harness built around one narrow goal: host your own agents, MCP servers, and skills without turning the harness into a workflow platform. The project keeps the control surface thin and pushes most intelligence into `LLM + agent + MCP + skill`.
 
 ## Overview
 
@@ -25,7 +25,7 @@ Simplified openclaw-style private agent runtime for `channel -> binding -> agent
 
 ## Why This Exists
 
-Many agent projects either stop at prompt demos or expand too early into queues, planners, and heavy orchestration. `marten-runtime` is intentionally narrower: it focuses on the executable private-agent spine first and defers heavier durability and workflow machinery until the main chain is already stable.
+Many agent projects either stop at prompt demos or expand too early into queues, planners, and heavy orchestration. `marten-runtime` is intentionally narrower: it focuses on the executable agent runtime spine first and defers heavier durability and workflow machinery until the main chain is already stable.
 
 Current center of gravity:
 
@@ -160,6 +160,10 @@ Useful variants:
 - `./init.sh --skip-install`: reuse the existing virtualenv and skip dependency installation, but still run readiness checks and local smoke
 - `./init.sh --smoke-only`: assume the workspace is already initialized and run only readiness checks plus the temporary local smoke
 
+If you want the shortest deployment-oriented reading path, start with [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md).
+
+If you want the shortest container entry, use `docker compose up -d --build` from the repository root.
+
 ### Requirements
 
 - Python `3.11`, `3.12`, or `3.13`
@@ -195,7 +199,8 @@ Configuration boundaries:
 
 Minimal practical setup:
 
-- set one provider key in `.env`, for example `MINIMAX_API_KEY` or `OPENAI_API_KEY`
+- set the provider key required by the shared `default` profile in `.env`; the committed shortest path is `OPENAI_API_KEY`
+- redefine `profiles.default` in local `config/models.toml` when you want another provider or model
 - set `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY` in `.env` when you want external tracing in Langfuse
 - optionally copy `config/*.example.toml` to `config/*.toml` only for local overrides
 - add MCP servers to `mcps.json` only when you need external tools

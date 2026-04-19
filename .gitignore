@@ -52,6 +52,7 @@ data/
 
 # Local verification logs
 .logs/
+.init-smoke.log
 
 # Local continuity only
 STATUS.md

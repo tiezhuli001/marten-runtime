@@ -52,8 +52,9 @@ class ModelSmokeTests(unittest.TestCase):
 
             config = load_models_config(str(repo_root / "config/models.toml"))
 
-        self.assertEqual(config.default_profile, "minimax_coding")
+        self.assertEqual(config.default_profile, "default")
         self.assertIn("minimax_coding", config.profiles)
+        self.assertEqual(config.profiles["default"].model, "gpt-5.4")
         self.assertEqual(
             config.profiles["minimax_coding"].base_url,
             "https://api.minimaxi.com/v1",
@@ -63,10 +64,10 @@ class ModelSmokeTests(unittest.TestCase):
         config = load_models_config(str(MODELS_TOML))
         profile_name, profile = resolve_model_profile(config)
 
-        self.assertEqual(profile_name, "minimax_coding")
+        self.assertEqual(profile_name, "default")
         self.assertEqual(profile.provider, "openai")
-        self.assertEqual(profile.model, "MiniMax-M2.5")
-        self.assertEqual(profile.base_url, "https://api.minimaxi.com/v1")
+        self.assertEqual(profile.model, "gpt-5.4")
+        self.assertIsNone(profile.base_url)
 
     def test_models_loader_accepts_optional_context_window_metadata(self) -> None:
         profile = ModelProfile(
@@ -89,7 +90,7 @@ class ModelSmokeTests(unittest.TestCase):
         config = load_models_config(str(MODELS_TOML))
         profile_name, profile = resolve_model_profile(config)
 
-        with self.assertRaisesRegex(ValueError, "missing_llm_api_key:MINIMAX_API_KEY"):
+        with self.assertRaisesRegex(ValueError, "missing_llm_api_key:OPENAI_API_KEY"):
             build_llm_client(profile_name=profile_name, profile=profile, env={})
 
     def test_build_llm_client_uses_custom_env_and_base_url_for_openai_compatible_profile(

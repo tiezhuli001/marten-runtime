@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 def build_test_app():
     app = create_app(
         repo_root=REPO_ROOT,
-        env={"MINIMAX_API_KEY": "test-key"},
+        env={"OPENAI_API_KEY": "test-key", "MINIMAX_API_KEY": "test-key"},
         load_env_file=False,
         use_compat_json=False,
     )

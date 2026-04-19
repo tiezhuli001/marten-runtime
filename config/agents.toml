@@ -4,7 +4,7 @@ role = "general_assistant"
 app_id = "main_agent"
 allowed_tools = ["automation", "mcp", "runtime", "self_improve", "skill", "time", "spawn_subagent", "cancel_subagent"]
 prompt_mode = "full"
-model_profile = "minimax_coding"
+model_profile = "default"
 
 [agents.coding]
 enabled = true

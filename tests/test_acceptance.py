@@ -351,7 +351,7 @@ class AcceptanceTests(unittest.TestCase):
 
     def test_repo_default_channel_template_keeps_feishu_disabled(self) -> None:
         runtime = build_http_runtime(
-            env={"MINIMAX_API_KEY": "test-key"},
+            env={"OPENAI_API_KEY": "test-key", "MINIMAX_API_KEY": "test-key"},
             load_env_file=False,
             use_compat_json=False,
         )
@@ -360,7 +360,7 @@ class AcceptanceTests(unittest.TestCase):
         self.assertFalse(runtime.channels_config.feishu.auto_start)
 
     def test_http_runtime_bootstrap_fails_closed_without_provider_key(self) -> None:
-        with self.assertRaisesRegex(ValueError, "missing_llm_api_key:MINIMAX_API_KEY"):
+        with self.assertRaisesRegex(ValueError, "missing_llm_api_key:OPENAI_API_KEY"):
             build_http_runtime(env={}, load_env_file=False, use_compat_json=False)
 
     def test_feishu_websocket_service_starts_with_app_when_channel_enabled(self) -> None:
