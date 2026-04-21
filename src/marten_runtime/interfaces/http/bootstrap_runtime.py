@@ -27,11 +27,16 @@ from marten_runtime.config.models_loader import (
     load_models_config,
     resolve_model_profile,
 )
+from marten_runtime.config.providers_loader import (
+    ProvidersConfig,
+    load_providers_config,
+)
 from marten_runtime.config.platform_loader import PlatformConfig, load_platform_config
 from marten_runtime.mcp.client import MCPClient
 from marten_runtime.mcp.discovery import discover_mcp_tools
 from marten_runtime.mcp.loader import load_mcp_servers
 from marten_runtime.mcp.models import MCPServerSpec
+from marten_runtime.memory.service import ThinMemoryService
 from marten_runtime.observability.langfuse import (
     LangfuseObserver,
     build_langfuse_observer,
@@ -76,10 +81,12 @@ class CachedLLMClientFactory:
         self,
         *,
         models_config: ModelsConfig,
+        providers_config: ProvidersConfig,
         env: Mapping[str, str],
         primary_profile_name: str | None = None,
     ) -> None:
         self.models_config = models_config
+        self.providers_config = providers_config
         self.env = dict(env)
         self.primary_profile_name = primary_profile_name
         self._cache: dict[str, object] = {}
@@ -107,7 +114,10 @@ class CachedLLMClientFactory:
         if self._fallback_client is not None:
             return self._fallback_client
         client = build_llm_client(
-            profile_name=resolved_name, profile=profile, env=self.env
+            profile_name=resolved_name,
+            profile=profile,
+            providers_config=self.providers_config,
+            env=self.env,
         )
         self._cache[resolved_name] = client
         return client
@@ -121,12 +131,14 @@ class HTTPRuntimeState:
     app_manifest: AppManifest
     platform_config: PlatformConfig
     models_config: ModelsConfig
+    providers_config: ProvidersConfig
     channels_config: ChannelsConfig
     mcp_servers: list[MCPServerSpec]
     config_snapshot: ConfigSnapshot
     automation_store: AutomationStore
     self_improve_store: SQLiteSelfImproveStore
     self_improve_service: SelfImproveService
+    memory_service: ThinMemoryService
     session_store: SessionStore
     run_history: InMemoryRunHistory
     tool_registry: ToolRegistry
@@ -160,7 +172,6 @@ def build_http_runtime(
     repo_root: str | Path | None = None,
     env: Mapping[str, str] | None = None,
     load_env_file: bool = True,
-    use_compat_json: bool = True,
 ) -> HTTPRuntimeState:
     resolved_repo_root = (
         Path(repo_root) if repo_root is not None else default_repo_root()
@@ -170,10 +181,9 @@ def build_http_runtime(
         env=env,
         load_env_file=load_env_file,
     )
-    platform_config, models_config, channels_config, mcp_servers = _load_runtime_config(
+    platform_config, models_config, providers_config, channels_config, mcp_servers = _load_runtime_config(
         resolved_repo_root,
         env=resolved_env,
-        use_compat_json=use_compat_json,
     )
     capability_declarations = get_capability_declarations()
     langfuse_observer = build_langfuse_observer(env=resolved_env)
@@ -204,20 +214,26 @@ def build_http_runtime(
     app_manifest = app_runtimes[default_agent.app_id].manifest
     system_prompt = app_runtimes[default_agent.app_id].system_prompt
     skill_service = SkillService([str(resolved_repo_root / "skills")])
-    automation_store, self_improve_store = build_stateful_stores(resolved_repo_root)
+    automation_store, self_improve_store, session_store = build_stateful_stores(
+        resolved_repo_root
+    )
+    memory_service = ThinMemoryService(resolved_repo_root / "data" / "memory")
     default_profile_name, default_profile = resolve_model_profile(
         models_config, default_agent.model_profile
     )
     llm_client_factory = CachedLLMClientFactory(
         models_config=models_config,
+        providers_config=providers_config,
         env=resolved_env,
         primary_profile_name=default_profile_name,
     )
     default_llm = build_llm_client(
-        profile_name=default_profile_name, profile=default_profile, env=resolved_env
+        profile_name=default_profile_name,
+        profile=default_profile,
+        providers_config=providers_config,
+        env=resolved_env,
     )
     llm_client_factory.cache_client(default_profile_name, default_llm)
-    session_store = SessionStore()
     self_improve_recorder = SelfImproveRecorder(self_improve_store)
     runtime_loop = RuntimeLoop(
         default_llm,
@@ -225,6 +241,10 @@ def build_http_runtime(
         InMemoryRunHistory(),
         langfuse_observer=langfuse_observer,
         self_improve_recorder=self_improve_recorder,
+        profile_runtime_resolver=lambda profile_name: (
+            llm_client_factory.get(profile_name, default_client=default_llm),
+            resolve_model_profile(models_config, profile_name)[1],
+        ),
     )
     feishu_delivery = build_feishu_delivery_client(
         env=resolved_env,
@@ -271,12 +291,14 @@ def build_http_runtime(
         app_manifest=app_manifest,
         platform_config=platform_config,
         models_config=models_config,
+        providers_config=providers_config,
         channels_config=channels_config,
         mcp_servers=mcp_servers,
         config_snapshot=ConfigSnapshot(),
         automation_store=automation_store,
         self_improve_store=self_improve_store,
         self_improve_service=self_improve_service,
+        memory_service=memory_service,
         session_store=session_store,
         run_history=runtime_loop.history,
         tool_registry=tool_registry,
@@ -336,13 +358,12 @@ def _load_runtime_config(
     repo_root: Path,
     *,
     env: dict[str, str],
-    use_compat_json: bool,
-) -> tuple[PlatformConfig, ModelsConfig, ChannelsConfig, list[MCPServerSpec]]:
-    compat_json_path = str(repo_root / "mcps.json") if use_compat_json else None
+) -> tuple[PlatformConfig, ModelsConfig, ProvidersConfig, ChannelsConfig, list[MCPServerSpec]]:
     platform_config = load_platform_config(
         str(repo_root / "config/platform.toml"), env=env
     )
     models_config = load_models_config(str(repo_root / "config/models.toml"))
+    providers_config = load_providers_config(str(repo_root / "config/providers.toml"))
     channels_config = load_channels_config(str(repo_root / "config/channels.toml"))
     if not has_feishu_credentials(env):
         channels_config = channels_config.model_copy(
@@ -352,8 +373,8 @@ def _load_runtime_config(
                 )
             }
         )
-    mcp_servers = load_mcp_servers(str(repo_root / "config/mcp.toml"), compat_json_path)
-    return platform_config, models_config, channels_config, mcp_servers
+    mcp_servers = load_mcp_servers(str(repo_root / "mcps.json"))
+    return platform_config, models_config, providers_config, channels_config, mcp_servers
 
 
 def _build_agent_runtime(

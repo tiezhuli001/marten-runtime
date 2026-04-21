@@ -291,64 +291,28 @@ def render_runtime_context_status_text(result: dict[str, Any]) -> str:
     if result.get("action") != "context_status":
         return ""
     next_request = dict(result.get("next_request_estimate") or {})
-    current_run = dict(result.get("current_run") or {})
-    last_completed_run = dict(result.get("last_completed_run") or {})
-    last_actual = result.get("last_actual_usage")
+    estimated_usage = int(next_request.get("input_tokens_estimate") or result.get("estimated_usage") or 0)
+    effective_window = int(
+        next_request.get("effective_window_tokens") or result.get("effective_window") or 0
+    )
+    raw_usage_percent = result.get("usage_percent")
+    usage_percent = (
+        int(raw_usage_percent)
+        if raw_usage_percent is not None
+        else min(100, round((estimated_usage / max(1, effective_window)) * 100))
+    )
+    degraded = bool(next_request.get("degraded", False))
+    estimate_label = (
+        f"{estimated_usage} tokens（约 {usage_percent}% / {effective_window}，rough fallback）"
+        if degraded
+        else f"{estimated_usage} tokens（约 {usage_percent}% / {effective_window}）"
+    )
     lines = [
         "当前上下文使用详情",
-        (
-            f"- 下一次请求预计输入：{int(next_request.get('input_tokens_estimate') or 0)} tokens"
-            f"（{str(next_request.get('estimator_kind') or result.get('estimate_source') or 'rough')}）"
-        ),
+        f"- 当前会话下一次请求预计带入 {estimate_label}。",
+        "- 这个数字按当前会话历史重放估算；切换会话后会按目标会话重新计算。",
+        f"- 压缩状态：{_render_compaction_status(str(result.get('compaction_status') or 'none'))}。",
     ]
-    initial_tokens = int(current_run.get("initial_input_tokens_estimate") or 0)
-    actual_peak_total = int(current_run.get("actual_peak_total_tokens") or 0)
-    actual_peak_input = int(current_run.get("actual_peak_input_tokens") or 0)
-    actual_peak_output = int(current_run.get("actual_peak_output_tokens") or 0)
-    actual_peak_stage = str(current_run.get("actual_peak_stage") or "").strip()
-    cumulative_total = int(current_run.get("actual_cumulative_total_tokens") or 0)
-    cumulative_input = int(current_run.get("actual_cumulative_input_tokens") or 0)
-    cumulative_output = int(current_run.get("actual_cumulative_output_tokens") or 0)
-    if actual_peak_total > 0:
-        lines.append(
-            f"- 本轮累计模型调用：{cumulative_total} tokens"
-            f"（输入 {cumulative_input} + 输出 {cumulative_output}）"
-        )
-        peak_line = (
-            f"- 本轮首发请求：{initial_tokens} tokens；本轮 actual-peak：{actual_peak_total} tokens"
-            f"（输入 {actual_peak_input} + 输出 {actual_peak_output}）"
-        )
-        if actual_peak_stage == "llm_second":
-            peak_line += "（峰值主要来自工具结果注入后的 follow-up 模型调用）"
-    else:
-        peak_tokens = int(current_run.get("peak_input_tokens_estimate") or 0)
-        lines.append("- 本轮 actual-peak：无（本轮未发生模型调用）")
-        peak_line = f"- 本轮首发请求：{initial_tokens} tokens；本轮峰值输入上下文：{peak_tokens} tokens"
-    lines.append(peak_line)
-    previous_peak_total = int(last_completed_run.get("actual_peak_total_tokens") or 0)
-    if previous_peak_total > 0:
-        previous_peak_input = int(last_completed_run.get("actual_peak_input_tokens") or 0)
-        previous_peak_output = int(last_completed_run.get("actual_peak_output_tokens") or 0)
-        previous_peak_stage = str(last_completed_run.get("actual_peak_stage") or "").strip()
-        previous_line = (
-            f"- 上一轮 actual-peak：{previous_peak_total} tokens"
-            f"（输入 {previous_peak_input} + 输出 {previous_peak_output}）"
-        )
-        if previous_peak_stage == "llm_second":
-            previous_line += "（峰值主要来自工具结果注入后的 follow-up 模型调用）"
-        lines.append(previous_line)
-    if isinstance(last_actual, dict):
-        lines.append(
-            "- 上一轮模型调用："
-            f"模型输入：{int(last_actual.get('input_tokens') or 0)}｜"
-            f"模型输出：{int(last_actual.get('output_tokens') or 0)}｜"
-            f"总计：{int(last_actual.get('total_tokens') or 0)}"
-        )
-    lines.append(
-        f"- 有效窗口：{int(result.get('effective_window') or 0)} tokens"
-        f"（原始窗口 {int(result.get('context_window') or 0)}）"
-    )
-    lines.append(f"- 压缩状态：{_render_compaction_status(str(result.get('compaction_status') or 'none'))}")
     return "\n".join(lines)
 
 

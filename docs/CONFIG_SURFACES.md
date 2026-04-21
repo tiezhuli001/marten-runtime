@@ -9,15 +9,16 @@ This page answers one question: which value belongs in which file.
 - `config/*.toml` is optional and should exist only for local overrides.
 - `apps/<app_id>/app.toml` carries app manifest and app-local bindings.
 - `apps/<app_id>/*.md` carries bootstrap assets for the model.
-- `mcps.json` carries live MCP connection definitions only.
+- `mcps.json` carries the live MCP server definitions and any optional tool hints.
 
 ## Where To Configure What
 
 | Need | File | Key |
 | --- | --- | --- |
-| OpenAI or MiniMax API key | `.env` | `OPENAI_API_KEY`, `MINIMAX_API_KEY` |
-| Local OpenAI-compatible base URL override | `.env` | `OPENAI_API_BASE`, `MINIMAX_API_BASE` |
-| Default model/profile selection | `config/models.example.toml` or local `config/models.toml` | `default_profile`, `[profiles.*]` |
+| Provider secrets | `.env` | `OPENAI_API_KEY`, `MINIMAX_API_KEY`, `KIMI_API_KEY` |
+| Local OpenAI-compatible base URL override | `.env` | `OPENAI_API_BASE`, `MINIMAX_API_BASE`, `KIMI_API_BASE` |
+| Provider connection metadata | `config/providers.example.toml` or local `config/providers.toml` | `[providers.*]`, `adapter`, `base_url`, `api_key_env`, capability flags |
+| Default model/profile selection | `config/models.example.toml` or local `config/models.toml` | `default_profile`, `[profiles.*]`, `provider_ref`, `fallback_profiles` |
 | Runtime bind host/port defaults | `config/platform.example.toml` or local `config/platform.toml` | `[server].host`, `[server].port` |
 | Optional public HTTP base URL | `config/platform.example.toml` or local `config/platform.toml` | `[server].public_base_url` |
 | Local host/port override | `.env` | `SERVER_HOST`, `SERVER_PORT` |
@@ -29,7 +30,7 @@ This page answers one question: which value belongs in which file.
 | Feishu credentials | `.env` | `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, `FEISHU_BASE_URL` |
 | Binding rules | `config/bindings.toml` | `[[bindings]]` |
 | MCP stdio/http/docker connection | `mcps.json` | `servers.<id>.transport`, `command`, `args`, `env`, `cwd`, `url`, `headers` |
-| MCP server defaults | `config/mcp.example.toml` or local `config/mcp.toml` | `[[servers]]`, `timeout_ms`, `[[servers.tools]]` |
+| MCP optional tool hints | `mcps.json` | `servers.<id>.tools[]` |
 | App binding / manifest | `apps/<app_id>/app.toml` | app-local fields |
 | Model bootstrap instructions | `apps/<app_id>/*.md` | `AGENTS.md`, `TOOLS.md`, `SOUL.md`, `BOOTSTRAP.md` |
 
@@ -97,7 +98,7 @@ FEISHU_BASE_URL=https://open.feishu.cn
 
 ## MCP
 
-Use root `mcps.json` as the live user-edited connection layer. Keep it empty until you actually need MCP access.
+Use root `mcps.json` as the live user-edited MCP layer. Keep it empty until you actually need MCP access.
 
 Use [../mcps.example.json](../mcps.example.json) as a public-safe reference template.
 
@@ -122,6 +123,21 @@ Example GitHub MCP:
       },
       "timeout_seconds": 30,
       "adapter": "github"
+    },
+    "github_trending": {
+      "transport": "stdio",
+      "command": "python",
+      "args": [
+        "-m",
+        "marten_runtime.mcp_servers.github_trending"
+      ],
+      "timeout_seconds": 30,
+      "tools": [
+        {
+          "name": "trending_repositories",
+          "description": "Fetch GitHub trending repositories."
+        }
+      ]
     }
   }
 }
@@ -131,7 +147,7 @@ Notes:
 
 - If you put the literal token value directly in `mcps.json.env`, that value is authoritative.
 - If you use `$GITHUB_PERSONAL_ACCESS_TOKEN`, the runtime resolves it from the current shell or repo `.env`.
-- Keep `config/mcp.example.toml` focused on thin server defaults and keep model-visible permissions in `config/agents.toml`.
+- `tools` stays optional and only carries lightweight hints for diagnostics and capability disclosure.
 
 ## Local Start
 
@@ -160,6 +176,7 @@ Run-level operator diagnostics:
 
 - `GET /diagnostics/run/{run_id}` returns `llm_request_count`
 - `GET /diagnostics/run/{run_id}` returns `tool_calls`
+- `GET /diagnostics/run/{run_id}` returns `attempted_profiles`, `attempted_providers`, and `final_provider_ref`
 - use these fields to confirm whether a real turn invoked `automation`, `mcp`, `self_improve`, or other allowed tools
 
 Feishu live diagnostics:

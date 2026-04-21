@@ -347,28 +347,143 @@ class FeishuRenderingTests(unittest.TestCase):
     def test_render_final_reply_card_uses_runtime_heading_for_context_status_text(self) -> None:
         card = render_final_reply_card(
             "当前上下文使用详情\n"
-            "- 下一次请求预计输入：3673 tokens（tokenizer）\n"
-            "- 本轮首发请求：3604 tokens；本轮 actual-peak：3280 tokens（输入 3198 + 输出 82，峰值主要来自工具结果注入后的 follow-up 模型调用）\n"
-            "- 上一轮模型调用：模型输入：3198｜模型输出：82｜总计：3280"
+            "- 当前会话下一次请求预计带入 3673 tokens（约 2% / 184000）。\n"
+            "- 这个数字按当前会话历史重放估算；切换会话后会按目标会话重新计算。\n"
+            "- 压缩状态：已有可复用压缩检查点。"
         )
 
         self.assertEqual(card["header"]["title"]["content"], "当前上下文使用详情")
         elements = card["body"]["elements"]
-        self.assertEqual(elements[0]["content"], "**🗂️ 详情**")
-        self.assertIn("下一次请求预计输入", elements[1]["content"])
+        self.assertEqual(elements[0]["content"], "**🗂️ 当前上下文使用详情**")
+        self.assertIn("当前会话下一次请求预计带入", elements[1]["content"])
 
     def test_render_final_reply_card_uses_runtime_heading_when_actual_peak_is_unavailable(self) -> None:
         card = render_final_reply_card(
             "当前上下文使用详情\n"
-            "- 下一次请求预计输入：3838 tokens（tokenizer）\n"
-            "- 本轮 actual-peak：无（本轮未发生模型调用）\n"
-            "- 本轮首发请求：3838 tokens；本轮峰值输入上下文：3838 tokens"
+            "- 当前会话下一次请求预计带入 3838 tokens（约 2% / 184000）。\n"
+            "- 这个数字按当前会话历史重放估算；切换会话后会按目标会话重新计算。\n"
+            "- 压缩状态：稳定。"
         )
 
         self.assertEqual(card["header"]["title"]["content"], "当前上下文使用详情")
         elements = card["body"]["elements"]
-        self.assertEqual(elements[0]["content"], "**🗂️ 详情**")
-        self.assertIn("本轮 actual-peak：无", elements[1]["content"])
+        self.assertEqual(elements[0]["content"], "**🗂️ 当前上下文使用详情**")
+        self.assertIn("当前会话下一次请求预计带入", elements[1]["content"])
+
+    def test_render_final_reply_card_derives_runtime_title_from_single_paragraph_summary(self) -> None:
+        card = render_final_reply_card(
+            "当前上下文使用详情：上下文窗口健康，下一次请求预计输入 1200 tokens。",
+            usage_summary={
+                "input_tokens": 4100,
+                "output_tokens": 0,
+                "peak_tokens": 4663,
+            },
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "当前上下文使用详情")
+        contents = [element.get("content", "") for element in card["body"]["elements"]]
+        self.assertTrue(any("本轮模型 token" in content for content in contents))
+
+    def test_render_final_reply_card_formats_session_catalog_plain_text_as_structured_sections(self) -> None:
+        card = render_final_reply_card(
+            "当前有 1 个可见会话。\n"
+            "1. 标题：开启子代理查询github上…\n"
+            "详情：开启子代理查询github上的GitHub - tiezhuli001/codex-skills 最近一次提交是什么时候。\n"
+            "状态：running\n"
+            "消息数：33\n"
+            "创建时间：2026-04-19 23:30:41\n"
+            "session_id：sess_dcce8f9c"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "会话列表")
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "**📌 当前有 1 个可见会话。**")
+        self.assertEqual(elements[1]["content"], "**🗂️ 会话详情**")
+        self.assertIn("1. 标题：开启子代理查询github上…", elements[2]["content"])
+        self.assertIn("\n- 详情：开启子代理查询github上的GitHub - tiezhuli001/codex-skills 最近一次提交是什么时候。", elements[2]["content"])
+        self.assertIn("\n- 状态：running", elements[2]["content"])
+        self.assertIn("\n- session_id：sess_dcce8f9c", elements[2]["content"])
+
+    def test_render_final_reply_card_appends_usage_footer_for_session_catalog_card(self) -> None:
+        card = render_final_reply_card(
+            "当前有 1 个可见会话。\n"
+            "1. 标题：开启子代理查询github上…\n"
+            "详情：开启子代理查询github上的GitHub - tiezhuli001/codex-skills 最近一次提交是什么时候。\n"
+            "状态：running\n"
+            "消息数：33\n"
+            "创建时间：2026-04-19 23:30:41\n"
+            "session_id：sess_dcce8f9c",
+            usage_summary={
+                "input_tokens": 3198,
+                "output_tokens": 82,
+                "peak_tokens": 3280,
+                "cumulative_input_tokens": 4510,
+                "cumulative_output_tokens": 143,
+                "cumulative_tokens": 4653,
+            },
+        )
+
+        contents = [element.get("content", "") for element in card["body"]["elements"]]
+        self.assertTrue(any("本轮模型 token" in content for content in contents))
+
+    def test_render_final_reply_card_appends_usage_footer_for_runtime_context_card(self) -> None:
+        card = render_final_reply_card(
+            "当前上下文使用详情\n"
+            "- 当前会话下一次请求预计带入 3838 tokens（约 2% / 184000）。\n"
+            "- 这个数字按当前会话历史重放估算；切换会话后会按目标会话重新计算。\n"
+            "- 压缩状态：稳定。",
+            usage_summary={
+                "input_tokens": 3198,
+                "output_tokens": 82,
+                "peak_tokens": 3280,
+                "cumulative_input_tokens": 4510,
+                "cumulative_output_tokens": 143,
+                "cumulative_tokens": 4653,
+            },
+        )
+
+        contents = [element.get("content", "") for element in card["body"]["elements"]]
+        self.assertTrue(any("本轮模型 token" in content for content in contents))
+
+    def test_render_final_reply_card_splits_multisection_plain_text_and_keeps_note(self) -> None:
+        card = render_final_reply_card(
+            "现在是北京时间 2026年4月20日 10:20\n\n"
+            "当前上下文使用详情\n"
+            "- 当前会话下一次请求预计带入 5707 tokens（约 3% / 184000）。\n"
+            "- 这个数字按当前会话历史重放估算；切换会话后会按目标会话重新计算。\n"
+            "- 压缩状态：稳定。\n\n"
+            "当前可用 MCP 服务共 2 个。\n"
+            "1. github（38 个工具，状态 discovered）\n"
+            "2. github-trending（1 个工具，状态 configured）\n\n"
+            "本次请求共发生 3 次模型请求和 3 次工具调用，属于多次模型/工具往返。"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "链路结果")
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "现在是北京时间 2026年4月20日 10:20")
+        self.assertEqual(elements[1]["content"], "**🗂️ 当前上下文使用详情**")
+        self.assertIn("当前会话下一次请求预计带入 5707 tokens", elements[2]["content"])
+        self.assertEqual(elements[3]["content"], "**🗂️ 当前可用 MCP 服务共 2 个**")
+        self.assertEqual(
+            elements[4]["content"],
+            "1. github（38 个工具，状态 discovered）\n2. github-trending（1 个工具，状态 configured）",
+        )
+        self.assertEqual(elements[5]["tag"], "hr")
+        self.assertIn("本次请求共发生 3 次模型请求和 3 次工具调用", elements[6]["content"])
+
+    def test_render_final_reply_card_uses_session_switch_title_and_appends_footer(self) -> None:
+        card = render_final_reply_card(
+            "已切换到新会话。后续消息会在新会话中继续。",
+            usage_summary={
+                "input_tokens": 4989,
+                "output_tokens": 0,
+                "peak_tokens": 5277,
+            },
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "已切换到新会话")
+        contents = [element.get("content", "") for element in card["body"]["elements"]]
+        self.assertTrue(any("本轮模型 token" in content for content in contents))
 
     def test_render_final_reply_card_derives_trending_title_from_plain_bullets(self) -> None:
         card = render_final_reply_card(
@@ -417,6 +532,7 @@ class FeishuRenderingTests(unittest.TestCase):
                 "cumulative_input_tokens": 4510,
                 "cumulative_output_tokens": 143,
                 "cumulative_tokens": 4653,
+                "llm_request_count": 2,
             },
         )
 
@@ -424,7 +540,7 @@ class FeishuRenderingTests(unittest.TestCase):
         self.assertEqual(elements[-2]["tag"], "hr")
         self.assertEqual(
             elements[-1]["content"],
-            "<font color='grey'>本轮模型 token：累计输入 4510｜累计输出 143｜累计 4653｜峰值 3280（峰值轮输入 3198｜输出 82）</font>",
+            "<font color='grey'>本轮模型 token（2 次请求合计）：输入 4510｜输出 143｜合计 4653｜单次峰值 3280（峰值轮输入 3198｜输出 82）</font>",
         )
 
     def test_render_final_reply_card_omits_usage_footer_when_summary_absent(self) -> None:
@@ -511,6 +627,22 @@ class FeishuRenderingTests(unittest.TestCase):
         joined = "\n".join(element["content"] for element in elements if element["tag"] == "markdown")
         self.assertNotIn("后台任务已完成：", joined)
 
+    def test_render_final_reply_card_strips_background_task_followup_suggestions(self) -> None:
+        card = render_final_reply_card(
+            "后台任务已完成：调研 codex-skills 仓库能力\n"
+            "tiezhuli001/codex-skills 最近一次提交是 **2026-04-17 17:55:00**（北京时间），"
+            "commit 信息为 `Merge pull request #2`。\n\n"
+            "如果你要，我也可以继续帮你：\n"
+            "转成北京时间\n"
+            "再列出最近 5 次提交\n"
+            "或核对默认分支上的最新 commit 是否一致"
+        )
+
+        joined = "\n".join(element["content"] for element in card["body"]["elements"] if element["tag"] == "markdown")
+        self.assertIn("最近一次提交是", joined)
+        self.assertNotIn("如果你要", joined)
+        self.assertNotIn("再列出最近 5 次提交", joined)
+
     def test_render_final_reply_card_structures_subagent_system_completion_message(self) -> None:
         card = render_final_reply_card(
             "subagent task completed: 查询 codex-skills 最近提交\n"
@@ -525,6 +657,21 @@ class FeishuRenderingTests(unittest.TestCase):
         joined = "\n".join(element["content"] for element in elements if element["tag"] == "markdown")
         self.assertNotIn("subagent task completed:", joined)
         self.assertNotIn("summary:", joined)
+
+    def test_render_final_reply_card_strips_subagent_completion_followup_suggestions(self) -> None:
+        card = render_final_reply_card(
+            "subagent task completed: 查询 codex-skills 最近提交\n"
+            "summary: tiezhuli001/codex-skills 最近一次提交是 **2026-04-17 17:55:00**（北京时间），"
+            "commit 信息为 `Merge pull request #2`。\n\n"
+            "如果你要，我也可以继续帮你：\n"
+            "转成北京时间\n"
+            "再列出最近 5 次提交"
+        )
+
+        joined = "\n".join(element["content"] for element in card["body"]["elements"] if element["tag"] == "markdown")
+        self.assertIn("最近一次提交是", joined)
+        self.assertNotIn("如果你要", joined)
+        self.assertNotIn("再列出最近 5 次提交", joined)
 
     def test_render_final_reply_card_structures_subagent_system_failure_message(self) -> None:
         card = render_final_reply_card(

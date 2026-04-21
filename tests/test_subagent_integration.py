@@ -62,13 +62,37 @@ class SubagentUsageEndToEndLLM:
         return LLMReply(final_text="background subagent accepted")
 
 
+class InvalidSubagentAgentIdLLM:
+    provider_name = "subagent-invalid-agent-id"
+    model_name = "subagent-invalid-agent-id-local"
+
+    def __init__(self) -> None:
+        self.requests = []
+
+    def complete(self, request):  # noqa: ANN001
+        self.requests.append(request)
+        if request.request_kind == "subagent":
+            return LLMReply(final_text="child finished after invalid agent fallback")
+        if request.tool_result is None:
+            return LLMReply(
+                tool_name="spawn_subagent",
+                tool_payload={
+                    "task": "run child repo inspection",
+                    "label": "repo-child-invalid-agent",
+                    "tool_profile": "mcp:github-or-web",
+                    "agent_id": "github-subagent",
+                },
+            )
+        return LLMReply(final_text="background subagent accepted")
+
+
 class SubagentHTTPIntegrationTests(unittest.TestCase):
     def _configure_runtime_with_llm(self, llm):  # noqa: ANN001
         app = build_test_app()
         runtime = app.state.runtime
         runtime.runtime_loop.llm = llm
-        runtime.llm_client_factory.cache_client("default", llm)
-        runtime.llm_client_factory.cache_client("minimax_coding", llm)
+        runtime.llm_client_factory.cache_client("openai_gpt5", llm)
+        runtime.llm_client_factory.cache_client("minimax_m25", llm)
         return app
 
     def _wait_for_task_status(self, client: TestClient, task_id: str, expected: set[str], *, timeout: float = 2.0) -> dict:
@@ -167,8 +191,9 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200)
             final_text = response.json()["events"][-1]["payload"]["text"]
-            self.assertEqual(final_text, "已受理，子 agent 正在后台执行，完成后会通知你结果。")
-            self.assertEqual(len(llm.requests), 1)
+            self.assertEqual(final_text, "parent followup should not run")
+            interactive_requests = [item for item in llm.requests if item.request_kind == "interactive"]
+            self.assertEqual(len(interactive_requests), 2)
 
             tasks = client.get("/diagnostics/subagents")
             self.assertEqual(tasks.status_code, 200)
@@ -208,6 +233,33 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
             self.assertEqual(latest_usage["input_tokens"], 321)
             self.assertEqual(latest_usage["output_tokens"], 45)
             self.assertEqual(latest_usage["total_tokens"], 366)
+
+    def test_http_message_path_survives_invalid_spawn_agent_id_from_model(self) -> None:
+        app = self._configure_runtime_with_llm(InvalidSubagentAgentIdLLM())
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "test",
+                    "user_id": "u1",
+                    "conversation_id": "conv-subagent-invalid-agent",
+                    "message_id": "msg-invalid-agent",
+                    "body": "please inspect this repo in background",
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                response.json()["events"][-1]["payload"]["text"],
+                "background subagent accepted",
+            )
+
+            task = self._wait_for_task_status(
+                client,
+                client.get("/diagnostics/subagents").json()["items"][0]["task_id"],
+                {"succeeded"},
+            )
+            self.assertEqual(task["agent_id"], "main")
 
     def test_default_runtime_allows_five_concurrent_children_before_queueing_the_sixth(self) -> None:
         class ManyBlockingChildrenLLM:
@@ -257,7 +309,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(
                     response.json()["events"][-1]["payload"]["text"],
-                    "已受理，子 agent 正在后台执行，完成后会通知你结果。",
+                    "unexpected parent followup",
                 )
 
             deadline = time.time() + 2.0
@@ -285,7 +337,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
             self.assertEqual(sixth.status_code, 200)
             self.assertEqual(
                 sixth.json()["events"][-1]["payload"]["text"],
-                "已受理，子 agent 已进入队列，开始后会通知你结果。",
+                "unexpected parent followup",
             )
 
             deadline = time.time() + 2.0
@@ -359,7 +411,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
             self.assertEqual(first.status_code, 200)
             self.assertEqual(
                 first.json()["events"][-1]["payload"]["text"],
-                "已受理，子 agent 正在后台执行，完成后会通知你结果。",
+                "unexpected parent followup",
             )
 
             deadline = time.time() + 2.0
@@ -388,7 +440,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
             self.assertEqual(second.status_code, 200)
             self.assertEqual(
                 second.json()["events"][-1]["payload"]["text"],
-                "已受理，子 agent 已进入队列，开始后会通知你结果。",
+                "unexpected parent followup",
             )
 
             deadline = time.time() + 2.0

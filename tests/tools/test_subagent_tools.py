@@ -165,6 +165,81 @@ class SubagentBuiltinToolTests(unittest.TestCase):
         self.assertEqual(task.tool_profile, "standard")
         self.assertEqual(task.effective_tool_profile, "standard")
 
+    def test_spawn_subagent_tool_falls_back_to_parent_agent_when_payload_agent_id_is_unknown(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        session = runtime.session_store.create(
+            session_id="sess_parent_tool_unknown_agent",
+            conversation_id="conv-parent-tool-unknown-agent",
+            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
+            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+        )
+        parent_run = runtime.run_history.start(
+            session_id=session.session_id,
+            trace_id="trace_parent_tool_unknown_agent",
+            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
+            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+        )
+
+        result = runtime.tool_registry.call(
+            "spawn_subagent",
+            {
+                "task": "查询 codex-skills 最近一次提交",
+                "label": "github-last-commit",
+                "agent_id": "github-subagent",
+            },
+            tool_context={
+                "session_id": session.session_id,
+                "run_id": parent_run.run_id,
+                "agent_id": "main",
+                "app_id": "main_agent",
+                "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        task = runtime.subagent_service.store.get(result["task_id"])
+        self.assertEqual(task.agent_id, "main")
+        self.assertEqual(task.app_id, "main_agent")
+
+    def test_spawn_subagent_tool_normalizes_mcp_prefixed_profile_to_standard(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        session = runtime.session_store.create(
+            session_id="sess_parent_tool_prefixed_profile",
+            conversation_id="conv-parent-tool-prefixed-profile",
+            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
+            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+        )
+        parent_run = runtime.run_history.start(
+            session_id=session.session_id,
+            trace_id="trace_parent_tool_prefixed_profile",
+            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
+            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+        )
+
+        result = runtime.tool_registry.call(
+            "spawn_subagent",
+            {
+                "task": "查询 codex-skills 最近一次提交",
+                "label": "github-last-commit-prefixed-profile",
+                "tool_profile": "mcp:github-or-web",
+            },
+            tool_context={
+                "session_id": session.session_id,
+                "run_id": parent_run.run_id,
+                "agent_id": "main",
+                "app_id": "main_agent",
+                "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["effective_tool_profile"], "standard")
+        task = runtime.subagent_service.store.get(result["task_id"])
+        self.assertEqual(task.tool_profile, "standard")
+        self.assertEqual(task.effective_tool_profile, "standard")
+
     def test_spawn_subagent_tool_keeps_restricted_default_without_explicit_intent_or_broader_hints(self) -> None:
         app = build_test_app()
         runtime = app.state.runtime

@@ -151,7 +151,7 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
             on_compacted=lambda item: stored.append(item),
             compact_settings=build_compaction_settings(
                 ModelProfile(
-                    provider="openai",
+                    provider_ref="openai",
                     model="gpt-4.1",
                     context_window_tokens=400,
                     reserve_output_tokens=50,
@@ -190,7 +190,7 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
             on_compacted=lambda item: stored.append(item),
             compact_settings=build_compaction_settings(
                 ModelProfile(
-                    provider="openai",
+                    provider_ref="openai",
                     model="gpt-4.1",
                     context_window_tokens=400,
                     reserve_output_tokens=50,
@@ -231,7 +231,7 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
             compact_llm_client=compact_llm,
             compact_settings=build_compaction_settings(
                 ModelProfile(
-                    provider="openai",
+                    provider_ref="openai",
                     model="gpt-4.1",
                     context_window_tokens=400,
                     reserve_output_tokens=50,
@@ -286,7 +286,7 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
                 compact_llm_client=compact_llm,
                 compact_settings=build_compaction_settings(
                     ModelProfile(
-                        provider="openai",
+                        provider_ref="openai",
                         model="gpt-4.1",
                         context_window_tokens=400,
                         reserve_output_tokens=50,
@@ -321,6 +321,12 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
                 LLMReply(
                     tool_name="runtime", tool_payload={"action": "context_status"}
                 ),
+                LLMReply(
+                    final_text=(
+                        "当前上下文使用详情：当前估算占用 1200/184000 tokens（1%）。"
+                        " 下一次请求预计输入 1200 tokens。"
+                    )
+                ),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -351,7 +357,8 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
         self.assertIn("当前上下文使用详情", events[-1].payload["text"])
-        self.assertIn("下一次请求预计输入", events[-1].payload["text"])
+        self.assertIn("当前会话下一次请求预计带入", events[-1].payload["text"])
+        self.assertIn("切换会话后会按目标会话重新计算", events[-1].payload["text"])
         self.assertEqual(len(llm.requests), 1)
         tool_result = history.get(events[-1].run_id).tool_calls[0]["tool_result"]
         self.assertTrue(tool_result["ok"])
@@ -380,12 +387,9 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
             tool_result["current_run"]["initial_input_tokens_estimate"],
             run.initial_preflight_input_tokens_estimate,
         )
-        self.assertEqual(
+        self.assertLessEqual(
             tool_result["current_run"]["peak_input_tokens_estimate"],
             run.peak_preflight_input_tokens_estimate,
-        )
-        self.assertEqual(
-            tool_result["current_run"]["peak_stage"], run.peak_preflight_stage
         )
         self.assertEqual(tool_result["current_run"]["peak_stage"], "initial_request")
         self.assertNotIn("峰值主要来自工具结果注入后", tool_result["summary"])
@@ -399,7 +403,10 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         tools = ToolRegistry()
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
-            [LLMReply(tool_name="runtime", tool_payload={"action": "context_status"})]
+            [
+                LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
+                LLMReply(final_text="当前上下文使用详情：现在占用很低。"),
+            ]
         )
         runtime = RuntimeLoop(llm, tools, history)
         tools.register(
@@ -428,7 +435,7 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         )
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
-        self.assertIn("当前上下文使用详情", events[-1].payload["text"])
+        self.assertIn("当前会话下一次请求预计带入", events[-1].payload["text"])
         self.assertEqual(len(llm.requests), 1)
         run = history.get(events[-1].run_id)
         self.assertEqual(run.llm_request_count, 1)

@@ -4,7 +4,10 @@ from typing import TYPE_CHECKING
 
 from marten_runtime.runtime.query_hardening import (
     is_explicit_multi_step_tool_request,
+    is_automation_list_query,
     is_runtime_context_query,
+    is_session_catalog_query,
+    is_session_switch_query,
     is_time_query,
 )
 from marten_runtime.runtime.tool_episode_summary_prompt import (
@@ -21,6 +24,53 @@ def should_lock_runtime_context_followup(
     if tool_history_count > 1:
         return False
     return not is_explicit_multi_step_tool_request(message)
+
+
+def explicit_tool_surface_for_request(request: LLMRequest) -> list[str] | None:
+    message = request.message or ""
+    available = set(request.available_tools)
+    single_intent_surface = _explicit_single_intent_tool_surface(message, available)
+    if single_intent_surface is not None:
+        return single_intent_surface
+    if not is_explicit_multi_step_tool_request(message):
+        return None
+    ordered: list[str] = []
+    if "time" in available and is_time_query(message):
+        ordered.append("time")
+    if "runtime" in available and is_runtime_context_query(message):
+        ordered.append("runtime")
+    if "session" in available and (is_session_catalog_query(message) or is_session_switch_query(message)):
+        ordered.append("session")
+    if "mcp" in available and _mentions_mcp(message):
+        ordered.append("mcp")
+    if "automation" in available and is_automation_list_query(message):
+        ordered.append("automation")
+    if "skill" in available and _mentions_skill(message):
+        ordered.append("skill")
+    if "spawn_subagent" in available and _mentions_subagent(message):
+        ordered.append("spawn_subagent")
+    if "self_improve" in available and _mentions_self_improve(message):
+        ordered.append("self_improve")
+    return ordered or None
+
+
+def should_omit_capability_catalog_for_request(request: LLMRequest) -> bool:
+    if _is_explicit_subagent_request(request.message or ""):
+        return True
+    message = request.message or ""
+    return (
+        is_explicit_multi_step_tool_request(message)
+        or is_runtime_context_query(message)
+        or is_time_query(message)
+        or is_session_catalog_query(message)
+        or is_session_switch_query(message)
+        or is_automation_list_query(message)
+    )
+
+
+def should_use_wider_interactive_timeout(request: LLMRequest) -> bool:
+    message = request.message or ""
+    return is_explicit_multi_step_tool_request(message) or _is_explicit_subagent_request(message)
 
 
 def tool_followup_instruction(
@@ -102,8 +152,87 @@ def request_specific_instruction(request: LLMRequest) -> str | None:
             "这是当前时间查询。请先读取当前时间工具结果，再回答用户；"
             "不要直接凭记忆猜测现在时间。"
         )
+    if "session" in available and is_session_catalog_query(message):
+        instructions.append(
+            "这是会话目录/活跃会话查询。优先使用 session family tool；"
+            "回答时聚焦会话标题、状态、消息数、创建时间等会话元数据。"
+            "只有当用户明确提到定时任务、自动化、cron 或 automation 时，才使用 automation family tool。"
+        )
+    if "session" in available and is_session_switch_query(message):
+        instructions.append(
+            "这是显式会话切换请求。优先考虑 session family tool；"
+            "如果你决定使用 session，请根据用户语义在 new 或 resume 之间自行选择合适 action。"
+        )
+    if "automation" in available and is_automation_list_query(message):
+        instructions.append(
+            "这是定时任务/自动化查询。优先使用 automation family tool；"
+            "不要把定时任务列表误解成会话目录。"
+        )
+    if "spawn_subagent" in available and _is_explicit_subagent_request(message):
+        instructions.append(
+            "这是显式子代理请求。优先使用 spawn_subagent；"
+            "当前回合的目标是受理后台任务并返回受理状态，不要把它改写成主线程直接完成。"
+        )
     if request.channel_protocol_instruction_text:
         instructions.append(request.channel_protocol_instruction_text)
     if not instructions:
         return None
     return "\n".join(instructions)
+
+
+def _is_explicit_subagent_request(message: str) -> bool:
+    return _mentions_subagent(message) and any(
+        token in message.lower() or token in message
+        for token in ("开启", "启动", "开一个", "开个", "请用", "用", "后台执行", "delegate", "spawn")
+    )
+
+
+def _mentions_subagent(message: str) -> bool:
+    normalized = message.lower()
+    return any(token in normalized or token in message for token in ("子代理", "子 agent", "subagent", "后台任务", "后台执行"))
+
+
+def _mentions_mcp(message: str) -> bool:
+    normalized = message.lower()
+    return any(token in normalized or token in message for token in ("mcp", "github server", "server_id", "tool_name", "github"))
+
+
+def _mentions_skill(message: str) -> bool:
+    normalized = message.lower()
+    return any(token in normalized or token in message for token in ("skill", "技能", "加载 skill", "加载技能"))
+
+
+def _mentions_self_improve(message: str) -> bool:
+    normalized = message.lower()
+    return any(token in normalized or token in message for token in ("self_improve", "self-improve", "自我改进", "复盘"))
+
+
+def _explicit_single_intent_tool_surface(
+    message: str,
+    available: set[str],
+) -> list[str] | None:
+    if is_explicit_multi_step_tool_request(message):
+        return None
+    if _is_explicit_subagent_request(message):
+        ordered = _ordered_available_tools(
+            available,
+            ["spawn_subagent", "mcp", "skill", "runtime", "time"],
+        )
+        return ordered or None
+    if (
+        is_runtime_context_query(message)
+        or is_time_query(message)
+        or is_session_catalog_query(message)
+        or is_session_switch_query(message)
+        or is_automation_list_query(message)
+    ):
+        ordered = _ordered_available_tools(
+            available,
+            ["session", "automation", "runtime", "time", "spawn_subagent"],
+        )
+        return ordered or None
+    return None
+
+
+def _ordered_available_tools(available: set[str], ordered_names: list[str]) -> list[str]:
+    return [tool_name for tool_name in ordered_names if tool_name in available]

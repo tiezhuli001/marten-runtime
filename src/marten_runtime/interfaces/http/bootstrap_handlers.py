@@ -11,11 +11,13 @@ from marten_runtime.channels.feishu.delivery import FeishuDeliveryPayload
 from marten_runtime.channels.feishu.usage import build_usage_summary_from_history
 from marten_runtime.channels.feishu.rendering import (
     build_feishu_card_protocol_guard_instruction,
+    render_final_reply_card,
 )
 from marten_runtime.config.models_loader import resolve_model_profile
 from marten_runtime.gateway.models import InboundEnvelope
 from marten_runtime.session.compaction_trigger import build_compaction_settings
 from marten_runtime.session.models import SessionMessage
+from marten_runtime.session.title_summary import build_session_title_summary
 from marten_runtime.skills.models import SkillSpec
 from marten_runtime.skills.selector import select_activated_skills
 from marten_runtime.tools.builtins.automation_tool import (
@@ -54,6 +56,7 @@ def _process_inbound_envelope(
         conversation_id=envelope.conversation_id,
         config_snapshot_id=state.config_snapshot.config_snapshot_id,
         bootstrap_manifest_id=state.app_manifest.bootstrap_manifest_id,
+        channel_id=envelope.channel_id,
     )
     routed_agent = state.agent_router.route(
         envelope,
@@ -64,6 +67,16 @@ def _process_inbound_envelope(
         routed_agent.app_id, state.app_runtimes[state.app_manifest.app_id]
     )
     state.session_store.set_active_agent(session.session_id, routed_agent.agent_id)
+    _ensure_session_catalog_metadata(
+        state=state,
+        session_id=session.session_id,
+        trace_id=envelope.trace_id,
+        app_id=routed_agent.app_id,
+        agent_id=routed_agent.agent_id,
+        model_profile_name=getattr(routed_agent, "model_profile", None),
+        user_id=envelope.user_id,
+        user_message=envelope.body,
+    )
     state.session_store.set_bootstrap_manifest(
         session.session_id, app_runtime.manifest.bootstrap_manifest_id
     )
@@ -103,6 +116,8 @@ def _process_inbound_envelope(
             skill_runtime=skill_runtime,
             activated_skills=[],
             channel_id=envelope.channel_id,
+            conversation_id=envelope.conversation_id,
+            user_id=envelope.user_id,
             request_kind="interactive",
         )
     finally:
@@ -125,12 +140,23 @@ def _process_automation_dispatch(
         conversation_id=dispatch.session_id,
         config_snapshot_id=state.config_snapshot.config_snapshot_id,
         bootstrap_manifest_id=state.app_manifest.bootstrap_manifest_id,
+        channel_id=dispatch.delivery_channel,
     )
     routed_agent = state.agent_registry.get(dispatch.agent_id)
     app_runtime = state.app_runtimes.get(
         routed_agent.app_id, state.app_runtimes[state.app_manifest.app_id]
     )
     state.session_store.set_active_agent(session.session_id, routed_agent.agent_id)
+    _ensure_session_catalog_metadata(
+        state=state,
+        session_id=session.session_id,
+        trace_id=dispatch.trace_id,
+        app_id=routed_agent.app_id,
+        agent_id=routed_agent.agent_id,
+        model_profile_name=getattr(routed_agent, "model_profile", None),
+        user_id="",
+        user_message=dispatch.prompt_template,
+    )
     state.session_store.set_bootstrap_manifest(
         session.session_id, app_runtime.manifest.bootstrap_manifest_id
     )
@@ -238,6 +264,8 @@ def _run_turn(
     skill_runtime,
     activated_skills: list[SkillSpec],
     channel_id: str,
+    conversation_id: str | None = None,
+    user_id: str | None = None,
     request_kind: str = "interactive",
 ):
     resolved_profile_name = getattr(agent, "model_profile", None)
@@ -278,9 +306,12 @@ def _run_turn(
             if channel_id == "feishu"
             else None
         ),
+        memory_text=state.memory_service.render_prompt_memory(user_id or ""),
         compact_settings=build_compaction_settings(profile),
         request_kind=request_kind,
         channel_id=channel_id,
+        conversation_id=conversation_id,
+        user_id=user_id,
     )
     try:
         run = state.run_history.get(events[-1].run_id)
@@ -328,10 +359,32 @@ def _finalize_session_turn(
         "event_ids": [event.event_id for event in events],
         "external_refs": external_refs,
     }
+    terminal_event = events[-1]
+    terminal_text = str(terminal_event.payload.get("text", ""))
     return {
         "status": "accepted",
         "session_id": session_id,
         "trace_id": trace_id,
+        "result": terminal_text,
+        "final_text": terminal_text,
+        "text": terminal_text,
+        "card": (
+            render_final_reply_card(
+                terminal_text,
+                event_type=terminal_event.event_type,
+                usage_summary=build_usage_summary_from_history(
+                    state.run_history,
+                    terminal_event.run_id,
+                ),
+            )
+            if channel_id == "feishu" and terminal_event.event_type in {"final", "error"}
+            else None
+        ),
+        "error_code": (
+            str(terminal_event.payload.get("code", ""))
+            if terminal_event.event_type == "error"
+            else None
+        ),
         "events": [
             serialize_event_for_channel(
                 event,
@@ -341,6 +394,49 @@ def _finalize_session_turn(
             for event in events
         ],
     }
+
+
+def _ensure_session_catalog_metadata(
+    *,
+    state: HTTPRuntimeState,
+    session_id: str,
+    trace_id: str,
+    app_id: str,
+    agent_id: str,
+    model_profile_name: str | None,
+    user_id: str,
+    user_message: str,
+) -> None:
+    session = state.session_store.get(session_id)
+    if session.session_title:
+        if session.user_id != user_id or session.agent_id != agent_id:
+            state.session_store.set_catalog_metadata(
+                session_id,
+                user_id=user_id,
+                agent_id=agent_id,
+                session_title=session.session_title,
+                session_preview=session.session_preview,
+            )
+        return
+    llm_client = state.llm_client_factory.get(
+        model_profile_name,
+        default_client=state.runtime_loop.llm,
+    )
+    title, preview = build_session_title_summary(
+        llm_client=llm_client,
+        session_id=session_id,
+        trace_id=trace_id,
+        app_id=app_id,
+        agent_id=agent_id,
+        user_message=user_message,
+    )
+    state.session_store.set_catalog_metadata(
+        session_id,
+        user_id=user_id,
+        agent_id=agent_id,
+        session_title=title,
+        session_preview=preview,
+    )
 
 
 def _resolve_automation_skills(

@@ -1,6 +1,6 @@
 import unittest
 
-from marten_runtime.config.models_loader import ModelProfile
+from marten_runtime.config.providers_loader import ProviderConfig
 from marten_runtime.runtime.llm_provider_support import (
     collapse_system_messages,
     extract_openai_usage,
@@ -41,8 +41,15 @@ class LLMProviderSupportTests(unittest.TestCase):
         self.assertEqual(collapsed[1]['role'], 'user')
 
     def test_resolve_base_url_prefers_provider_specific_env_override(self) -> None:
-        profile = ModelProfile(provider='openai', model='x', api_key_env='MINIMAX_API_KEY', base_url='https://base')
+        provider = ProviderConfig(
+            adapter="openai_compat",
+            base_url="https://base",
+            api_key_env="MINIMAX_API_KEY",
+            supports_responses_api=False,
+            supports_responses_streaming=False,
+            supports_chat_completions=True,
+        )
         self.assertEqual(
-            resolve_base_url(profile=profile, env={'MINIMAX_API_BASE': 'https://override'}),
+            resolve_base_url(provider=provider, env={'MINIMAX_API_BASE': 'https://override'}),
             'https://override',
         )

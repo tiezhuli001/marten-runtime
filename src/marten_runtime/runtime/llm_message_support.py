@@ -9,7 +9,9 @@ from marten_runtime.runtime.llm_provider_support import (
     resolve_parameters_schema as _resolve_parameters_schema,
 )
 from marten_runtime.runtime.llm_request_instructions import (
+    explicit_tool_surface_for_request,
     request_specific_instruction as _request_specific_instruction,
+    should_omit_capability_catalog_for_request,
     should_lock_runtime_context_followup as _should_lock_runtime_context_followup,
     tool_followup_instruction as _tool_followup_instruction,
 )
@@ -23,7 +25,11 @@ def build_openai_messages(request: "LLMRequest") -> list[dict[str, object]]:
     is_tool_followup = bool(request.tool_history) or (
         request.tool_result is not None and bool(request.requested_tool_name)
     )
-    include_capability_catalog = bool(request.capability_catalog_text) and not is_tool_followup
+    include_capability_catalog = (
+        bool(request.capability_catalog_text)
+        and not is_tool_followup
+        and not should_omit_capability_catalog_for_request(request)
+    )
     _append_system_message(messages, request.system_prompt)
     if not is_tool_followup:
         _append_system_message(messages, request.skill_heads_text)
@@ -32,6 +38,7 @@ def build_openai_messages(request: "LLMRequest") -> list[dict[str, object]]:
     _append_system_message(messages, request.always_on_skill_text)
     _append_system_message(messages, request.compact_summary_text)
     _append_system_message(messages, request.tool_outcome_summary_text)
+    _append_system_message(messages, request.memory_text)
     _append_system_message(messages, request.working_context_text)
     _append_system_message(messages, _request_specific_instruction(request))
     lock_runtime_context_followup = _should_lock_runtime_context_followup(
@@ -73,6 +80,9 @@ def build_openai_chat_payload(
 
 
 def build_tool_definitions(request: "LLMRequest") -> list[dict[str, object]]:
+    tool_names = (
+        explicit_tool_surface_for_request(request) or list(request.available_tools)
+    )
     return [
         {
             "type": "function",
@@ -82,7 +92,7 @@ def build_tool_definitions(request: "LLMRequest") -> list[dict[str, object]]:
                 "parameters": _resolve_parameters_schema(tool_name, request.tool_snapshot),
             },
         }
-        for tool_name in request.available_tools
+        for tool_name in tool_names
     ]
 
 

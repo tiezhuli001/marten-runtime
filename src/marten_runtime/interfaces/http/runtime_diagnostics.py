@@ -87,6 +87,16 @@ def serialize_runtime_diagnostics(
         "llm_provider": getattr(runtime.runtime_loop.llm, "provider_name", "unknown"),
         "llm_model": getattr(runtime.runtime_loop.llm, "model_name", "unknown"),
         "llm_profile": getattr(runtime.runtime_loop.llm, "profile_name", "unknown"),
+        "provider_count": len(runtime.providers_config.providers),
+        "providers": [
+            {
+                "provider_ref": provider_ref,
+                "adapter": provider.adapter,
+                "base_url": provider.base_url,
+                "api_key_env": provider.api_key_env,
+            }
+            for provider_ref, provider in sorted(runtime.providers_config.providers.items())
+        ],
         "tool_count": len(runtime.tool_registry.list()),
         "mcp_server_count": len(runtime.mcp_servers),
         "mcp_servers": [
@@ -173,6 +183,12 @@ def serialize_runtime_diagnostics(
                 "retry_policy": runtime.feishu_delivery.retry_policy.model_dump(),
                 "websocket": runtime.feishu_socket_service.stats(),
             },
+        },
+        "sessions": {
+            "store_kind": runtime.session_store.storage_kind(),
+            "store_path": runtime.session_store.storage_path(),
+            "count": runtime.session_store.count(),
+            "binding_count": runtime.session_store.binding_count(),
         },
         "env_loaded": runtime.env_load_result.loaded,
     }

@@ -65,6 +65,64 @@ class SessionStoreTests(unittest.TestCase):
 
         self.assertEqual(first.session_id, second.session_id)
 
+    def test_get_or_create_by_conversation_does_not_cross_bind_channels(self) -> None:
+        store = SessionStore()
+
+        http_session = store.get_or_create_for_conversation(
+            conversation_id="conv-1",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+        )
+        feishu_session = store.get_or_create_for_conversation(
+            conversation_id="conv-1",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="feishu",
+        )
+
+        self.assertNotEqual(http_session.session_id, feishu_session.session_id)
+
+    def test_bind_conversation_moves_session_to_new_conversation_exclusively(self) -> None:
+        store = SessionStore()
+        current = store.create(
+            session_id="sess_current",
+            conversation_id="conv-current",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+        )
+        target = store.create(
+            session_id="sess_target",
+            conversation_id="conv-old",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+        )
+
+        store.bind_conversation(
+            channel_id="http",
+            conversation_id=current.conversation_id,
+            session_id=target.session_id,
+        )
+
+        self.assertEqual(
+            store.resolve_session_for_conversation(
+                channel_id="http",
+                conversation_id="conv-current",
+            ),
+            target.session_id,
+        )
+        self.assertIsNone(
+            store.resolve_session_for_conversation(
+                channel_id="http",
+                conversation_id="conv-old",
+            )
+        )
+        rebound = store.get(target.session_id)
+        self.assertEqual(rebound.conversation_id, "conv-current")
+        self.assertEqual(rebound.channel_id, "http")
+
     def test_session_store_persists_latest_compacted_context(self) -> None:
         store = SessionStore()
         store.create(
@@ -153,6 +211,47 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(updated.history[-1].content, "hello")
         self.assertEqual(len(updated.recent_tool_outcome_summaries), 1)
         self.assertEqual(updated.recent_tool_outcome_summaries[0].source_kind, "mcp")
+
+    def test_create_child_session_preserves_parent_lineage(self) -> None:
+        store = SessionStore()
+        parent = store.create(
+            session_id="sess_parent",
+            conversation_id="conv-parent",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+
+        child = store.create_child_session(
+            parent_session_id=parent.session_id,
+            conversation_id="conv-child",
+            session_id="sess_child",
+        )
+
+        self.assertEqual(child.session_id, "sess_child")
+        self.assertEqual(child.parent_session_id, parent.session_id)
+        self.assertEqual(child.session_kind, "subagent")
+        self.assertEqual(child.lineage_depth, 1)
+        self.assertEqual(child.config_snapshot_id, parent.config_snapshot_id)
+        self.assertEqual(child.bootstrap_manifest_id, parent.bootstrap_manifest_id)
+        self.assertEqual(store.get(child.session_id).parent_session_id, parent.session_id)
+
+    def test_create_session_exposes_catalog_metadata_defaults(self) -> None:
+        store = SessionStore()
+
+        record = store.create(
+            session_id="sess_catalog",
+            conversation_id="conv-catalog",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+        )
+
+        self.assertEqual(record.channel_id, "http")
+        self.assertEqual(record.user_id, "")
+        self.assertEqual(record.agent_id, "")
+        self.assertEqual(record.session_title, "")
+        self.assertEqual(record.session_preview, "")
+        self.assertEqual(record.message_count, 0)
 
 
 if __name__ == "__main__":

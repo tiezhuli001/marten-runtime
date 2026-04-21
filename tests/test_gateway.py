@@ -9,6 +9,7 @@ from marten_runtime.gateway.dedupe import build_dedupe_key
 from marten_runtime.gateway.ingress import ingest_message
 from marten_runtime.gateway.models import InboundEnvelope
 from marten_runtime.runtime.events import OutboundEvent
+from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from tests.http_app_support import build_test_app
 
 
@@ -83,15 +84,28 @@ class GatewayTests(unittest.TestCase):
                     "body": "hello",
                 },
             )
+            run_id = response.json()["events"][-1]["run_id"]
+            run_diag = client.get(f"/diagnostics/run/{run_id}")
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(run_diag.status_code, 200)
         payload = response.json()
+        run_payload = run_diag.json()
         self.assertIn("session_id", payload)
         self.assertEqual(len(payload["events"]), 2)
         self.assertEqual(payload["events"][0]["event_type"], "progress")
         self.assertEqual(payload["events"][1]["event_type"], "final")
         self.assertEqual(payload["events"][0]["run_id"], payload["events"][1]["run_id"])
         self.assertEqual(payload["events"][0]["trace_id"], payload["events"][1]["trace_id"])
+        self.assertEqual(payload["result"], payload["events"][1]["payload"]["text"])
+        self.assertEqual(payload["final_text"], payload["events"][1]["payload"]["text"])
+        self.assertEqual(payload["text"], payload["events"][1]["payload"]["text"])
+        self.assertIsNone(payload["card"])
+        self.assertIsNone(payload["error_code"])
+        self.assertEqual(run_payload["attempted_profiles"], ["openai_gpt5"])
+        self.assertEqual(run_payload["attempted_providers"], ["test-demo"])
+        self.assertEqual(run_payload["provider_ref"], "test-demo")
+        self.assertEqual(run_payload["final_provider_ref"], "test-demo")
 
     def test_feishu_session_history_preserves_ingress_and_enqueue_timestamps_for_queued_turns(self) -> None:
         app = build_test_app()
@@ -304,6 +318,11 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(final_event["payload"]["card"]["schema"], "2.0")
         self.assertEqual(final_event["payload"]["card"]["header"]["title"]["content"], "处理结果")
         self.assertEqual(final_event["payload"]["card"]["body"]["elements"][0]["content"], "main")
+        self.assertEqual(payload["result"], final_event["payload"]["text"])
+        self.assertEqual(payload["final_text"], final_event["payload"]["text"])
+        self.assertEqual(payload["text"], final_event["payload"]["text"])
+        self.assertEqual(payload["card"], final_event["payload"]["card"])
+        self.assertIsNone(payload["error_code"])
 
     def test_feishu_messages_endpoint_appends_token_footer_to_rendered_card(self) -> None:
         app = build_test_app()
@@ -367,6 +386,163 @@ class GatewayTests(unittest.TestCase):
             elements[-1]["content"],
             "<font color='grey'>本轮模型 token：输入 4275｜输出 -｜峰值 4275</font>",
         )
+
+    def test_feishu_messages_can_write_and_reuse_thin_memory(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        scripted = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="memory",
+                    tool_payload={
+                        "action": "append",
+                        "section": "preferences",
+                        "content": "Always answer in Chinese.",
+                    },
+                ),
+                LLMReply(final_text="已记住。"),
+                LLMReply(final_text="继续处理中。"),
+            ]
+        )
+        runtime.runtime_loop.llm = scripted
+        runtime.llm_client_factory.cache_client("default", scripted)
+        runtime.llm_client_factory.cache_client("minimax_coding", scripted)
+
+        with TestClient(app) as client:
+            first = client.post(
+                "/messages",
+                json={
+                    "channel_id": "feishu",
+                    "user_id": "demo",
+                    "conversation_id": "conv-feishu-memory",
+                    "message_id": "msg-feishu-memory-1",
+                    "body": "记住：以后始终用中文回复",
+                },
+            )
+            second = client.post(
+                "/messages",
+                json={
+                    "channel_id": "feishu",
+                    "user_id": "demo",
+                    "conversation_id": "conv-feishu-memory",
+                    "message_id": "msg-feishu-memory-2",
+                    "body": "继续当前任务",
+                },
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertIn("Always answer in Chinese.", runtime.memory_service.load("demo").text)
+        self.assertIn("User memory:", scripted.requests[-1].memory_text or "")
+        self.assertIn("Always answer in Chinese.", scripted.requests[-1].memory_text or "")
+
+    def test_http_session_resume_detaches_old_conversation_from_target_session(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+
+        seed_old = ScriptedLLMClient([LLMReply(final_text="seed old")])
+        runtime.runtime_loop.llm = seed_old
+        runtime.llm_client_factory.cache_client("openai_gpt5", seed_old)
+        runtime.llm_client_factory.cache_client("minimax_m25", seed_old)
+        runtime.llm_client_factory.cache_client("kimi_k2", seed_old)
+
+        with TestClient(app) as client:
+            old_first = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "conv-old",
+                    "message_id": "msg-old-1",
+                    "body": "seed old",
+                },
+            )
+            old_session_id = old_first.json()["session_id"]
+
+            seed_current = ScriptedLLMClient([LLMReply(final_text="seed current")])
+            runtime.runtime_loop.llm = seed_current
+            runtime.llm_client_factory.cache_client("openai_gpt5", seed_current)
+            current_first = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "conv-current",
+                    "message_id": "msg-current-1",
+                    "body": "seed current",
+                },
+            )
+            current_session_id = current_first.json()["session_id"]
+
+            resume_llm = ScriptedLLMClient(
+                [
+                    LLMReply(
+                        tool_name="session",
+                        tool_payload={"action": "resume", "session_id": old_session_id},
+                    )
+                ]
+            )
+            runtime.runtime_loop.llm = resume_llm
+            runtime.llm_client_factory.cache_client("openai_gpt5", resume_llm)
+            resumed = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "conv-current",
+                    "message_id": "msg-current-2",
+                    "body": f"切换到会话 {old_session_id}",
+                },
+            )
+
+            followup_llm = ScriptedLLMClient(
+                [
+                    LLMReply(final_text="from old"),
+                    LLMReply(final_text="from current"),
+                ]
+            )
+            runtime.runtime_loop.llm = followup_llm
+            runtime.llm_client_factory.cache_client("openai_gpt5", followup_llm)
+            old_followup = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "conv-old",
+                    "message_id": "msg-old-2",
+                    "body": "from old",
+                },
+            )
+            current_followup = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "conv-current",
+                    "message_id": "msg-current-3",
+                    "body": "from current",
+                },
+            )
+            resumed_session = client.get(f"/diagnostics/session/{old_session_id}")
+            old_new_session = client.get(f"/diagnostics/session/{old_followup.json()['session_id']}")
+
+        self.assertEqual(old_first.status_code, 200)
+        self.assertEqual(current_first.status_code, 200)
+        self.assertEqual(resumed.status_code, 200)
+        self.assertEqual(old_followup.status_code, 200)
+        self.assertEqual(current_followup.status_code, 200)
+        self.assertNotEqual(current_session_id, old_session_id)
+        self.assertNotEqual(old_followup.json()["session_id"], old_session_id)
+        self.assertEqual(current_followup.json()["session_id"], old_session_id)
+        self.assertEqual(old_followup.json()["events"][-1]["payload"]["text"], "from old")
+        self.assertEqual(current_followup.json()["events"][-1]["payload"]["text"], "from current")
+        self.assertEqual(resumed_session.status_code, 200)
+        self.assertEqual(old_new_session.status_code, 200)
+        resumed_history = [item["content"] for item in resumed_session.json()["history"]]
+        old_new_history = [item["content"] for item in old_new_session.json()["history"]]
+        self.assertIn("from current", resumed_history)
+        self.assertNotIn("from old", resumed_history)
+        self.assertIn("from old", old_new_history)
 
     def test_feishu_messages_endpoint_strips_feishu_card_protocol_before_persisting_history(self) -> None:
         app = build_test_app()

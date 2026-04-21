@@ -2,9 +2,9 @@
 enabled = true
 role = "general_assistant"
 app_id = "main_agent"
-allowed_tools = ["automation", "mcp", "runtime", "self_improve", "skill", "time", "spawn_subagent", "cancel_subagent"]
+allowed_tools = ["automation", "mcp", "runtime", "self_improve", "session", "memory", "skill", "time", "spawn_subagent", "cancel_subagent"]
 prompt_mode = "full"
-model_profile = "default"
+model_profile = "openai_gpt5"
 
 [agents.coding]
 enabled = true
@@ -12,7 +12,7 @@ role = "coding_agent"
 app_id = "main_agent"
 allowed_tools = ["runtime", "skill", "time"]
 prompt_mode = "child"
-model_profile = "default"
+model_profile = "minimax_m25"
 
 [agents.ops]
 enabled = false

@@ -267,6 +267,19 @@ class RuntimeContextTests(unittest.TestCase):
             ["先查一下 repo", "已经查了 repo。"],
         )
 
+    def test_runtime_context_injects_capped_memory_text(self) -> None:
+        context = assemble_runtime_context(
+            session_id="sess_memory",
+            current_message="继续当前任务",
+            system_prompt="You are marten-runtime.",
+            session_messages=[SessionMessage.user("继续当前任务")],
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1"),
+            memory_text="User memory:\n# MEMORY\n## preferences\n- Prefer concise answers.",
+        )
+
+        self.assertIn("User memory:", context.memory_text or "")
+        self.assertIn("preferences", context.memory_text or "")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,9 +3,10 @@ from __future__ import annotations
 import re
 
 from marten_runtime.session.models import SessionMessage
-
-PROFILE_ORDER = ["restricted", "standard", "elevated"]
-PROFILE_ALIASES = {"default": "restricted"}
+from marten_runtime.subagents.tool_profiles import (
+    PROFILE_ORDER,
+    normalize_tool_profile_name,
+)
 
 _EXPLICIT_SUBAGENT_INTENT_PATTERNS = [
     r"开启子代理",
@@ -62,10 +63,9 @@ def resolve_requested_subagent_tool_profile(
     latest_user_message: str | None = None,
     requested_tool_profile: str | None = None,
 ) -> str:
-    normalized_requested = PROFILE_ALIASES.get(
-        (requested_tool_profile or "").strip(),
-        (requested_tool_profile or "").strip(),
-    ) or "restricted"
+    normalized_requested = (
+        normalize_tool_profile_name(requested_tool_profile) or "restricted"
+    )
     inferred_minimum = infer_default_subagent_tool_profile(
         task=task,
         latest_user_message=latest_user_message,

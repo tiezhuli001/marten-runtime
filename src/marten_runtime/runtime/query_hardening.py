@@ -54,6 +54,79 @@ def is_time_query(message: str) -> bool:
     return any(token in normalized or token in message for token in tokens)
 
 
+def is_session_catalog_query(message: str) -> bool:
+    normalized = message.lower()
+    if is_runtime_context_query(message):
+        strong_session_tokens = (
+            "会话列表",
+            "历史会话",
+            "活跃会话",
+            "session list",
+            "session_id",
+            "切换会话",
+            "恢复会话",
+        )
+        if not any(token in normalized or token in message for token in strong_session_tokens):
+            return False
+    session_tokens = (
+        "会话",
+        "session",
+        "对话",
+        "历史会话",
+        "活跃会话",
+        "会话列表",
+        "session list",
+    )
+    if any(token in normalized or token in message for token in session_tokens):
+        return True
+    if "活跃" in message and "列表" in message:
+        automation_tokens = ("定时任务", "自动化", "automation", "cron")
+        return not any(token in normalized or token in message for token in automation_tokens)
+    return False
+
+
+def is_session_switch_query(message: str) -> bool:
+    normalized = message.lower()
+    exact_tokens = (
+        "切换到新会话",
+        "切到新会话",
+        "新开一个会话",
+        "新建一个会话",
+        "开启新会话",
+        "开始新会话",
+        "开启新对话",
+        "开始新对话",
+        "new session",
+        "start a new session",
+        "switch to a new session",
+        "resume session",
+        "恢复会话",
+        "切换会话",
+        "继续之前的会话",
+    )
+    if any(token in normalized or token in message for token in exact_tokens):
+        return True
+    if ("新会话" in message or "新对话" in message) and any(
+        token in message for token in ("切换", "切到", "新开", "新建", "开启", "开始")
+    ):
+        return True
+    if "会话" in message and any(
+        token in message for token in ("恢复", "继续", "切回", "回到")
+    ):
+        return True
+    if "session" in normalized and any(
+        token in normalized for token in ("new", "switch", "resume", "fresh")
+    ):
+        return True
+    return False
+
+
+def is_automation_list_query(message: str) -> bool:
+    normalized = message.lower()
+    automation_tokens = ("定时任务", "自动化", "automation", "cron")
+    return any(token in normalized or token in message for token in automation_tokens)
+
+
 def is_explicit_multi_step_tool_request(message: str) -> bool:
     normalized = message.lower()
     step_markers = (

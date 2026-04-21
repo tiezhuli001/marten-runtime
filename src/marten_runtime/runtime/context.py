@@ -23,6 +23,7 @@ class RuntimeContext(BaseModel):
     conversation_messages: list[RuntimeMessage] = Field(default_factory=list)
     compact_summary_text: str | None = None
     tool_outcome_summary_text: str | None = None
+    memory_text: str | None = None
     working_context: dict[str, object] = Field(default_factory=dict)
     working_context_text: str | None = None
     skill_snapshot: SkillSnapshot = Field(
@@ -57,6 +58,7 @@ def assemble_runtime_context(
     replay_limit: int = 6,
     compacted_context: CompactedContext | None = None,
     recent_tool_outcome_summaries: list[ToolOutcomeSummary | dict[str, object]] | None = None,
+    memory_text: str | None = None,
 ) -> RuntimeContext:
     all_messages = session_messages or []
     replay_source = all_messages
@@ -99,6 +101,7 @@ def assemble_runtime_context(
         ],
         compact_summary_text=compact_summary_text,
         tool_outcome_summary_text=tool_outcome_summary_text,
+        memory_text=memory_text,
         working_context=working_context,
         working_context_text=_render_working_context(working_context),
         skill_snapshot=skill_snapshot or SkillSnapshot(skill_snapshot_id="skill_default"),

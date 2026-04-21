@@ -54,6 +54,12 @@ class RunRecord(BaseModel):
     finished_at: datetime | None = None
     delivery_status: str = "none"
     error_code: str | None = None
+    provider_ref: str | None = None
+    attempted_profiles: list[str] = Field(default_factory=list)
+    attempted_providers: list[str] = Field(default_factory=list)
+    failover_trigger: str | None = None
+    failover_stage: str | None = None
+    final_provider_ref: str | None = None
     llm_request_count: int = 0
     preflight_input_tokens_estimate: int = 0
     preflight_estimator_kind: str = "rough"
@@ -126,6 +132,25 @@ class InMemoryRunHistory:
         record.delivery_status = delivery_status
         record.finished_at = datetime.now(timezone.utc)
         return record
+
+    def set_failover_state(
+        self,
+        run_id: str,
+        *,
+        provider_ref: str | None,
+        attempted_profiles: list[str],
+        attempted_providers: list[str],
+        failover_trigger: str | None,
+        failover_stage: str | None,
+        final_provider_ref: str | None,
+    ) -> None:
+        record = self._items[run_id]
+        record.provider_ref = provider_ref
+        record.attempted_profiles = list(attempted_profiles)
+        record.attempted_providers = list(attempted_providers)
+        record.failover_trigger = failover_trigger
+        record.failover_stage = failover_stage
+        record.final_provider_ref = final_provider_ref
 
     def get(self, run_id: str) -> RunRecord:
         return self._items[run_id]

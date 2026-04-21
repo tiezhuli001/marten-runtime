@@ -7,6 +7,7 @@ from marten_runtime.config.models_loader import (
     load_models_config,
     resolve_model_profile,
 )
+from marten_runtime.config.providers_loader import load_providers_config
 from marten_runtime.runtime.llm_client import (
     DemoLLMClient,
     LLMRequest,
@@ -17,6 +18,7 @@ from marten_runtime.tools.registry import ToolSnapshot
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODELS_TOML = REPO_ROOT / "config/models.toml"
+PROVIDERS_TOML = REPO_ROOT / "config/providers.toml"
 
 
 class ModelSmokeTests(unittest.TestCase):
@@ -52,26 +54,26 @@ class ModelSmokeTests(unittest.TestCase):
 
             config = load_models_config(str(repo_root / "config/models.toml"))
 
-        self.assertEqual(config.default_profile, "default")
-        self.assertIn("minimax_coding", config.profiles)
-        self.assertEqual(config.profiles["default"].model, "gpt-5.4")
+        self.assertEqual(config.default_profile, "openai_gpt5")
         self.assertEqual(
-            config.profiles["minimax_coding"].base_url,
-            "https://api.minimaxi.com/v1",
+            sorted(config.profiles.keys()),
+            ["kimi_k2", "minimax_m25", "openai_gpt5"],
         )
+        self.assertEqual(config.profiles["openai_gpt5"].model, "gpt-5.4")
+        self.assertEqual(config.profiles["minimax_m25"].provider_ref, "minimax")
 
     def test_models_loader_reads_default_profile(self) -> None:
         config = load_models_config(str(MODELS_TOML))
         profile_name, profile = resolve_model_profile(config)
 
-        self.assertEqual(profile_name, "default")
-        self.assertEqual(profile.provider, "openai")
+        self.assertEqual(profile_name, "openai_gpt5")
+        self.assertEqual(profile.provider_ref, "openai")
         self.assertEqual(profile.model, "gpt-5.4")
-        self.assertIsNone(profile.base_url)
+        self.assertEqual(profile.fallback_profiles, ["kimi_k2", "minimax_m25"])
 
     def test_models_loader_accepts_optional_context_window_metadata(self) -> None:
         profile = ModelProfile(
-            provider="openai",
+            provider_ref="openai",
             model="gpt-4.1",
             context_window_tokens=256000,
             reserve_output_tokens=12000,
@@ -85,45 +87,32 @@ class ModelSmokeTests(unittest.TestCase):
         self.assertEqual(profile.compact_trigger_ratio, 0.75)
         self.assertEqual(profile.tokenizer_family, "openai_o200k")
         self.assertTrue(profile.supports_provider_usage)
+        self.assertEqual(profile.fallback_profiles, [])
 
     def test_build_llm_client_fails_closed_without_api_key(self) -> None:
         config = load_models_config(str(MODELS_TOML))
+        providers = load_providers_config(str(PROVIDERS_TOML))
         profile_name, profile = resolve_model_profile(config)
 
         with self.assertRaisesRegex(ValueError, "missing_llm_api_key:OPENAI_API_KEY"):
-            build_llm_client(profile_name=profile_name, profile=profile, env={})
-
-    def test_build_llm_client_uses_custom_env_and_base_url_for_openai_compatible_profile(
-        self,
-    ) -> None:
-        profile = ModelProfile(
-            provider="openai",
-            model="MiniMax-M2.5",
-            base_url="https://api.minimaxi.com/v1",
-            api_key_env="MINIMAX_API_KEY",
-        )
-
-        client = build_llm_client(
-            profile_name="minimax_coding",
-            profile=profile,
-            env={"MINIMAX_API_KEY": "secret"},
-        )
-
-        self.assertIsInstance(client, OpenAIChatLLMClient)
-        assert isinstance(client, OpenAIChatLLMClient)
-        self.assertEqual(client.api_key, "secret")
-        self.assertEqual(client.base_url, "https://api.minimaxi.com/v1")
-        self.assertEqual(client.model_name, "MiniMax-M2.5")
+            build_llm_client(
+                profile_name=profile_name,
+                profile=profile,
+                providers_config=providers,
+                env={},
+            )
 
     def test_build_llm_client_allows_openai_api_base_env_override(self) -> None:
         profile = ModelProfile(
-            provider="openai",
+            provider_ref="openai",
             model="gpt-4.1",
         )
+        providers = load_providers_config(str(PROVIDERS_TOML))
 
         client = build_llm_client(
-            profile_name="default",
+            profile_name="openai_gpt5",
             profile=profile,
+            providers_config=providers,
             env={
                 "OPENAI_API_KEY": "secret",
                 "OPENAI_API_BASE": "https://openai-proxy.example/v1",
@@ -133,27 +122,6 @@ class ModelSmokeTests(unittest.TestCase):
         self.assertIsInstance(client, OpenAIChatLLMClient)
         assert isinstance(client, OpenAIChatLLMClient)
         self.assertEqual(client.base_url, "https://openai-proxy.example/v1")
-
-    def test_build_llm_client_allows_minimax_api_base_env_override(self) -> None:
-        profile = ModelProfile(
-            provider="openai",
-            model="MiniMax-M2.5",
-            base_url="https://api.minimaxi.com/v1",
-            api_key_env="MINIMAX_API_KEY",
-        )
-
-        client = build_llm_client(
-            profile_name="minimax_coding",
-            profile=profile,
-            env={
-                "MINIMAX_API_KEY": "secret",
-                "MINIMAX_API_BASE": "https://api.minimax-proxy.example/v1",
-            },
-        )
-
-        self.assertIsInstance(client, OpenAIChatLLMClient)
-        assert isinstance(client, OpenAIChatLLMClient)
-        self.assertEqual(client.base_url, "https://api.minimax-proxy.example/v1")
 
 
 if __name__ == "__main__":

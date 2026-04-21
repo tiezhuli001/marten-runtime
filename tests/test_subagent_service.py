@@ -297,7 +297,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                 app_id="main_agent",
                 allowed_tools=["runtime", "skill", "time"],
                 prompt_mode="child",
-                model_profile="default",
+                model_profile="openai_gpt5",
             )
         )
         app_runtime = SimpleNamespace(
@@ -316,10 +316,10 @@ class SubagentServiceContractTests(unittest.TestCase):
             app_runtimes={"main_agent": app_runtime},
             llm_client_factory=FakeLLMFactory(),
             models_config=ModelsConfig(
-                default_profile="default",
+                default_profile="openai_gpt5",
                 profiles={
-                    "default": ModelProfile(
-                        provider="openai",
+                    "openai_gpt5": ModelProfile(
+                        provider_ref="openai",
                         model="gpt-4.1",
                         tokenizer_family="openai_o200k",
                     )
@@ -351,10 +351,10 @@ class SubagentServiceContractTests(unittest.TestCase):
         self.assertEqual(agent.allowed_tools, ["runtime", "skill", "time"])
         self.assertEqual(captured["system_prompt"], "coding child prompt")
         self.assertEqual(captured["bootstrap_manifest_id"], "boot_main_agent_child")
-        self.assertEqual(captured["model_profile_name"], "default")
+        self.assertEqual(captured["model_profile_name"], "openai_gpt5")
         self.assertEqual(captured["tokenizer_family"], "openai_o200k")
-        self.assertEqual(captured["factory_profile_name"], "default")
-        self.assertEqual(captured["llm_client"], {"profile_name": "default"})
+        self.assertEqual(captured["factory_profile_name"], "openai_gpt5")
+        self.assertEqual(captured["llm_client"], {"profile_name": "openai_gpt5"})
 
     def test_spawn_persists_target_agent_app_id_in_task_record(self) -> None:
         from marten_runtime.agents.registry import AgentRegistry
@@ -376,7 +376,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                 app_id="code_assistant",
                 allowed_tools=["runtime", "skill", "time"],
                 prompt_mode="child",
-                model_profile="default",
+                model_profile="openai_gpt5",
             )
         )
         service = SubagentService(
@@ -496,6 +496,50 @@ class SubagentServiceContractTests(unittest.TestCase):
         task = service.store.get(result["task_id"])
         self.assertEqual(task.tool_profile, "restricted")
         self.assertEqual(task.effective_tool_profile, "restricted")
+
+    def test_spawn_accepts_mcp_profile_alias_and_normalizes_to_standard(self) -> None:
+        service = self._build_service()
+
+        result = service.spawn(
+            task="query github repo in background",
+            label="mcp-alias",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="mcp",
+            parent_allowed_tools=["automation", "mcp", "runtime", "skill", "time"],
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        self.assertEqual(result["effective_tool_profile"], "standard")
+        task = service.store.get(result["task_id"])
+        self.assertEqual(task.tool_profile, "standard")
+        self.assertEqual(task.effective_tool_profile, "standard")
+
+    def test_spawn_accepts_mcp_prefixed_profile_alias_and_normalizes_to_standard(self) -> None:
+        service = self._build_service()
+
+        result = service.spawn(
+            task="query github repo in background",
+            label="mcp-prefixed-alias",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="mcp:github-or-web",
+            parent_allowed_tools=["automation", "mcp", "runtime", "skill", "time"],
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        self.assertEqual(result["effective_tool_profile"], "standard")
+        task = service.store.get(result["task_id"])
+        self.assertEqual(task.tool_profile, "standard")
+        self.assertEqual(task.effective_tool_profile, "standard")
 
     def test_cancelled_queued_task_does_not_run_later(self) -> None:
         service = self._build_service()

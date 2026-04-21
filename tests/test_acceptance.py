@@ -60,13 +60,55 @@ def _write_test_repo(root: Path) -> None:
             'app_id = "main_agent"\n'
             'allowed_tools = ["automation", "mcp", "runtime", "self_improve", "skill", "time", "spawn_subagent", "cancel_subagent"]\n'
             'prompt_mode = "full"\n'
-            'model_profile = "minimax_coding"\n\n'
+            'model_profile = "minimax_m25"\n\n'
             '[agents.coding]\n'
             'role = "coding_agent"\n'
             'app_id = "code_assistant"\n'
             'allowed_tools = ["runtime", "skill", "time"]\n'
             'prompt_mode = "child"\n'
-            'model_profile = "default"\n'
+            'model_profile = "openai_gpt5"\n'
+        ),
+        encoding="utf-8",
+    )
+    (root / "config" / "models.toml").write_text(
+        (
+            'default_profile = "openai_gpt5"\n\n'
+            '[profiles.openai_gpt5]\n'
+            'provider_ref = "openai"\n'
+            'model = "gpt-5.4"\n'
+            'fallback_profiles = ["kimi_k2", "minimax_m25"]\n\n'
+            '[profiles.kimi_k2]\n'
+            'provider_ref = "kimi"\n'
+            'model = "kimi-k2"\n\n'
+            '[profiles.minimax_m25]\n'
+            'provider_ref = "minimax"\n'
+            'model = "MiniMax-M2.5"\n'
+        ),
+        encoding="utf-8",
+    )
+    (root / "config" / "providers.toml").write_text(
+        (
+            '[providers.openai]\n'
+            'adapter = "openai_compat"\n'
+            'base_url = "https://api.openai.com/v1"\n'
+            'api_key_env = "OPENAI_API_KEY"\n'
+            'supports_responses_api = true\n'
+            'supports_responses_streaming = true\n'
+            'supports_chat_completions = true\n\n'
+            '[providers.minimax]\n'
+            'adapter = "openai_compat"\n'
+            'base_url = "https://api.minimaxi.com/v1"\n'
+            'api_key_env = "MINIMAX_API_KEY"\n'
+            'supports_responses_api = false\n'
+            'supports_responses_streaming = false\n'
+            'supports_chat_completions = true\n\n'
+            '[providers.kimi]\n'
+            'adapter = "openai_compat"\n'
+            'base_url = "https://api.moonshot.cn/v1"\n'
+            'api_key_env = "KIMI_API_KEY"\n'
+            'supports_responses_api = false\n'
+            'supports_responses_streaming = false\n'
+            'supports_chat_completions = true\n'
         ),
         encoding="utf-8",
     )
@@ -83,12 +125,33 @@ def _write_test_repo(root: Path) -> None:
     _write_test_app(root, "code_assistant", prompt_mode="child", marker="CODE APP", default_agent="coding")
 
 
+def _write_session_enabled_coding_repo(root: Path) -> None:
+    _write_test_repo(root)
+    (root / "config" / "agents.toml").write_text(
+        (
+            '[agents.main]\n'
+            'role = "general_assistant"\n'
+            'app_id = "main_agent"\n'
+            'allowed_tools = ["automation", "mcp", "runtime", "self_improve", "session", "skill", "time", "spawn_subagent", "cancel_subagent"]\n'
+            'prompt_mode = "full"\n'
+            'model_profile = "minimax_m25"\n\n'
+            '[agents.coding]\n'
+            'role = "coding_agent"\n'
+            'app_id = "code_assistant"\n'
+            'allowed_tools = ["session", "runtime", "skill", "time"]\n'
+            'prompt_mode = "child"\n'
+            'model_profile = "openai_gpt5"\n'
+        ),
+        encoding="utf-8",
+    )
+    (root / "config" / "bindings.toml").write_text("", encoding="utf-8")
+
+
 def _build_repo_backed_test_app(root: Path):
     return create_app(
         repo_root=root,
         env={"MINIMAX_API_KEY": "minimax-test", "OPENAI_API_KEY": "openai-test"},
         load_env_file=False,
-        use_compat_json=False,
     )
 
 
@@ -233,8 +296,8 @@ class AcceptanceTests(unittest.TestCase):
 
         with TestClient(app) as client:
             runtime.runtime_loop.llm = plain_llm
-            runtime.llm_client_factory.cache_client("default", plain_llm)
-            runtime.llm_client_factory.cache_client("minimax_coding", plain_llm)
+            runtime.llm_client_factory.cache_client("openai_gpt5", plain_llm)
+            runtime.llm_client_factory.cache_client("minimax_m25", plain_llm)
             plain = client.post(
                 "/messages",
                 json={
@@ -253,8 +316,8 @@ class AcceptanceTests(unittest.TestCase):
             ).json()
 
             runtime.runtime_loop.llm = builtin_llm
-            runtime.llm_client_factory.cache_client("default", builtin_llm)
-            runtime.llm_client_factory.cache_client("minimax_coding", builtin_llm)
+            runtime.llm_client_factory.cache_client("openai_gpt5", builtin_llm)
+            runtime.llm_client_factory.cache_client("minimax_m25", builtin_llm)
             builtin = client.post(
                 "/messages",
                 json={
@@ -273,8 +336,8 @@ class AcceptanceTests(unittest.TestCase):
             ).json()
 
             runtime.runtime_loop.llm = mcp_llm
-            runtime.llm_client_factory.cache_client("default", mcp_llm)
-            runtime.llm_client_factory.cache_client("minimax_coding", mcp_llm)
+            runtime.llm_client_factory.cache_client("openai_gpt5", mcp_llm)
+            runtime.llm_client_factory.cache_client("minimax_m25", mcp_llm)
             mcp = client.post(
                 "/messages",
                 json={
@@ -353,7 +416,6 @@ class AcceptanceTests(unittest.TestCase):
         runtime = build_http_runtime(
             env={"OPENAI_API_KEY": "test-key", "MINIMAX_API_KEY": "test-key"},
             load_env_file=False,
-            use_compat_json=False,
         )
 
         self.assertFalse(runtime.channels_config.feishu.enabled)
@@ -361,7 +423,7 @@ class AcceptanceTests(unittest.TestCase):
 
     def test_http_runtime_bootstrap_fails_closed_without_provider_key(self) -> None:
         with self.assertRaisesRegex(ValueError, "missing_llm_api_key:OPENAI_API_KEY"):
-            build_http_runtime(env={}, load_env_file=False, use_compat_json=False)
+            build_http_runtime(env={}, load_env_file=False)
 
     def test_feishu_websocket_service_starts_with_app_when_channel_enabled(self) -> None:
         app = build_test_app()
@@ -435,7 +497,7 @@ class AcceptanceTests(unittest.TestCase):
                 LLMReply(final_text="先给你看了上下文状态"),
             ]
         )
-        runtime.llm_client_factory.cache_client("minimax_coding", scripted)
+        runtime.llm_client_factory.cache_client("minimax_m25", scripted)
         runtime.runtime_loop.llm = scripted
 
         with TestClient(app) as client:
@@ -465,7 +527,7 @@ class AcceptanceTests(unittest.TestCase):
             ]
         )
         second_llm = ScriptedLLMClient([LLMReply(final_text="followup-ok")])
-        runtime.llm_client_factory.cache_client("minimax_coding", first_llm)
+        runtime.llm_client_factory.cache_client("minimax_m25", first_llm)
         runtime.runtime_loop.llm = first_llm
 
         with TestClient(app) as client:
@@ -479,7 +541,7 @@ class AcceptanceTests(unittest.TestCase):
                     "body": "当前上下文窗口多大？",
                 },
             )
-            runtime.llm_client_factory.cache_client("minimax_coding", second_llm)
+            runtime.llm_client_factory.cache_client("minimax_m25", second_llm)
             runtime.runtime_loop.llm = second_llm
             second = client.post(
                 "/messages",
@@ -504,8 +566,8 @@ class AcceptanceTests(unittest.TestCase):
             test_app = _build_repo_backed_test_app(repo_root)
             assistant_llm = ScriptedLLMClient([LLMReply(final_text="assistant profile")])
             coding_llm = ScriptedLLMClient([LLMReply(final_text="coding profile")])
-            test_app.state.runtime.llm_client_factory.cache_client("minimax_coding", assistant_llm)
-            test_app.state.runtime.llm_client_factory.cache_client("default", coding_llm)
+            test_app.state.runtime.llm_client_factory.cache_client("minimax_m25", assistant_llm)
+            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt5", coding_llm)
             test_app.state.runtime.runtime_loop.llm = assistant_llm
 
             with TestClient(test_app) as client:
@@ -538,6 +600,56 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(coding_llm.requests[0].agent_id, "coding")
         self.assertEqual(assistant_llm.requests[0].agent_id, "main")
 
+    def test_http_session_new_keeps_next_turn_routed_to_current_active_agent(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            _write_session_enabled_coding_repo(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
+            main_llm = ScriptedLLMClient([LLMReply(final_text="main route")])
+            coding_llm = ScriptedLLMClient(
+                [
+                    LLMReply(tool_name="session", tool_payload={"action": "new"}),
+                    LLMReply(final_text="coding route retained"),
+                ]
+            )
+            test_app.state.runtime.llm_client_factory.cache_client("minimax_m25", main_llm)
+            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt5", coding_llm)
+            test_app.state.runtime.runtime_loop.llm = main_llm
+
+            with TestClient(test_app) as client:
+                first = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": "session-new-routing",
+                        "message_id": "1",
+                        "body": "切换到新会话",
+                        "requested_agent_id": "coding",
+                    },
+                )
+                second = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": "session-new-routing",
+                        "message_id": "2",
+                        "body": "继续",
+                    },
+                )
+                session_response = client.get(f"/diagnostics/session/{second.json()['session_id']}")
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertIn("已切换到新会话", first.json()["events"][-1]["payload"]["text"])
+        self.assertEqual(second.json()["events"][-1]["payload"]["text"], "coding route retained")
+        self.assertEqual(session_response.status_code, 200)
+        self.assertEqual(session_response.json()["active_agent_id"], "coding")
+        self.assertEqual(len(main_llm.requests), 0)
+        self.assertEqual(coding_llm.requests[0].agent_id, "coding")
+        self.assertEqual(coding_llm.requests[1].agent_id, "coding")
+
     def test_http_runtime_switches_app_manifest_and_bootstrap_prompt_by_selected_agent(self) -> None:
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
@@ -545,8 +657,8 @@ class AcceptanceTests(unittest.TestCase):
             coding_llm = ScriptedLLMClient([LLMReply(final_text="coding profile")])
             assistant_llm = ScriptedLLMClient([LLMReply(final_text="assistant profile")])
             test_app = _build_repo_backed_test_app(repo_root)
-            test_app.state.runtime.llm_client_factory.cache_client("minimax_coding", assistant_llm)
-            test_app.state.runtime.llm_client_factory.cache_client("default", coding_llm)
+            test_app.state.runtime.llm_client_factory.cache_client("minimax_m25", assistant_llm)
+            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt5", coding_llm)
             test_app.state.runtime.runtime_loop.llm = assistant_llm
 
             with TestClient(test_app) as client:
@@ -576,10 +688,10 @@ class AcceptanceTests(unittest.TestCase):
             _write_test_repo(repo_root)
             test_app = _build_repo_backed_test_app(repo_root)
             seed_llm = ScriptedLLMClient([LLMReply(final_text="seed-1"), LLMReply(final_text="seed-2")])
-            test_app.state.runtime.llm_client_factory.cache_client("minimax_coding", seed_llm)
+            test_app.state.runtime.llm_client_factory.cache_client("minimax_m25", seed_llm)
             test_app.state.runtime.runtime_loop.llm = seed_llm
-            test_app.state.runtime.models_config.profiles["minimax_coding"] = test_app.state.runtime.models_config.profiles[
-                "minimax_coding"
+            test_app.state.runtime.models_config.profiles["minimax_m25"] = test_app.state.runtime.models_config.profiles[
+                "minimax_m25"
             ].model_copy(update={"context_window_tokens": 80, "reserve_output_tokens": 0, "compact_trigger_ratio": 0.2})
 
             with TestClient(test_app) as client:
@@ -609,7 +721,7 @@ class AcceptanceTests(unittest.TestCase):
                         LLMReply(final_text="proactive compact final"),
                     ]
                 )
-                test_app.state.runtime.llm_client_factory.cache_client("minimax_coding", compacting_llm)
+                test_app.state.runtime.llm_client_factory.cache_client("minimax_m25", compacting_llm)
                 test_app.state.runtime.runtime_loop.llm = compacting_llm
                 third = client.post(
                     "/messages",
@@ -641,7 +753,7 @@ class AcceptanceTests(unittest.TestCase):
             _write_test_repo(repo_root)
             test_app = _build_repo_backed_test_app(repo_root)
             seed_llm = ScriptedLLMClient([LLMReply(final_text="seed-1"), LLMReply(final_text="seed-2")])
-            test_app.state.runtime.llm_client_factory.cache_client("minimax_coding", seed_llm)
+            test_app.state.runtime.llm_client_factory.cache_client("minimax_m25", seed_llm)
             test_app.state.runtime.runtime_loop.llm = seed_llm
 
             with TestClient(test_app) as client:
@@ -666,7 +778,7 @@ class AcceptanceTests(unittest.TestCase):
                     },
                 )
                 llm = PromptTooLongThenCompactThenFinalLLMClient()
-                test_app.state.runtime.llm_client_factory.cache_client("minimax_coding", llm)
+                test_app.state.runtime.llm_client_factory.cache_client("minimax_m25", llm)
                 test_app.state.runtime.runtime_loop.llm = llm
                 response = client.post(
                     "/messages",

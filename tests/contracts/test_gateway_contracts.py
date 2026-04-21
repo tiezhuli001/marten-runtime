@@ -24,11 +24,22 @@ from marten_runtime.session.compaction import compact_context
 from marten_runtime.skills.service import SkillRuntimeView, SkillService
 from marten_runtime.skills.snapshot import SkillSnapshot
 from tests.http_app_support import build_test_app
-from tests.support.scripted_llm import AuthFailingLLMClient, FailingLLMClient
+from tests.support.scripted_llm import AuthFailingLLMClient, FailingLLMClient, OverloadedLLMClient
 
 
 class GatewayContractTests(unittest.TestCase):
-    FAMILY_TOOLS = ["automation", "cancel_subagent", "mcp", "runtime", "self_improve", "skill", "spawn_subagent", "time"]
+    FAMILY_TOOLS = [
+        "automation",
+        "cancel_subagent",
+        "mcp",
+        "memory",
+        "runtime",
+        "self_improve",
+        "session",
+        "skill",
+        "spawn_subagent",
+        "time",
+    ]
 
     def _assert_http_turn_keeps_family_tool_surface(
         self,
@@ -68,8 +79,8 @@ class GatewayContractTests(unittest.TestCase):
         app = build_test_app()
         runtime = app.state.runtime
         runtime.runtime_loop.llm = AuthFailingLLMClient()
-        runtime.llm_client_factory.cache_client("default", runtime.runtime_loop.llm)
-        runtime.llm_client_factory.cache_client("minimax_coding", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("openai_gpt5", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_m25", runtime.runtime_loop.llm)
         runtime.tool_registry.register(
             "mcp",
             lambda payload: {
@@ -177,8 +188,8 @@ class GatewayContractTests(unittest.TestCase):
             ]
         )
         runtime.runtime_loop.llm = llm
-        runtime.llm_client_factory.cache_client("default", llm)
-        runtime.llm_client_factory.cache_client("minimax_coding", llm)
+        runtime.llm_client_factory.cache_client("openai_gpt5", llm)
+        runtime.llm_client_factory.cache_client("minimax_m25", llm)
 
         with TestClient(app) as client:
             response = client.post(
@@ -195,13 +206,13 @@ class GatewayContractTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         final_text = response.json()["events"][-1]["payload"]["text"]
         self.assertIn("当前上下文使用详情", final_text)
-        self.assertIn("下一次请求预计输入", final_text)
+        self.assertIn("当前会话下一次请求预计带入", final_text)
         self.assertEqual(len(llm.requests), 1)
         run_id = response.json()["events"][-1]["run_id"]
         tool_result = runtime.run_history.get(run_id).tool_calls[0]["tool_result"]
         self.assertTrue(tool_result["ok"])
         self.assertEqual(tool_result["action"], "context_status")
-        self.assertEqual(tool_result["model_profile"], "default")
+        self.assertEqual(tool_result["model_profile"], "openai_gpt5")
         self.assertIn("summary", tool_result)
         self.assertIn("usage_percent", tool_result)
         self.assertIn("effective_window", tool_result)
@@ -239,7 +250,11 @@ class GatewayContractTests(unittest.TestCase):
 
     def test_http_messages_return_provider_specific_error_event_instead_of_500_when_llm_fails(self) -> None:
         app = build_test_app()
-        app.state.runtime.runtime_loop.llm = FailingLLMClient()
+        runtime = app.state.runtime
+        runtime.runtime_loop.llm = FailingLLMClient()
+        runtime.llm_client_factory.cache_client("openai_gpt5", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("kimi_k2", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_m25", runtime.runtime_loop.llm)
 
         with TestClient(app) as client:
             response = client.post(
@@ -259,12 +274,38 @@ class GatewayContractTests(unittest.TestCase):
         self.assertEqual(body["events"][-1]["payload"]["code"], "PROVIDER_TRANSPORT_ERROR")
         self.assertEqual(body["events"][-1]["payload"]["text"], "暂时没有生成可见回复，请重试。")
 
+    def test_http_messages_return_busy_text_when_provider_is_overloaded(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        runtime.runtime_loop.llm = OverloadedLLMClient()
+        runtime.llm_client_factory.cache_client("openai_gpt5", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("kimi_k2", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_m25", runtime.runtime_loop.llm)
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "compat-overloaded",
+                    "message_id": "overloaded-1",
+                    "body": "hello",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["events"][-1]["event_type"], "error")
+        self.assertEqual(body["events"][-1]["payload"]["code"], "PROVIDER_UPSTREAM_UNAVAILABLE")
+        self.assertEqual(body["events"][-1]["payload"]["text"], "当前模型服务繁忙，请稍后重试。")
+
     def test_http_messages_return_provider_auth_error_when_provider_auth_fails(self) -> None:
         app = build_test_app()
         runtime = app.state.runtime
         runtime.runtime_loop.llm = AuthFailingLLMClient()
-        runtime.llm_client_factory.cache_client("default", runtime.runtime_loop.llm)
-        runtime.llm_client_factory.cache_client("minimax_coding", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("openai_gpt5", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_m25", runtime.runtime_loop.llm)
 
         with TestClient(app) as client:
             response = client.post(
@@ -309,8 +350,8 @@ class GatewayContractTests(unittest.TestCase):
             app = build_test_app()
             runtime = app.state.runtime
             runtime.runtime_loop.llm = AuthFailingLLMClient()
-            runtime.llm_client_factory.cache_client("default", runtime.runtime_loop.llm)
-            runtime.llm_client_factory.cache_client("minimax_coding", runtime.runtime_loop.llm)
+            runtime.llm_client_factory.cache_client("openai_gpt5", runtime.runtime_loop.llm)
+            runtime.llm_client_factory.cache_client("minimax_m25", runtime.runtime_loop.llm)
             runtime.skill_service = SkillService([str(skills_root)])
 
             with TestClient(app) as client:

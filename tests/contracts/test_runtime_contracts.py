@@ -68,6 +68,8 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertNotIn("mock_search", app.state.runtime.tool_registry.list())
         self.assertIn("automation", app.state.runtime.tool_registry.list())
         self.assertIn("self_improve", app.state.runtime.tool_registry.list())
+        self.assertIn("session", app.state.runtime.tool_registry.list())
+        self.assertIn("memory", app.state.runtime.tool_registry.list())
         self.assertNotIn("register_automation", app.state.runtime.tool_registry.list())
         self.assertNotIn("list_lesson_candidates", app.state.runtime.tool_registry.list())
 
@@ -80,6 +82,8 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertIn("mcp", assistant.allowed_tools)
         self.assertIn("automation", assistant.allowed_tools)
         self.assertIn("self_improve", assistant.allowed_tools)
+        self.assertIn("session", assistant.allowed_tools)
+        self.assertIn("memory", assistant.allowed_tools)
         self.assertIn("runtime", assistant.allowed_tools)
         self.assertIn("time", assistant.allowed_tools)
         self.assertIn("spawn_subagent", assistant.allowed_tools)
@@ -88,7 +92,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertNotIn("list_lesson_candidates", assistant.allowed_tools)
         self.assertEqual(
             assistant.allowed_tools,
-            ["automation", "mcp", "runtime", "self_improve", "skill", "time", "spawn_subagent", "cancel_subagent"],
+            ["automation", "mcp", "runtime", "self_improve", "session", "memory", "skill", "time", "spawn_subagent", "cancel_subagent"],
         )
 
     def test_mcp_family_tool_is_the_only_model_visible_mcp_entrypoint(self) -> None:
@@ -359,7 +363,7 @@ class RuntimeContractTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[2]
         github_server = next(
             server
-            for server in load_mcp_servers(str(repo_root / "config/mcp.toml"), str(repo_root / "mcps.json"))
+            for server in load_mcp_servers(str(repo_root / "mcps.json"))
             if server.server_id == "github"
         )
 
@@ -421,8 +425,8 @@ class RuntimeContractTests(unittest.TestCase):
                 LLMReply(final_text="最新提交已返回。"),
             ]
         )
-        runtime.llm_client_factory.cache_client("default", runtime.runtime_loop.llm)
-        runtime.llm_client_factory.cache_client("minimax_coding", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("openai_gpt5", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_m25", runtime.runtime_loop.llm)
 
         with TestClient(app) as client:
             response = client.post(

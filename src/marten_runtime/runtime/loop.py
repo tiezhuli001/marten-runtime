@@ -18,6 +18,7 @@ from marten_runtime.runtime.run_outcome_flow import (
     finish_run_error,
     finish_run_success,
     is_provider_failure,
+    provider_failure_text,
     record_failure,
     tool_rejection_text,
 )
@@ -34,6 +35,10 @@ from marten_runtime.runtime.llm_client import (
     ToolExchange,
     estimate_request_usage,
     estimate_request_tokens,
+)
+from marten_runtime.runtime.llm_failover import (
+    next_fallback_profile,
+    should_failover,
 )
 from marten_runtime.runtime.provider_retry import normalize_provider_error
 from marten_runtime.runtime.tool_calls import (
@@ -69,6 +74,7 @@ DEFAULT_ALLOWED_TOOLS = [
     "mcp",
     "runtime",
     "self_improve",
+    "session",
     "skill",
     "time",
 ]
@@ -125,6 +131,7 @@ class RuntimeLoop:
         langfuse_observer: LangfuseObserver | None = None,
         self_improve_recorder: SelfImproveRecorder | None = None,
         self_improve_post_commit_callback=None,
+        profile_runtime_resolver: Callable[[str], tuple[LLMClient, object]] | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -134,9 +141,32 @@ class RuntimeLoop:
         )
         self.self_improve_recorder = self_improve_recorder
         self.self_improve_post_commit_callback = self_improve_post_commit_callback
+        self.profile_runtime_resolver = profile_runtime_resolver
         self.request_count = 0
         self.last_request_count = 0
         self.max_tool_rounds = 8
+
+    @staticmethod
+    def _request_for_client(
+        request: LLMRequest,
+        llm_client: LLMClient,
+        *,
+        tokenizer_family: str | None,
+        timeout_seconds_override: float | None,
+        stop_event: threading.Event | None,
+        deadline_monotonic: float | None,
+    ) -> LLMRequest:
+        return request.model_copy(
+            update={
+                "model_name": getattr(llm_client, "model_name", None),
+                "tokenizer_family": tokenizer_family,
+                "timeout_seconds_override": timeout_seconds_override
+                if timeout_seconds_override is not None
+                else RuntimeLoop._remaining_timeout_seconds(deadline_monotonic),
+                "cooperative_stop_event": stop_event,
+                "cooperative_deadline_monotonic": deadline_monotonic,
+            }
+        )
 
     @staticmethod
     def _usage_payload(usage) -> dict[str, int] | None:  # noqa: ANN001
@@ -211,6 +241,7 @@ class RuntimeLoop:
             ],
             "compact_summary_text": ctx.compact_summary_text,
             "tool_outcome_summary_text": ctx.tool_outcome_summary_text,
+            "memory_text": ctx.memory_text,
             "working_context_text": ctx.working_context_text,
             "skill_heads_text": ctx.skill_heads_text,
             "capability_catalog_text": ctx.capability_catalog_text,
@@ -260,6 +291,7 @@ class RuntimeLoop:
         capability_catalog_text: str | None = None,
         always_on_skill_text: str | None = None,
         channel_protocol_instruction_text: str | None = None,
+        memory_text: str | None = None,
         activated_skill_ids: list[str] | None = None,
         activated_skill_bodies: list[str] | None = None,
         compact_settings: CompactionSettings | None = None,
@@ -267,6 +299,8 @@ class RuntimeLoop:
         request_kind: str = "interactive",
         parent_run_id: str | None = None,
         channel_id: str | None = None,
+        conversation_id: str | None = None,
+        user_id: str | None = None,
         stop_event: threading.Event | None = None,
         deadline_monotonic: float | None = None,
         timeout_seconds_override: float | None = None,
@@ -281,6 +315,18 @@ class RuntimeLoop:
             allowed_tools=list(DEFAULT_ALLOWED_TOOLS),
         )
         resolved_llm = llm_client or self.llm
+        active_profile_name = (
+            model_profile_name
+            or getattr(resolved_llm, "profile_name", None)
+            or "default"
+        )
+        active_tokenizer_family = tokenizer_family
+        attempted_profiles: list[str] = [active_profile_name]
+        attempted_providers: list[str] = [
+            getattr(resolved_llm, "provider_name", "unknown")
+        ]
+        failover_trigger: str | None = None
+        failover_stage: str | None = None
         resolved_compact_settings = compact_settings or CompactionSettings()
         tool_snapshot = self.tools.build_snapshot(resolved_agent.allowed_tools)
         resolved_compacted_context = compacted_context
@@ -291,7 +337,7 @@ class RuntimeLoop:
             agent_id=resolved_agent.agent_id,
             app_id=resolved_agent.app_id,
             model_name=getattr(resolved_llm, "model_name", None),
-            tokenizer_family=tokenizer_family,
+            tokenizer_family=active_tokenizer_family,
             system_prompt=system_prompt,
             conversation_messages=[
                 ConversationMessage(role=item.role, content=item.content)
@@ -352,6 +398,7 @@ class RuntimeLoop:
             capability_catalog_text=capability_catalog_text,
             always_on_skill_text=always_on_skill_text,
             channel_protocol_instruction_text=channel_protocol_instruction_text,
+            memory_text=memory_text,
             activated_skill_bodies=activated_skill_bodies,
             recent_tool_outcome_summaries=recent_tool_outcome_summaries,
         )
@@ -373,6 +420,7 @@ class RuntimeLoop:
             capability_catalog_text=capability_catalog_text,
             always_on_skill_text=always_on_skill_text,
             channel_protocol_instruction_text=channel_protocol_instruction_text,
+            memory_text=memory_text,
             activated_skill_bodies=activated_skill_bodies,
             recent_tool_outcome_summaries=recent_tool_outcome_summaries,
         )
@@ -415,7 +463,7 @@ class RuntimeLoop:
             agent_id=resolved_agent.agent_id,
             app_id=resolved_agent.app_id,
             model_name=getattr(resolved_llm, "model_name", None),
-            tokenizer_family=tokenizer_family,
+            tokenizer_family=active_tokenizer_family,
             channel_protocol_instruction_text=channel_protocol_instruction_text,
             tool_snapshot=tool_snapshot,
             request_kind=request_kind,
@@ -479,6 +527,15 @@ class RuntimeLoop:
             peak_input_tokens_estimate=first_request_usage.input_tokens_estimate,
             peak_stage="initial_request",
         )
+        self.history.set_failover_state(
+            run.run_id,
+            provider_ref=getattr(resolved_llm, "provider_name", None),
+            attempted_profiles=attempted_profiles,
+            attempted_providers=attempted_providers,
+            failover_trigger=failover_trigger,
+            failover_stage=failover_stage,
+            final_provider_ref=getattr(resolved_llm, "provider_name", None),
+        )
         events = [
             OutboundEvent(
                 session_id=session_id,
@@ -493,6 +550,15 @@ class RuntimeLoop:
         ]
 
         def finalize_success(*, final_text: str) -> None:
+            self.history.set_failover_state(
+                run.run_id,
+                provider_ref=attempted_providers[0] if attempted_providers else None,
+                attempted_profiles=attempted_profiles,
+                attempted_providers=attempted_providers,
+                failover_trigger=failover_trigger,
+                failover_stage=failover_stage,
+                final_provider_ref=getattr(resolved_llm, "provider_name", None),
+            )
             run_record = self.history.get(run.run_id)
             cumulative_usage_payload = self._cumulative_usage_payload(run_record)
             self.history.set_external_observability_refs(
@@ -515,6 +581,15 @@ class RuntimeLoop:
             )
 
         def finalize_error(*, error_code: str) -> None:
+            self.history.set_failover_state(
+                run.run_id,
+                provider_ref=attempted_providers[0] if attempted_providers else None,
+                attempted_profiles=attempted_profiles,
+                attempted_providers=attempted_providers,
+                failover_trigger=failover_trigger,
+                failover_stage=failover_stage,
+                final_provider_ref=getattr(resolved_llm, "provider_name", None),
+            )
             run_record = self.history.get(run.run_id)
             cumulative_usage_payload = self._cumulative_usage_payload(run_record)
             self.history.set_external_observability_refs(
@@ -535,6 +610,63 @@ class RuntimeLoop:
                     "channel_id": channel_id,
                 },
             )
+
+        def try_failover(*, stage: str, error_code: str) -> bool:
+            nonlocal resolved_llm
+            nonlocal active_profile_name
+            nonlocal active_tokenizer_family
+            nonlocal failover_trigger
+            nonlocal failover_stage
+            nonlocal current_request
+            nonlocal first_request
+            if self.profile_runtime_resolver is None:
+                return False
+            if not should_failover(error_code, stage):
+                return False
+            _, current_profile = self.profile_runtime_resolver(active_profile_name)
+            fallback_name = next_fallback_profile(
+                active_profile_name,
+                list(getattr(current_profile, "fallback_profiles", [])),
+                attempted_profiles,
+            )
+            if fallback_name is None:
+                return False
+            fallback_llm, fallback_profile = self.profile_runtime_resolver(fallback_name)
+            resolved_llm = fallback_llm
+            active_profile_name = fallback_name
+            active_tokenizer_family = getattr(fallback_profile, "tokenizer_family", None)
+            attempted_profiles.append(fallback_name)
+            attempted_providers.append(
+                getattr(fallback_llm, "provider_name", "unknown")
+            )
+            failover_trigger = error_code
+            failover_stage = stage
+            first_request = self._request_for_client(
+                first_request,
+                fallback_llm,
+                tokenizer_family=active_tokenizer_family,
+                timeout_seconds_override=timeout_seconds_override,
+                stop_event=stop_event,
+                deadline_monotonic=deadline_monotonic,
+            )
+            current_request = self._request_for_client(
+                current_request,
+                fallback_llm,
+                tokenizer_family=active_tokenizer_family,
+                timeout_seconds_override=timeout_seconds_override,
+                stop_event=stop_event,
+                deadline_monotonic=deadline_monotonic,
+            )
+            self.history.set_failover_state(
+                run.run_id,
+                provider_ref=attempted_providers[0] if attempted_providers else None,
+                attempted_profiles=attempted_profiles,
+                attempted_providers=attempted_providers,
+                failover_trigger=failover_trigger,
+                failover_stage=failover_stage,
+                final_provider_ref=getattr(fallback_llm, "provider_name", None),
+            )
+            return True
         first_request = self._build_request_from_context(
             **request_base,
             ctx=runtime_context,
@@ -580,8 +712,7 @@ class RuntimeLoop:
                     metadata={
                         "stage": generation_stage,
                         "request_kind": request_kind,
-                        "model_profile": model_profile_name
-                        or getattr(resolved_llm, "profile_name", None),
+                        "model_profile": active_profile_name,
                     },
                 )
                 generation_observed = True
@@ -619,11 +750,12 @@ class RuntimeLoop:
                             "trace_id": trace_id,
                             "message": message,
                             "channel_id": channel_id,
+                            "conversation_id": conversation_id,
+                            "user_id": user_id,
                             "agent_id": resolved_agent.agent_id,
                             "app_id": resolved_agent.app_id,
                             "allowed_tools": list(resolved_agent.allowed_tools),
-                            "model_profile": model_profile_name
-                            or getattr(resolved_llm, "profile_name", "unknown"),
+                            "model_profile": active_profile_name,
                             "current_request": current_request,
                             "latest_actual_usage": latest_actual_usage,
                             "compact_settings": resolved_compact_settings,
@@ -798,8 +930,7 @@ class RuntimeLoop:
                         metadata={
                             "stage": generation_stage,
                             "request_kind": request_kind,
-                            "model_profile": model_profile_name
-                            or getattr(resolved_llm, "profile_name", None),
+                            "model_profile": active_profile_name,
                         },
                         error_code=error_code,
                     )
@@ -890,6 +1021,11 @@ class RuntimeLoop:
                                 ),
                             )
                             continue
+                    if try_failover(
+                        stage="llm_first" if not tool_history else "llm_second",
+                        error_code=normalized.error_code,
+                    ):
+                        continue
                     if tool_history:
                         recovered_text = recover_tool_result_text(tool_history)
                         if recovered_text:
@@ -929,7 +1065,7 @@ class RuntimeLoop:
                         run_started_at=run_started_at,
                         llm_request_count=llm_request_count,
                         error_code=normalized.error_code,
-                        error_text="暂时没有生成可见回复，请重试。",
+                        error_text=provider_failure_text(normalized.error_code),
                         agent_id=resolved_agent.agent_id,
                         post_commit_callback=self.self_improve_post_commit_callback,
                     )
@@ -964,6 +1100,11 @@ class RuntimeLoop:
                     if recovered_text:
                         final_text = recovered_text
                 if not final_text:
+                    if try_failover(
+                        stage="llm_first" if not tool_history else "llm_second",
+                        error_code="EMPTY_FINAL_RESPONSE",
+                    ):
+                        continue
                     finalize_error(error_code="EMPTY_FINAL_RESPONSE")
                     return finish_run_error(history=self.history, 
                         events=events,
@@ -1022,6 +1163,7 @@ class RuntimeLoop:
                 actual_peak_stage=run_record.actual_peak_stage,
                 message=message,
                 tool_history_count=len(tool_history),
+                tool_history=tool_history,
             )
             if isinstance(tool_result, dict):
                 tool_history[-1].tool_result = tool_result

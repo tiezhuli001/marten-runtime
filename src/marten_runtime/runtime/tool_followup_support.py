@@ -2,13 +2,7 @@ from __future__ import annotations
 
 from marten_runtime.runtime.direct_rendering import maybe_render_tool_followup_text
 from marten_runtime.runtime.llm_client import LLMRequest, ToolExchange
-from marten_runtime.runtime.llm_request_instructions import (
-    should_lock_runtime_context_followup,
-)
-from marten_runtime.tools.builtins.runtime_tool import (
-    annotate_runtime_context_status_peak,
-    render_runtime_context_status_text,
-)
+from marten_runtime.tools.builtins.runtime_tool import annotate_runtime_context_status_peak
 
 
 def append_tool_exchange(
@@ -40,6 +34,7 @@ def normalize_tool_result_for_followup(
     actual_peak_stage: str | None,
     message: str = "",
     tool_history_count: int = 1,
+    tool_history: list[ToolExchange] | None = None,
 ) -> tuple[object, str | None]:
     if isinstance(tool_result, dict) and tool_name == "runtime":
         annotated = annotate_runtime_context_status_peak(
@@ -51,17 +46,23 @@ def normalize_tool_result_for_followup(
             actual_peak_total_tokens=actual_peak_total_tokens,
             actual_peak_stage=actual_peak_stage,
         )
-        if should_lock_runtime_context_followup(
+        return annotated, maybe_render_tool_followup_text(
+            tool_name,
+            annotated,
+            tool_payload=tool_payload,
+            tool_history=tool_history,
             message=message,
-            tool_history_count=tool_history_count,
-        ):
-            return annotated, render_runtime_context_status_text(annotated)
-        return annotated, None
-    return tool_result, maybe_render_tool_followup_text(
-        tool_name,
-        tool_result,
-        tool_payload=tool_payload,
-    )
+        ) or None
+    if isinstance(tool_result, dict) and tool_name == "session":
+        return tool_result, maybe_render_tool_followup_text(
+            tool_name,
+            tool_result,
+            tool_payload=tool_payload,
+            tool_history=tool_history,
+            message=message,
+        ) or None
+    del tool_payload, message, tool_history_count, tool_history
+    return tool_result, None
 
 
 def build_tool_followup_request(

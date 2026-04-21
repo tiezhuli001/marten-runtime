@@ -9,7 +9,8 @@
         "--rm",
         "-e",
         "GITHUB_PERSONAL_ACCESS_TOKEN",
-        "ghcr.io/github/github-mcp-server"
+        "ghcr.io/github/github-mcp-server",
+        "stdio"
       ],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "$GITHUB_PERSONAL_ACCESS_TOKEN"
@@ -17,6 +18,21 @@
       "cwd": null,
       "timeout_seconds": 30,
       "adapter": "github"
+    },
+    "github_trending": {
+      "transport": "stdio",
+      "command": "python",
+      "args": [
+        "-m",
+        "marten_runtime.mcp_servers.github_trending"
+      ],
+      "timeout_seconds": 30,
+      "tools": [
+        {
+          "name": "trending_repositories",
+          "description": "Fetch GitHub trending repositories."
+        }
+      ]
     }
   }
 }

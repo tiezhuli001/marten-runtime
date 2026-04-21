@@ -86,7 +86,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
             {"action": "context_status"},
             tool_context={
                 "run_id": run.run_id,
-                "model_profile": "minimax_coding",
+                "model_profile": "minimax_m25",
                 "current_request": LLMRequest(
                     session_id="sess_runtime",
                     trace_id="trace_runtime",
@@ -109,7 +109,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["action"], "context_status")
-        self.assertEqual(result["model_profile"], "minimax_coding")
+        self.assertEqual(result["model_profile"], "minimax_m25")
         self.assertEqual(result["context_window"], 1000)
         self.assertEqual(result["effective_window"], 900)
         self.assertEqual(result["latest_checkpoint"], "available")
@@ -132,7 +132,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
             {"action": "context_status"},
             tool_context={
                 "run_id": run.run_id,
-                "model_profile": "minimax_coding",
+                "model_profile": "minimax_m25",
                 "current_request": LLMRequest(
                     session_id="sess_runtime_usage",
                     trace_id="trace_runtime_usage",
@@ -245,8 +245,9 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
         )
 
         text = render_runtime_context_status_text(result)
-        self.assertIn("本轮 actual-peak：无（本轮未发生模型调用）", text)
-        self.assertIn("本轮峰值输入上下文：3838 tokens", text)
+        self.assertIn("当前上下文使用详情", text)
+        self.assertIn("切换会话后会按目标会话重新计算", text)
+        self.assertIn("压缩状态：稳定", text)
 
     def test_runtime_tool_uses_previous_run_actual_peak_for_direct_runtime_query(
         self,
@@ -303,8 +304,9 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
             result["last_completed_run"]["actual_peak_stage"], "llm_second"
         )
         text = render_runtime_context_status_text(result)
-        self.assertIn("本轮 actual-peak：无（本轮未发生模型调用）", text)
-        self.assertIn("上一轮 actual-peak：4262 tokens", text)
+        self.assertIn("当前上下文使用详情", text)
+        self.assertIn("当前会话下一次请求预计带入", text)
+        self.assertIn("切换会话后会按目标会话重新计算", text)
 
     def test_runtime_tool_skips_intermediate_no_llm_runs_when_finding_last_actual_peak(
         self,
@@ -506,12 +508,9 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
         )
 
         self.assertIn("当前上下文使用详情", text)
-        self.assertIn("本轮累计模型调用：4653 tokens（输入 4510 + 输出 143）", text)
-        self.assertIn("本轮 actual-peak：3280 tokens", text)
-        self.assertIn("模型输入：3198", text)
-        self.assertIn("模型输出：82", text)
-        self.assertIn("总计：3280", text)
-        self.assertIn("峰值主要来自工具结果注入后的 follow-up 模型调用", text)
+        self.assertIn("当前会话下一次请求预计带入 3673 tokens（约 2% / 184000）", text)
+        self.assertIn("切换会话后会按目标会话重新计算", text)
+        self.assertIn("压缩状态：已有可复用压缩检查点", text)
 
     def test_runtime_tool_summary_does_not_blame_tool_injection_when_peak_matches_initial(
         self,

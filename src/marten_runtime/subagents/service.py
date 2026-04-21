@@ -14,12 +14,13 @@ from marten_runtime.config.models_loader import resolve_model_profile
 from marten_runtime.session.models import SessionMessage
 from marten_runtime.subagents.store import InMemorySubagentStore
 from marten_runtime.subagents.tool_profiles import (
+    PROFILE_ORDER,
+    normalize_tool_profile_name,
     resolve_child_allowed_tools,
     resolve_effective_tool_profile,
 )
 
-VALID_TOOL_PROFILES = {"restricted", "standard", "elevated"}
-TOOL_PROFILE_ALIASES = {"default": "restricted"}
+VALID_TOOL_PROFILES = set(PROFILE_ORDER)
 logger = logging.getLogger(__name__)
 
 
@@ -90,13 +91,17 @@ class SubagentService:
     ) -> dict[str, str]:
         if not task.strip():
             raise ValueError("task must not be empty")
+        resolved_agent_id = agent_id
         resolved_app_id = app_id
         if self.agent_registry is not None:
-            target = self.agent_registry.get(agent_id)
+            target = self._resolve_registered_agent(
+                requested_agent_id=agent_id,
+                fallback_agent_id=parent_agent_id,
+            )
+            resolved_agent_id = target.agent_id
             resolved_app_id = target.app_id or app_id
-        normalized_requested_profile = TOOL_PROFILE_ALIASES.get(
-            requested_tool_profile,
-            requested_tool_profile,
+        normalized_requested_profile = normalize_tool_profile_name(
+            requested_tool_profile
         )
         parent_allowed = list(parent_allowed_tools or ["runtime", "skill", "time"])
         effective_tool_profile = self._resolve_effective_tool_profile(
@@ -124,7 +129,7 @@ class SubagentService:
                 origin_channel_id=origin_channel_id,
                 child_session_id=child.session_id,
                 app_id=resolved_app_id,
-                agent_id=agent_id,
+                agent_id=resolved_agent_id,
                 tool_profile=normalized_requested_profile,
                 effective_tool_profile=effective_tool_profile,
                 context_mode=context_mode,
@@ -312,10 +317,7 @@ class SubagentService:
         requested_tool_profile: str,
         parent_allowed_tools: list[str],
     ) -> str:
-        requested_tool_profile = TOOL_PROFILE_ALIASES.get(
-            requested_tool_profile,
-            requested_tool_profile,
-        )
+        requested_tool_profile = normalize_tool_profile_name(requested_tool_profile)
         if requested_tool_profile not in VALID_TOOL_PROFILES:
             raise ValueError(f"unknown tool profile: {requested_tool_profile}")
         return resolve_effective_tool_profile(
@@ -337,7 +339,10 @@ class SubagentService:
     def _start_background_task(self, task_id: str) -> None:
         if task_id in self._background_tasks:
             return
-        thread = threading.Timer(0.01, self.run_task_by_id, args=(task_id,))
+        # Give the parent turn a brief head start so its acceptance reply can be
+        # persisted and delivered before the child task starts emitting followup
+        # effects back into the same conversation.
+        thread = threading.Timer(0.25, self.run_task_by_id, args=(task_id,))
         thread.daemon = True
         self._background_tasks[task_id] = thread
         thread.start()
@@ -489,12 +494,31 @@ class SubagentService:
                 allowed_tools=[],
                 prompt_mode="subagent",
             )
-        target = self.agent_registry.get(task.agent_id)
+        target = self._resolve_registered_agent(
+            requested_agent_id=task.agent_id,
+            fallback_agent_id=task.parent_agent_id,
+        )
         return target.model_copy(
             update={
                 "app_id": target.app_id or task.app_id,
             }
         )
+
+    def _resolve_registered_agent(
+        self,
+        *,
+        requested_agent_id: str,
+        fallback_agent_id: str,
+    ) -> AgentSpec:
+        try:
+            return self.agent_registry.get(requested_agent_id)
+        except KeyError:
+            logger.warning(
+                "subagent requested unknown agent_id=%s; falling back to parent agent_id=%s",
+                requested_agent_id,
+                fallback_agent_id,
+            )
+        return self.agent_registry.get(fallback_agent_id)
 
     def _runtime_assets_for_agent(self, agent: AgentSpec) -> dict[str, object]:
         assets = self.app_runtimes.get(agent.app_id)

@@ -221,7 +221,7 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
 
         with patch(
             "marten_runtime.runtime.loop.time.perf_counter",
-            side_effect=[10.0, 11.0, 11.3, 11.7],
+            side_effect=[10.0, 11.0, 11.3, 11.7, 11.8, 11.6999],
         ):
             events = runtime.run(
                 session_id="sess_fail", message="hello", trace_id="trace_fail"

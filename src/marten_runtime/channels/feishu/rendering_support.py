@@ -19,6 +19,9 @@ def default_card_title(event_type: str) -> str:
 def derive_plain_title(text: str, *, event_type: str) -> str:
     if event_type == "error":
         return default_card_title(event_type)
+    collapsed = " ".join(line.strip() for line in text.splitlines() if line.strip())
+    if "多次模型/工具往返" in collapsed and "当前可用 MCP 服务" in collapsed:
+        return "链路结果"
     cleaned_lines = [
         re.sub(r"\*\*(.*?)\*\*", r"\1", line).strip()
         for line in text.splitlines()
@@ -27,6 +30,14 @@ def derive_plain_title(text: str, *, event_type: str) -> str:
     if not cleaned_lines:
         return default_card_title(event_type)
     first = cleaned_lines[0].rstrip("：:。!！")
+    if first.startswith("当前上下文使用详情"):
+        return "当前上下文使用详情"
+    if first.startswith("已切换到新会话"):
+        return "已切换到新会话"
+    if first.startswith("已切换到会话"):
+        return first
+    if first.startswith("已受理，子 agent"):
+        return "子任务已受理"
     if re.match(r"^(当前|现在).*(北京时间|时间)", first):
         return "当前时间"
     if re.match(r"^现在是(?:[A-Za-z_./+-]+)?\s*\d{4}年\d{1,2}月\d{1,2}日", first):

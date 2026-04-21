@@ -546,7 +546,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         run = history.get(events[-1].run_id)
         self.assertEqual(run.llm_request_count, 3)
 
-    def test_runtime_does_not_finalize_early_when_runtime_tool_is_only_one_step_in_user_requested_sequence(
+    def test_runtime_routes_fixed_three_step_sequence_back_through_followup_llm(
         self,
     ) -> None:
         tools = ToolRegistry()
@@ -556,8 +556,36 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
             lambda payload: {
                 "ok": True,
                 "action": "context_status",
+                "summary": "当前估算占用 1234/184000 tokens（1%）。",
                 "estimated_usage": 1234,
                 "effective_window": 184000,
+                "current_run": {
+                    "initial_input_tokens_estimate": 1234,
+                    "peak_input_tokens_estimate": 1234,
+                    "peak_stage": "initial_request",
+                    "actual_cumulative_input_tokens": 0,
+                    "actual_cumulative_output_tokens": 0,
+                    "actual_cumulative_total_tokens": 0,
+                    "actual_peak_input_tokens": None,
+                    "actual_peak_output_tokens": None,
+                    "actual_peak_total_tokens": None,
+                    "actual_peak_stage": None,
+                },
+                "next_request_estimate": {
+                    "input_tokens_estimate": 1234,
+                    "effective_window_tokens": 184000,
+                    "context_window_tokens": 200000,
+                    "estimator_kind": "rough",
+                    "degraded": True,
+                },
+                "context_window": 200000,
+                "usage_percent": 1,
+                "compaction_status": "none",
+                "latest_checkpoint": "none",
+                "estimate_source": "rough",
+                "last_actual_usage": None,
+                "last_completed_run": None,
+                "model_profile": "minimax_coding",
             },
         )
         tools.register(
@@ -575,7 +603,14 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                 LLMReply(tool_name="time", tool_payload={"timezone": "Asia/Shanghai"}),
                 LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
                 LLMReply(tool_name="mcp", tool_payload={"action": "list"}),
-                LLMReply(final_text="done"),
+                LLMReply(
+                    final_text=(
+                        "现在是北京时间 2026年4月20日 12:30。\n\n"
+                        "当前上下文使用详情：当前估算占用 1200/184000 tokens（1%）。\n\n"
+                        "当前可用 MCP 服务共 1 个。\n\n"
+                        "本次请求发生了多次模型/工具往返。"
+                    )
+                ),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -597,13 +632,150 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
-        self.assertEqual(events[-1].payload["text"], "done")
+        self.assertIn("当前上下文使用详情", events[-1].payload["text"])
+        self.assertIn("当前可用 MCP 服务共 1 个", events[-1].payload["text"])
         run = history.get(events[-1].run_id)
         self.assertEqual(run.llm_request_count, 4)
         self.assertEqual(
             [item["tool_name"] for item in run.tool_calls],
             ["time", "runtime", "mcp"],
         )
+
+    def test_runtime_direct_renders_session_list_for_single_intent_query(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(tool_name="session", tool_payload={"action": "list"}),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        tools.register(
+            "session",
+            lambda payload: {
+                "action": "list",
+                "count": 1,
+                "items": [
+                    {
+                        "session_id": "sess_dcce8f9c",
+                        "session_title": "排查 Feishu 输出",
+                        "message_count": 7,
+                    }
+                ],
+            },
+        )
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["session"],
+        )
+
+        events = runtime.run(
+            session_id="sess_session_list_direct",
+            message="当前有哪些会话列表？",
+            trace_id="trace_session_list_direct",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertIn("当前有 1 个可见会话", events[-1].payload["text"])
+        self.assertNotIn("查看某个会话", events[-1].payload["text"])
+        self.assertNotIn("新开一个会话", events[-1].payload["text"])
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.llm_request_count, 1)
+        self.assertEqual(run.tool_calls[0]["tool_name"], "session")
+
+    def test_runtime_direct_renders_session_new_for_single_intent_query(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(tool_name="session", tool_payload={"action": "new"}),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        tools.register(
+            "session",
+            lambda payload: {
+                "action": "new",
+                "session": {
+                    "session_id": "sess_new_direct",
+                    "message_count": 0,
+                    "state": "created",
+                    "created_at": "2026-04-20T06:00:00+00:00",
+                },
+            },
+        )
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["session"],
+        )
+
+        events = runtime.run(
+            session_id="sess_session_new_direct",
+            message="切换到新会话",
+            trace_id="trace_session_new_direct",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertIn("已切换到新会话", events[-1].payload["text"])
+        self.assertNotIn("查看某个会话", events[-1].payload["text"])
+        self.assertNotIn("新开一个会话", events[-1].payload["text"])
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.llm_request_count, 1)
+        self.assertEqual(run.tool_calls[0]["tool_name"], "session")
+
+    def test_runtime_direct_renders_session_resume_for_single_intent_query(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="session",
+                    tool_payload={"action": "resume", "session_id": "sess_dcce8f9c"},
+                ),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        tools.register(
+            "session",
+            lambda payload: {
+                "action": "resume",
+                "session": {
+                    "session_id": payload["session_id"],
+                    "session_title": "排查 Feishu 输出",
+                    "session_preview": "切换到问题会话继续排查",
+                    "message_count": 72,
+                    "state": "running",
+                    "created_at": "2026-04-19T15:30:41+00:00",
+                },
+            },
+        )
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["session"],
+        )
+
+        events = runtime.run(
+            session_id="sess_session_resume_direct",
+            message="切换到会话 sess_dcce8f9c",
+            trace_id="trace_session_resume_direct",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertIn("已切换到会话 `sess_dcce8f9c`", events[-1].payload["text"])
+        self.assertNotIn("查看某个会话", events[-1].payload["text"])
+        self.assertNotIn("新开一个会话", events[-1].payload["text"])
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.llm_request_count, 1)
+        self.assertEqual(run.tool_calls[0]["tool_name"], "session")
 
     def test_runtime_recovers_when_followup_returns_generic_tool_failure_after_successful_commit_tool(
         self,
@@ -658,7 +830,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self.assertIn("最近一次提交", events[-1].payload["text"])
         self.assertNotEqual(events[-1].payload["text"], "工具执行失败，请重试。")
         run = history.get(events[-1].run_id)
-        self.assertEqual(run.llm_request_count, 1)
+        self.assertEqual(run.llm_request_count, 2)
         self.assertEqual(run.tool_calls[0]["tool_payload"]["tool_name"], "list_commits")
 
     def test_runtime_recovers_direct_commit_text_when_followup_provider_call_times_out(
@@ -714,7 +886,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
         run = history.get(events[0].run_id)
         self.assertEqual(run.status, "succeeded")
-        self.assertEqual(run.llm_request_count, 1)
+        self.assertEqual(run.llm_request_count, 2)
 
     def test_runtime_recovers_direct_commit_text_when_followup_requests_disallowed_tool(
         self,
@@ -769,7 +941,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
         run = history.get(events[0].run_id)
         self.assertEqual(run.status, "succeeded")
-        self.assertEqual(run.llm_request_count, 1)
+        self.assertEqual(run.llm_request_count, 2)
 
     def test_runtime_distinguishes_tool_execution_failure_from_generic_runtime_failure(
         self,

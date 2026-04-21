@@ -90,6 +90,57 @@ class LLMClientInstructionTests(unittest.TestCase):
 
         self.assertNotIn("feishu_card", _request_specific_instruction(request) or "")
 
+    def test_request_specific_instruction_prefers_session_for_active_list_queries(self) -> None:
+        request = self._build_request(
+            message="当前有哪些活跃列表？",
+            available_tools=["session", "automation"],
+        )
+
+        instruction = _request_specific_instruction(request) or ""
+
+        self.assertIn("会话目录/活跃会话查询", instruction)
+        self.assertIn("优先使用 session family tool", instruction)
+        self.assertIn("只有当用户明确提到定时任务", instruction)
+
+    def test_request_specific_instruction_prefers_automation_for_cron_queries(self) -> None:
+        request = self._build_request(
+            message="当前有哪些定时任务？",
+            available_tools=["session", "automation"],
+        )
+
+        instruction = _request_specific_instruction(request) or ""
+
+        self.assertIn("定时任务/自动化查询", instruction)
+        self.assertIn("优先使用 automation family tool", instruction)
+
+    def test_request_specific_instruction_maps_new_session_switch_wording_to_session_new(
+        self,
+    ) -> None:
+        request = self._build_request(
+            message="切换到新会话",
+            available_tools=["session", "automation"],
+        )
+
+        instruction = _request_specific_instruction(request) or ""
+
+        self.assertIn("显式会话切换请求", instruction)
+        self.assertIn("session", instruction)
+        self.assertIn("new 或 resume", instruction)
+
+    def test_request_specific_instruction_maps_resume_wording_to_session_resume(
+        self,
+    ) -> None:
+        request = self._build_request(
+            message="恢复之前的会话",
+            available_tools=["session"],
+        )
+
+        instruction = _request_specific_instruction(request) or ""
+
+        self.assertIn("显式会话切换请求", instruction)
+        self.assertIn("session", instruction)
+        self.assertIn("new 或 resume", instruction)
+
     def test_tool_followup_instruction_keeps_mcp_on_exact_server_and_tool_surface(self) -> None:
         instruction = _tool_followup_instruction("mcp") or ""
 

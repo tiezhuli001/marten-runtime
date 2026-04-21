@@ -34,8 +34,18 @@ class HTTPRuntimeDiagnosticsTests(unittest.TestCase):
         self.assertEqual(body["server"]["host"], "127.0.0.1")
         self.assertEqual(body["server"]["port"], 9000)
         self.assertIn("feishu", body["channels"])
+        self.assertIn("sessions", body)
         self.assertIn("provider_retry_policy", body)
         self.assertEqual(body["tool_count"], len(runtime.tool_registry.list()))
+        self.assertEqual(body["sessions"]["store_kind"], runtime.session_store.storage_kind())
+        self.assertEqual(body["sessions"]["count"], runtime.session_store.count())
+        self.assertEqual(body["provider_count"], 3)
+        self.assertEqual(
+            sorted(provider["provider_ref"] for provider in body["providers"]),
+            ["kimi", "minimax", "openai"],
+        )
+        self.assertIn("api_key_env", body["providers"][0])
+        self.assertNotIn("test-key", str(body["providers"]))
 
 
 if __name__ == "__main__":

@@ -41,13 +41,11 @@ def create_app(
     repo_root=None,
     env=None,
     load_env_file: bool = True,
-    use_compat_json: bool = True,
 ) -> FastAPI:
     runtime = build_http_runtime(
         repo_root=repo_root,
         env=env,
         load_env_file=load_env_file,
-        use_compat_json=use_compat_json,
     )
 
     @asynccontextmanager
@@ -121,7 +119,7 @@ def create_app(
     @app.post("/sessions")
     def create_session() -> dict[str, str]:
         record = runtime.session_store.get_or_create_for_conversation(
-            conversation_id=f"conversation_{len(runtime.session_store._items) + 1}",
+            conversation_id=f"conversation_{runtime.session_store.count() + 1}",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
             bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
         )
@@ -190,6 +188,14 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND") from exc
 
+    @app.get("/diagnostics/sessions")
+    def list_sessions() -> dict[str, object]:
+        items = [
+            _serialize_session_catalog_item(item)
+            for item in runtime.session_store.list_sessions()
+        ]
+        return {"count": len(items), "items": items}
+
     @app.get("/diagnostics/run/{run_id}")
     def get_run(run_id: str) -> dict[str, object]:
         try:
@@ -231,6 +237,25 @@ def create_app(
         return serialize_runtime_diagnostics(runtime, request)
 
     return app
+
+
+def _serialize_session_catalog_item(record) -> dict[str, object]:  # noqa: ANN001
+    return {
+        "session_id": record.session_id,
+        "conversation_id": record.conversation_id,
+        "channel_id": record.channel_id,
+        "user_id": record.user_id,
+        "agent_id": record.agent_id or record.active_agent_id,
+        "session_title": record.session_title,
+        "session_preview": record.session_preview,
+        "message_count": record.message_count,
+        "state": record.state,
+        "created_at": record.created_at.isoformat(),
+        "updated_at": record.updated_at.isoformat(),
+        "last_event_at": (
+            record.last_event_at.isoformat() if record.last_event_at is not None else None
+        ),
+    }
 
 
 def _bind_queue_observation_to_response(

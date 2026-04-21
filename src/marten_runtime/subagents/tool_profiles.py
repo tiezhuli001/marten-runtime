@@ -8,7 +8,17 @@ PROFILE_ALLOWED_TOOL_SELECTORS = {
 
 FORBIDDEN_CHILD_TOOLS = {"spawn_subagent", "cancel_subagent"}
 PROFILE_ORDER = ["restricted", "standard", "elevated"]
-PROFILE_ALIASES = {"default": "restricted"}
+PROFILE_ALIASES = {
+    "default": "restricted",
+    "mcp": "standard",
+}
+
+
+def normalize_tool_profile_name(requested_profile: str | None) -> str:
+    normalized = (requested_profile or "").strip().lower()
+    if normalized.startswith("mcp:"):
+        return "standard"
+    return PROFILE_ALIASES.get(normalized, normalized)
 
 
 def resolve_effective_tool_profile(
@@ -16,7 +26,7 @@ def resolve_effective_tool_profile(
     requested_profile: str,
     parent_allowed_tools: list[str],
 ) -> str:
-    requested_profile = PROFILE_ALIASES.get(requested_profile, requested_profile)
+    requested_profile = normalize_tool_profile_name(requested_profile)
     if requested_profile not in PROFILE_ALLOWED_TOOL_SELECTORS:
         raise ValueError(f"unknown tool profile: {requested_profile}")
     parent_rank = 0
@@ -33,7 +43,7 @@ def resolve_child_allowed_tools(
     requested_profile: str,
     parent_allowed_tools: list[str],
 ) -> list[str]:
-    requested_profile = PROFILE_ALIASES.get(requested_profile, requested_profile)
+    requested_profile = normalize_tool_profile_name(requested_profile)
     if requested_profile not in PROFILE_ALLOWED_TOOL_SELECTORS:
         raise ValueError(f"unknown tool profile: {requested_profile}")
     requested = PROFILE_ALLOWED_TOOL_SELECTORS[requested_profile]

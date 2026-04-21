@@ -54,7 +54,6 @@ class LangfuseBootstrapTests(unittest.TestCase):
         runtime = build_http_runtime(
             env={"MINIMAX_API_KEY": "test-key"},
             load_env_file=False,
-            use_compat_json=False,
         )
 
         self.assertTrue(hasattr(runtime, "langfuse_observer"))
@@ -78,7 +77,6 @@ class LangfuseBootstrapTests(unittest.TestCase):
                     "LANGFUSE_BASE_URL": "https://langfuse.example",
                 },
                 load_env_file=False,
-                use_compat_json=False,
             )
 
         self.assertIs(runtime.langfuse_observer, expected)
@@ -89,7 +87,6 @@ class LangfuseBootstrapTests(unittest.TestCase):
         app = create_app(
             env={"MINIMAX_API_KEY": "test-key"},
             load_env_file=False,
-            use_compat_json=False,
         )
         observer = CountingObserver(enabled=True, configured=True)
         app.state.runtime.langfuse_observer = observer
@@ -104,7 +101,6 @@ class LangfuseBootstrapTests(unittest.TestCase):
         app = create_app(
             env={"MINIMAX_API_KEY": "test-key"},
             load_env_file=False,
-            use_compat_json=False,
         )
         observer = FlushFailingObserver(enabled=True, configured=True)
         app.state.runtime.langfuse_observer = observer

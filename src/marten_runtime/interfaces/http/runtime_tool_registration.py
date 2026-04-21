@@ -6,8 +6,10 @@ from typing import TYPE_CHECKING
 from marten_runtime.data_access.adapter import DomainDataAdapter
 from marten_runtime.runtime.capabilities import get_parameters_schema, render_tool_description
 from marten_runtime.tools.builtins.automation_tool import run_automation_tool
+from marten_runtime.tools.builtins.memory_tool import run_memory_tool
 from marten_runtime.tools.builtins.mcp_tool import run_mcp_tool
 from marten_runtime.tools.builtins.runtime_tool import run_runtime_tool
+from marten_runtime.tools.builtins.session_tool import run_session_tool
 from marten_runtime.tools.builtins.self_improve_tool import run_self_improve_tool
 from marten_runtime.tools.builtins.spawn_subagent_tool import run_spawn_subagent_tool
 from marten_runtime.tools.builtins.cancel_subagent_tool import run_cancel_subagent_tool
@@ -97,6 +99,26 @@ def register_family_tools(
         parameters_schema=get_parameters_schema(
             capability_declarations["self_improve"]
         ),
+    )
+    state.tool_registry.register(
+        "session",
+        lambda payload, runtime_state=state, *, tool_context=None: run_session_tool(
+            payload,
+            session_store=runtime_state.session_store,
+            tool_context=tool_context,
+        ),
+        description=render_tool_description(capability_declarations["session"]),
+        parameters_schema=get_parameters_schema(capability_declarations["session"]),
+    )
+    state.tool_registry.register(
+        "memory",
+        lambda payload, runtime_state=state, *, tool_context=None: run_memory_tool(
+            payload,
+            memory_service=runtime_state.memory_service,
+            tool_context=tool_context,
+        ),
+        description=render_tool_description(capability_declarations["memory"]),
+        parameters_schema=get_parameters_schema(capability_declarations["memory"]),
     )
     state.tool_registry.register(
         "spawn_subagent",

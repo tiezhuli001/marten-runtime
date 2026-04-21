@@ -1,15 +1,14 @@
 import tomllib
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from marten_runtime.config.file_resolver import resolve_config_path
 
 
 class ModelProfile(BaseModel):
-    provider: str
+    provider_ref: str
     model: str
-    base_url: str | None = None
-    api_key_env: str | None = None
+    fallback_profiles: list[str] = Field(default_factory=list)
     context_window_tokens: int | None = None
     reserve_output_tokens: int | None = None
     compact_trigger_ratio: float | None = None
@@ -26,17 +25,20 @@ def load_models_config(path: str) -> ModelsConfig:
     resolved = resolve_config_path(path)
     if resolved is None:
         data = {
-            "default_profile": "default",
+            "default_profile": "openai_gpt5",
             "profiles": {
-                "default": {
-                    "provider": "openai",
+                "openai_gpt5": {
+                    "provider_ref": "openai",
                     "model": "gpt-5.4",
+                    "fallback_profiles": ["kimi_k2", "minimax_m25"],
                 },
-                "minimax_coding": {
-                    "provider": "openai",
+                "kimi_k2": {
+                    "provider_ref": "kimi",
+                    "model": "kimi-k2",
+                },
+                "minimax_m25": {
+                    "provider_ref": "minimax",
                     "model": "MiniMax-M2.5",
-                    "base_url": "https://api.minimaxi.com/v1",
-                    "api_key_env": "MINIMAX_API_KEY",
                 },
             },
         }

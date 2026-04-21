@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from marten_runtime.runtime.direct_rendering import render_direct_tool_text
+from marten_runtime.runtime.direct_rendering import (
+    render_direct_tool_history_text,
+    render_direct_tool_text,
+)
 from marten_runtime.runtime.llm_client import ToolExchange
 
 
@@ -16,6 +19,9 @@ def is_generic_tool_failure_text(text: str) -> bool:
 def recover_successful_tool_followup_text(history: list[ToolExchange]) -> str:
     if not history:
         return ""
+    combined_text = render_direct_tool_history_text(history)
+    if combined_text:
+        return combined_text
     latest = history[-1]
     if not isinstance(latest.tool_result, dict):
         return ""

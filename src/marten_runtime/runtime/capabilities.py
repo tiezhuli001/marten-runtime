@@ -135,6 +135,49 @@ def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
                 "additionalProperties": True,
             },
         ),
+        "session": CapabilityDeclaration(
+            name="session",
+            summary="Inspect recent sessions and explicitly create a fresh session or resume an existing session for the active channel conversation.",
+            actions=["list", "show", "new", "resume"],
+            usage_rules=[
+                "Use this when the user wants to inspect recent sessions, view one session summary, create a fresh session in the current channel conversation, or resume an existing session into the current channel conversation.",
+                "Map natural requests like 切换到新会话, 新开一个会话, 开始新对话, or start a new session to action=new.",
+                "Map natural requests like 恢复某个会话, 继续之前的会话, 切回某个 session, or resume session to action=resume with an exact session_id.",
+            ],
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "show", "new", "resume"],
+                    },
+                    "session_id": {"type": "string"},
+                },
+                "required": ["action"],
+                "additionalProperties": False,
+            },
+        ),
+        "memory": CapabilityDeclaration(
+            name="memory",
+            summary="Read or explicitly update the current user's thin long-term memory file.",
+            actions=["get", "append", "replace", "delete"],
+            usage_rules=[
+                "Use this only for stable preferences or stable facts that the user explicitly asked to remember or edit."
+            ],
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["get", "append", "replace", "delete"],
+                    },
+                    "section": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["action"],
+                "additionalProperties": False,
+            },
+        ),
         "skill": CapabilityDeclaration(
             name="skill",
             summary="Load one skill body on demand when the visible summary is not enough.",
