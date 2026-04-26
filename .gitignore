@@ -4,6 +4,7 @@
 !.env.example
 mcps.json
 config/platform.toml
+config/providers.toml
 config/models.toml
 config/channels.toml
 config/mcp.toml
@@ -53,6 +54,7 @@ data/
 # Local verification logs
 .logs/
 .init-smoke.log
+.codex-runtime/
 
 # Local continuity only
 STATUS.md

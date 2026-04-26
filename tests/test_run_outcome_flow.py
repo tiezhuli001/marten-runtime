@@ -51,6 +51,48 @@ class RunOutcomeFlowTests(unittest.TestCase):
 
         self.assertEqual(history.get(run.run_id).tool_outcome_summaries, [])
 
+    def test_append_post_turn_summary_skips_session_navigation_cards(self) -> None:
+        history = InMemoryRunHistory()
+        run = history.start(
+            session_id="sess_skip_session",
+            trace_id="trace_skip_session",
+            config_snapshot_id="cfg",
+            bootstrap_manifest_id="boot",
+            context_snapshot_id="ctx",
+            skill_snapshot_id="skill",
+            tool_snapshot_id="tool",
+        )
+
+        append_post_turn_summary(
+            history=history,
+            user_message="切换到会话 sess_dcce8f9c",
+            tool_history=[
+                ToolExchange(
+                    tool_name="session",
+                    tool_payload={"action": "resume", "session_id": "sess_dcce8f9c"},
+                    tool_result={
+                        "action": "resume",
+                        "session": {
+                            "session_id": "sess_dcce8f9c",
+                            "message_count": 72,
+                            "state": "running",
+                        },
+                    },
+                )
+            ],
+            final_text=(
+                "已切换到会话 `sess_dcce8f9c`\n"
+                "- 标题：排查 Feishu 输出\n"
+                "- 消息数：72\n"
+                "- 状态：running"
+            ),
+            combined_summary_draft=None,
+            run_id=run.run_id,
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool"),
+        )
+
+        self.assertEqual(history.get(run.run_id).tool_outcome_summaries, [])
+
     def test_append_post_turn_summary_appends_fallback_summary_for_normal_tool(self) -> None:
         history = InMemoryRunHistory()
         run = history.start(

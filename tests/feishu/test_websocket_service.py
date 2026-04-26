@@ -824,6 +824,69 @@ class FeishuWebsocketServiceTests(unittest.TestCase):
         self.assertEqual(handled_traces, [first.body["trace_id"]])
         self.assertEqual(len(delivery.payloads), 2)
 
+    def test_websocket_service_preserves_durable_text_and_precomputed_card_for_final_delivery(
+        self,
+    ) -> None:
+        delivery = FakeDeliveryClient()
+
+        service = FeishuWebsocketService(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            receipt_store=InMemoryReceiptStore(),
+            runtime_handler=lambda envelope: {
+                "status": "accepted",
+                "trace_id": envelope.trace_id,
+                "session_id": "sess_card_delivery",
+                "events": [
+                    {
+                        "event_type": "final",
+                        "event_id": "evt_final_card_delivery",
+                        "run_id": "run_card_delivery",
+                        "trace_id": envelope.trace_id,
+                        "sequence": 1,
+                        "payload": {
+                            "text": "持久化详情\n\n- builtin 正常\n- mcp 正常",
+                            "card": {
+                                "schema": "2.0",
+                                "header": {"title": {"content": "检查结果"}},
+                                "body": {"elements": [{"tag": "markdown", "content": "紧凑展示"}]},
+                            },
+                        },
+                    }
+                ],
+            },
+            delivery_client=delivery,
+        )
+        payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_service_card_1",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {
+                        "user_id": "user_service_card_1",
+                    }
+                },
+                "message": {
+                    "message_id": "msg_service_card_1",
+                    "chat_id": "chat_service_card_1",
+                    "content": json.dumps({"text": "hello from service"}),
+                },
+            },
+        }
+
+        result = service.handle_event_payload(payload)
+
+        self.assertEqual(result.status, "accepted")
+        self.assertEqual(len(delivery.payloads), 1)
+        self.assertEqual(delivery.payloads[0].text, "持久化详情\n\n- builtin 正常\n- mcp 正常")
+        self.assertEqual(delivery.payloads[0].card["header"]["title"]["content"], "检查结果")
+
     def test_websocket_duplicate_frame_does_not_clobber_last_accepted_status(self) -> None:
         delivery = FakeDeliveryClient()
         service = FeishuWebsocketService(

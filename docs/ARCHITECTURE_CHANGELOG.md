@@ -24,6 +24,303 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
 
 ## Entries
 
+### 2026-04-25: Feishu Structured Replies Now Persist Durable Plain Text While Cards Keep Compact Presentation
+
+- Change:
+  - terminal output normalization now returns two Feishu text surfaces plus the precomputed card payload:
+    - `durable_text`
+    - `visible_text`
+    - `channel_payload`
+    - `src/marten_runtime/channels/output_normalization.py`
+  - Feishu rendering now reconstructs one deterministic durable plain-text form from structured reply protocol content while keeping the compact visible lead separate:
+    - `src/marten_runtime/channels/feishu/rendering.py`
+  - plain-text sinks now use `durable_text` consistently across:
+    - top-level HTTP `result` / `final_text` / `text`
+    - serialized terminal event `payload.text`
+    - persisted assistant `SessionMessage.content`
+    - `src/marten_runtime/interfaces/http/bootstrap_handlers.py`
+    - `src/marten_runtime/interfaces/http/channel_event_serialization.py`
+  - Feishu websocket and automation delivery now preserve the precomputed card surface while carrying durable plain text in parallel:
+    - `src/marten_runtime/channels/feishu/delivery.py`
+    - `src/marten_runtime/channels/feishu/service_support.py`
+- Why:
+  - Feishu structured replies could previously show richer card-body detail than the stored plain text
+  - session history, replay, restart, and plain HTTP readers now receive the same durable information content that the Feishu card body communicates
+  - live Feishu presentation keeps the compact lead and structured card body instead of re-rendering from the durable plain sink
+- Source of truth:
+  - `docs/2026-04-25-final-text-history-feishu-card-durability-consistency-implementation-plan.md`
+  - `docs/architecture/adr/0004-llm-first-tool-routing-boundary.md`
+- Verification:
+  - chunk 3 sink + delivery regressions:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_http_event_serialization tests.test_gateway tests.contracts.test_gateway_contracts tests.feishu.test_delivery tests.feishu.test_websocket_service`
+      - pass (`93` tests)
+  - chunk 4 continuity regressions:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_runtime_context tests.test_session_restart_integration tests.test_acceptance`
+      - pass (`45` tests)
+  - targeted regression bundle:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.feishu.test_rendering tests.test_http_event_serialization tests.test_gateway tests.contracts.test_gateway_contracts tests.feishu.test_delivery tests.feishu.test_websocket_service tests.test_runtime_context tests.test_session_restart_integration`
+      - pass (`176` tests)
+  - broad regression bundle:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_tool_followup_support tests.test_llm_message_support tests.test_llm_client tests.test_llm_transport tests.test_recovery_flow tests.test_runtime_history tests.test_http_runtime_diagnostics tests.runtime_loop.test_tool_followup_and_recovery tests.runtime_loop.test_direct_rendering_paths tests.runtime_loop.test_provider_failover tests.test_runtime_capabilities tests.tools.test_session_tool tests.tools.test_subagent_tools tests.test_subagent_service tests.test_subagent_integration tests.contracts.test_runtime_contracts tests.contracts.test_gateway_contracts tests.feishu.test_delivery tests.feishu.test_websocket_service tests.test_acceptance tests.test_gateway`
+      - pass (`432` tests)
+  - diff hygiene:
+    - `git diff --check`
+      - pass
+  - latest-source simulated Feishu smoke on `http://127.0.0.1:8012`:
+    - evidence file:
+      - `/tmp/marten_live_verify_20260425_8012_durable.json`
+    - plain chat:
+      - `run_79fba78d`
+    - builtin time:
+      - `run_81deb93f`
+    - MCP:
+      - `run_3e4b9f2e`
+    - multi-tool:
+      - `run_fbad4a57`
+    - skill:
+      - `run_31384308`
+    - subagent:
+      - parent `run_2ace7de4`
+      - task `task_1234ba75`
+      - child `run_715983ac`
+      - `origin_delivery_target = null`
+      - `dead_letter.count = 0`
+    - session switch:
+      - switch `run_d582be79`
+      - follow-up `run_1879d9f8`
+      - compaction `job_2a3362e7`
+  - direct durable/card consistency probe:
+    - `run_f0567be1`
+    - verified `final_text == event.payload.text == session.history[-1].content`
+    - verified card body still renders compact lead, structured detail, and token footer
+
+### 2026-04-25: Simulated Feishu Subagent Notifications Now Require A Real Delivery Target
+
+- Change:
+  - subagent completion notification now uses one explicit origin delivery target instead of assuming every Feishu-labeled conversation id is a real Feishu `chat_id`:
+    - `src/marten_runtime/tools/builtins/spawn_subagent_tool.py`
+    - `src/marten_runtime/subagents/models.py`
+    - `src/marten_runtime/subagents/service.py`
+  - HTTP `/messages` simulation now carries ingress transport provenance so runtime-owned tools can distinguish simulated Feishu turns from real websocket-delivered Feishu turns:
+    - `src/marten_runtime/gateway/models.py`
+    - `src/marten_runtime/gateway/ingress.py`
+    - `src/marten_runtime/channels/feishu/inbound.py`
+    - `src/marten_runtime/interfaces/http/bootstrap_handlers.py`
+    - `src/marten_runtime/runtime/loop.py`
+- Why:
+  - simulated Feishu `/messages` runs reuse Feishu rendering and tool surfaces but do not supply a real outbound Feishu `chat_id`
+  - the old subagent completion path assumed `session.conversation_id` was always a deliverable Feishu target, so simulated child completion notifications could dead-letter with `invalid receive_id`
+  - the durable boundary is:
+    - real Feishu websocket ingress carries a real delivery target
+    - simulated Feishu HTTP ingress keeps Feishu rendering behavior but skips impossible external completion delivery
+- Source of truth:
+  - `tests/tools/test_subagent_tools.py`
+  - `tests/test_subagent_service.py`
+  - `tests/test_subagent_integration.py`
+- Verification:
+  - focused subagent regressions:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.tools.test_subagent_tools tests.test_subagent_service tests.test_subagent_integration`
+      - pass (`48` tests)
+  - broader runtime / gateway / acceptance regressions:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_tool_followup_support tests.test_llm_message_support tests.test_llm_client tests.test_llm_transport tests.test_recovery_flow tests.test_runtime_history tests.test_http_runtime_diagnostics tests.runtime_loop.test_tool_followup_and_recovery tests.runtime_loop.test_direct_rendering_paths tests.runtime_loop.test_provider_failover tests.test_runtime_capabilities tests.tools.test_session_tool tests.tools.test_subagent_tools tests.test_subagent_service tests.test_subagent_integration tests.contracts.test_runtime_contracts tests.contracts.test_gateway_contracts tests.test_acceptance tests.test_gateway`
+      - pass (`385` tests)
+  - latest-source live simulated Feishu smoke on `127.0.0.1:8011`:
+    - parent subagent acceptance:
+      - `run_e2ada3ec`
+    - child subagent completion:
+      - `task_4217989c`
+      - `run_fd42c9dd`
+    - runtime diagnostics:
+      - `dead_letter.count = 0`
+      - websocket connected during the smoke
+
+### 2026-04-25: Current-Turn Evidence Ledger Became Part Of The Finalization Contract
+
+- Change:
+  - added one runtime-owned current-turn evidence ledger on the LLM request surface:
+    - `src/marten_runtime/runtime/llm_client.py`
+  - tool followup and finalization-retry prompts now receive the ledger as an additive system block while canonical assistant/tool transcript replay stays unchanged:
+    - `src/marten_runtime/runtime/llm_message_support.py`
+    - `src/marten_runtime/runtime/tool_followup_support.py`
+    - `src/marten_runtime/runtime/llm_request_instructions.py`
+  - recovery and loop finalization now share the same execution-derived evidence source, including bounded retry/fallback handling for partial multi-tool summaries:
+    - `src/marten_runtime/runtime/recovery_flow.py`
+    - `src/marten_runtime/runtime/loop.py`
+  - run diagnostics now persist bounded finalization state:
+    - assessment
+    - request kind
+    - required evidence count
+    - missing evidence summaries
+    - retry / fragment recovery state
+    - bounded invalid final text
+    - `src/marten_runtime/runtime/history.py`
+- Why:
+  - the active live failure class had shifted from tool choice to post-tool finalization quality
+  - successful multi-tool chains could still end with thin answers that omitted current-turn results
+  - operators needed one inspectable run-level record of whether the runtime accepted, retried, or recovered the final answer
+- Source of truth:
+  - `docs/2026-04-24-current-turn-evidence-ledger-finalization-design.md`
+  - `docs/2026-04-24-current-turn-evidence-ledger-finalization-implementation-plan.md`
+  - `docs/architecture/adr/0004-llm-first-tool-routing-boundary.md`
+- Verification:
+  - focused diagnostics + recovery regressions:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_recovery_flow tests.test_runtime_history tests.test_http_runtime_diagnostics`
+      - pass
+  - chunk regressions:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.runtime_loop.test_tool_followup_and_recovery tests.runtime_loop.test_direct_rendering_paths tests.test_runtime_history tests.test_http_runtime_diagnostics`
+      - pass
+  - acceptance / gateway regressions:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_acceptance tests.test_gateway`
+      - pass
+  - final regression proof:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_tool_followup_support tests.test_llm_message_support tests.test_llm_client tests.test_llm_transport tests.test_recovery_flow tests.test_runtime_history tests.test_http_runtime_diagnostics tests.runtime_loop.test_tool_followup_and_recovery tests.runtime_loop.test_direct_rendering_paths tests.contracts.test_runtime_contracts tests.contracts.test_gateway_contracts tests.test_acceptance tests.test_gateway`
+      - pass (`295` tests)
+  - diff hygiene:
+    - `git diff --check`
+      - pass
+
+### 2026-04-24: Terminal Output Normalization Moved To One Shared Channel Boundary
+
+- Change:
+  - terminal `final` / `error` output now flows through one shared normalization boundary before HTTP response assembly:
+    - `src/marten_runtime/channels/output_normalization.py`
+  - the boundary returns:
+    - one normalized `visible_text` for plain-text sinks
+    - one optional `channel_payload` for rich channel rendering
+  - Feishu visible-text cleanup is now owned by Feishu channel code:
+    - `normalize_feishu_visible_text(...)`
+    - `strip_protocol_shell_residue(...)`
+  - `_finalize_session_turn(...)` now computes terminal normalization once and reuses it for:
+    - persisted assistant history
+    - top-level HTTP `result` / `final_text` / `text`
+    - terminal event serialization via pass-through normalized output
+- Why:
+  - the previous path let different sinks observe different terminal text shapes for the same event
+  - Feishu card rendering could already be correct while stored history or top-level text still retained protocol residue such as trailing fenced closers
+  - the durable fix was one shared boundary at the channel/finalization edge, while keeping runtime loop output as raw text
+- Source of truth:
+  - `docs/2026-04-24-terminal-output-normalization-implementation-plan.md`
+  - `docs/2026-04-01-feishu-generic-card-protocol-design.md`
+  - `docs/2026-04-22-generic-loop-finalization-contract-design.md`
+- Verification:
+  - focused normalization regressions:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_gateway tests.test_http_event_serialization tests.feishu.test_rendering tests.test_feishu_rendering_support`
+      - pass
+  - broader runtime / gateway / subagent / session regressions:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_acceptance tests.contracts.test_gateway_contracts tests.contracts.test_runtime_contracts tests.test_subagent_integration tests.tools.test_session_tool tests.tools.test_subagent_tools`
+      - pass
+  - fresh latest-source HTTP smoke on `127.0.0.1:8010`:
+    - plain Feishu reply:
+      - text `alpha-live`
+      - `llm_request_count = 1`
+      - `tool_calls = []`
+    - builtin time reply:
+      - `tool_calls = ["time"]`
+      - `llm_request_count = 2`
+    - ordered `time -> runtime -> mcp` Feishu reply:
+      - cleaned top-level text with no leaked `feishu_card` residue
+      - `tool_calls = ["time", "runtime", "mcp"]`
+      - `llm_request_count = 5`
+    - visible skill load reply:
+      - `tool_calls = ["skill"]`
+    - subagent acceptance + child completion:
+      - parent `tool_calls = ["spawn_subagent"]`
+      - child run completed successfully
+    - `session.new` chain:
+      - switch response kept on source session
+      - follow-up continued on the new active session
+  - stale-process comparison:
+    - pre-existing service on `127.0.0.1:8000` still exposed raw Feishu protocol text on one multi-tool reply
+    - fresh service on `127.0.0.1:8010` confirmed the new normalization behavior
+  - diff hygiene:
+    - `git diff --check`
+      - pass
+
+### 2026-04-22: Generic Loop Finalization Became A State-Based Runtime Contract
+
+- Change:
+  - the runtime now treats post-tool finalization as one explicit state machine instead of a fixed ordered helper:
+    - `accepted`
+    - `retryable_degraded`
+    - `unrecoverable`
+  - successful tool chains now get one bounded `finalization_retry` request that:
+    - keeps `tool_history`
+    - exposes no callable tools
+    - keeps interactive-class timeout and retry budgeting
+  - deterministic fallback is now generic:
+    - aggregate ordered safe `recovery_fragment`s from executed tool results
+    - optionally append loop-owned round-trip facts as `source = "loop_meta"`
+  - the repository no longer contains the hardcoded direct-render helper for the old ordered `time -> runtime.context_status -> mcp.list` recovery path
+- Why:
+  - the old helper solved one live symptom by teaching the loop one privileged tool-name sequence
+  - that shape widened the harness in the wrong place and conflicted with:
+    - ADR 0001 thin harness
+    - ADR 0004 LLM-first tool routing
+  - the durable fix was one generic post-tool finalization contract with bounded retry and truthful fallback
+- Source of truth:
+  - `docs/2026-04-22-generic-loop-finalization-contract-design.md`
+  - `docs/2026-04-22-generic-loop-finalization-contract-implementation-plan.md`
+  - `docs/architecture/adr/0001-thin-harness-boundary.md`
+  - `docs/architecture/adr/0004-llm-first-tool-routing-boundary.md`
+- Verification:
+  - focused loop-finalization regressions:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_llm_client tests.test_llm_transport tests.test_recovery_flow tests.runtime_loop.test_tool_followup_and_recovery tests.runtime_loop.test_direct_rendering_paths`
+      - pass
+  - broader runtime/session/gateway regressions:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_tool_followup_support tests.test_direct_rendering tests.test_recovery_flow tests.test_llm_client tests.test_llm_transport tests.runtime_loop.test_tool_followup_and_recovery tests.runtime_loop.test_direct_rendering_paths tests.test_session tests.test_sqlite_session_store tests.test_runtime_context tests.test_session_restart_integration tests.test_gateway tests.test_acceptance`
+      - pass
+  - local live simulated Feishu `/messages` verification on the fresh runtime:
+    - live log:
+      - `.logs/live_20260422_192441.log`
+    - plain OpenAI text turn:
+      - session `sess_622f16e6`
+      - run `run_12f61392`
+    - ordered `time -> runtime -> mcp` turn:
+      - run `run_d59a05b7`
+    - visible-skill `example_time` turn:
+      - run `run_8f5b12d4`
+    - `session.new` turn:
+      - run `run_25b73c3d`
+      - new active session `sess_b63d6404`
+    - switched-session followup:
+      - run `run_5aaef06a`
+    - GitHub MCP `get_me` turn on the new session:
+      - run `run_6b33c304`
+    - session list render with current-session marker:
+      - run `run_f5a4f37b`
+  - diff hygiene:
+    - `git diff --check`
+      - pass
+
+### 2026-04-22: LLM-First Tool Routing Boundary Became A Durable Architecture Constraint
+
+- Change:
+  - added `ADR 0004` to make free-form natural-language tool selection a model responsibility
+  - clarified the runtime-owned boundary:
+    - capability declaration
+    - schema and parameter validation
+    - permission and side-effect correctness
+    - freshness and live-data truth enforcement
+    - execution, recovery, diagnostics, and structured protocol actions
+  - clarified the runtime-avoided boundary:
+    - host-side family routing for ordinary natural-language asks across builtin families
+    - request-specific keyword/regex narrowing as the default correction path
+  - recorded the current drift points that need follow-up contraction:
+    - `src/marten_runtime/runtime/llm_request_instructions.py`
+    - `src/marten_runtime/runtime/query_hardening.py`
+- Why:
+  - recent iterations fixed real user-facing issues by adding host-side narrowing around builtin families
+  - the repository already chose thin-harness and progressive-disclosure defaults, so the routing boundary needed to be written down before more code accumulated around the drift
+  - future execution work needs one stable document that distinguishes contract enforcement from free-form natural-language routing
+- Source of truth:
+  - `docs/architecture/adr/0004-llm-first-tool-routing-boundary.md`
+  - `docs/architecture/adr/0001-thin-harness-boundary.md`
+  - `docs/architecture/adr/0002-progressive-disclosure-default-surface.md`
+  - `docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md`
+- Verification:
+  - read-side alignment review against ADR 0001, ADR 0002, the 2026-03-31 capability design, and the current routing code surface
+  - `git diff --check`
+
 ### 2026-04-16: Live Feishu Last-Hop Proof Was Closed On The Current Runtime And Review-Child Confidence Parsing Was Hardened
 
 - Change:

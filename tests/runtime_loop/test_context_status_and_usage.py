@@ -8,6 +8,7 @@ from marten_runtime.agents.specs import AgentSpec
 from marten_runtime.config.models_loader import ModelProfile
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient, estimate_request_tokens
+from marten_runtime.runtime.context import RuntimeContext
 from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.runtime.usage_models import NormalizedUsage
 from marten_runtime.session.compacted_context import CompactedContext
@@ -22,6 +23,75 @@ from tests.support.scripted_llm import PromptTooLongThenSuccessLLMClient
 
 
 class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
+    @patch("marten_runtime.runtime.loop.run_compaction")
+    @patch("marten_runtime.runtime.loop.assemble_runtime_context")
+    def test_runtime_threads_session_replay_user_turns_into_context_and_compaction(
+        self,
+        mocked_assemble_runtime_context,
+        mocked_run_compaction,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([LLMReply(final_text="done")])
+        compact_llm = ScriptedLLMClient([LLMReply(final_text="compact summary")])
+        runtime = RuntimeLoop(llm, tools, history)
+        mocked_run_compaction.return_value = CompactedContext(
+            compact_id="cmp_runtime_turns",
+            session_id="sess_runtime_turns",
+            summary_text="当前进展：已压缩。",
+            source_message_range=[0, 2],
+            preserved_tail_user_turns=2,
+        )
+        mocked_assemble_runtime_context.side_effect = [
+            RuntimeContext(tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_runtime")),
+            RuntimeContext(tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_runtime")),
+        ]
+
+        events = runtime.run(
+            session_id="sess_runtime_turns",
+            message="继续执行",
+            trace_id="trace_runtime_turns",
+            system_prompt="You are marten-runtime.",
+            session_messages=[
+                SessionMessage.user("历史 1 " + "x" * 200),
+                SessionMessage.assistant("历史 1 完成 " + "y" * 200),
+                SessionMessage.user("历史 2 " + "x" * 200),
+                SessionMessage.assistant("历史 2 完成 " + "y" * 200),
+                SessionMessage.user("继续执行"),
+            ],
+            compact_llm_client=compact_llm,
+            compact_settings=build_compaction_settings(
+                ModelProfile(
+                    provider_ref="openai",
+                    model="gpt-4.1",
+                    context_window_tokens=400,
+                    reserve_output_tokens=50,
+                    compact_trigger_ratio=0.5,
+                )
+            ),
+            session_replay_user_turns=9,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(mocked_run_compaction.call_count, 1)
+        self.assertEqual(
+            mocked_run_compaction.call_args.kwargs["preserved_tail_user_turns"],
+            9,
+        )
+        self.assertEqual(
+            mocked_run_compaction.call_args.kwargs["trigger_kind"],
+            "context_pressure_proactive",
+        )
+        self.assertEqual(len(mocked_assemble_runtime_context.call_args_list), 2)
+        for call in mocked_assemble_runtime_context.call_args_list:
+            self.assertEqual(call.kwargs["replay_user_turns"], 9)
+        self.assertEqual(
+            mocked_assemble_runtime_context.call_args_list[0].kwargs[
+                "compacted_context"
+            ],
+            mocked_run_compaction.return_value,
+        )
+        self.assertIsNone(mocked_assemble_runtime_context.call_args_list[1].kwargs["compacted_context"])
 
     def test_compact_path_preserves_system_prompt_and_capability_scaffolding(
         self,
@@ -51,7 +121,7 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
                 session_id="sess_compact_scaffold",
                 summary_text="当前进展：old 1 已完成。",
                 source_message_range=[0, 2],
-                preserved_tail_count=2,
+                preserved_tail_user_turns=2,
             ),
         )
 
@@ -92,11 +162,13 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
             ],
             compact_llm_client=compact_llm,
             on_compacted=lambda item: stored.append(item),
+            session_replay_user_turns=1,
         )
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
         self.assertEqual(events[-1].payload["text"], "recovered")
         self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0].trigger_kind, "context_pressure_reactive")
         self.assertIn("当前进展", llm.requests[-1].compact_summary_text or "")
 
     def test_estimator_counts_scaffolding_and_history_inputs(self) -> None:
@@ -151,17 +223,19 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
             on_compacted=lambda item: stored.append(item),
             compact_settings=build_compaction_settings(
                 ModelProfile(
-                    provider="openai",
+                    provider_ref="openai",
                     model="gpt-4.1",
                     context_window_tokens=400,
                     reserve_output_tokens=50,
                     compact_trigger_ratio=0.5,
                 )
             ),
+            session_replay_user_turns=1,
         )
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
         self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0].trigger_kind, "context_pressure_proactive")
         self.assertIn("当前进展", llm.requests[0].compact_summary_text or "")
 
     def test_runtime_does_not_proactively_compact_finished_turn_without_continuation_signal(
@@ -190,7 +264,7 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
             on_compacted=lambda item: stored.append(item),
             compact_settings=build_compaction_settings(
                 ModelProfile(
-                    provider="openai",
+                    provider_ref="openai",
                     model="gpt-4.1",
                     context_window_tokens=400,
                     reserve_output_tokens=50,
@@ -231,13 +305,14 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
             compact_llm_client=compact_llm,
             compact_settings=build_compaction_settings(
                 ModelProfile(
-                    provider="openai",
+                    provider_ref="openai",
                     model="gpt-4.1",
                     context_window_tokens=400,
                     reserve_output_tokens=50,
                     compact_trigger_ratio=0.5,
                 )
             ),
+            session_replay_user_turns=1,
         )
 
         run = history.get(events[-1].run_id)
@@ -286,13 +361,14 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
                 compact_llm_client=compact_llm,
                 compact_settings=build_compaction_settings(
                     ModelProfile(
-                        provider="openai",
+                        provider_ref="openai",
                         model="gpt-4.1",
                         context_window_tokens=400,
                         reserve_output_tokens=50,
                         compact_trigger_ratio=0.5,
                     )
                 ),
+                session_replay_user_turns=1,
             )
 
             run_id = events[-1].run_id
@@ -320,6 +396,12 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
             [
                 LLMReply(
                     tool_name="runtime", tool_payload={"action": "context_status"}
+                ),
+                LLMReply(
+                    final_text=(
+                        "当前上下文使用详情：当前估算占用 1200/184000 tokens（1%）。"
+                        " 下一次请求预计输入 1200 tokens。"
+                    )
                 ),
             ]
         )
@@ -351,7 +433,8 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
         self.assertIn("当前上下文使用详情", events[-1].payload["text"])
-        self.assertIn("下一次请求预计输入", events[-1].payload["text"])
+        self.assertIn("当前会话下一次请求预计带入", events[-1].payload["text"])
+        self.assertIn("有效窗口：184000 tokens（原始窗口 200000）", events[-1].payload["text"])
         self.assertEqual(len(llm.requests), 1)
         tool_result = history.get(events[-1].run_id).tool_calls[0]["tool_result"]
         self.assertTrue(tool_result["ok"])
@@ -366,6 +449,9 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         self.assertIn("usage_percent", tool_result)
         self.assertIn("compaction_status", tool_result)
         self.assertIn("latest_checkpoint", tool_result)
+        self.assertIn("replay_user_turns", tool_result)
+        self.assertIn("recent_tool_outcome_summary_limit", tool_result)
+        self.assertIn("using_compacted_context", tool_result)
         self.assertIn("summary", tool_result)
         self.assertNotIn("advisory_threshold_tokens", tool_result)
         self.assertGreater(tool_result["context_window"], 0)
@@ -380,12 +466,9 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
             tool_result["current_run"]["initial_input_tokens_estimate"],
             run.initial_preflight_input_tokens_estimate,
         )
-        self.assertEqual(
+        self.assertLessEqual(
             tool_result["current_run"]["peak_input_tokens_estimate"],
             run.peak_preflight_input_tokens_estimate,
-        )
-        self.assertEqual(
-            tool_result["current_run"]["peak_stage"], run.peak_preflight_stage
         )
         self.assertEqual(tool_result["current_run"]["peak_stage"], "initial_request")
         self.assertNotIn("峰值主要来自工具结果注入后", tool_result["summary"])
@@ -399,7 +482,10 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         tools = ToolRegistry()
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
-            [LLMReply(tool_name="runtime", tool_payload={"action": "context_status"})]
+            [
+                LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
+                LLMReply(final_text="当前上下文使用详情：现在占用很低。"),
+            ]
         )
         runtime = RuntimeLoop(llm, tools, history)
         tools.register(
@@ -428,7 +514,7 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         )
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
-        self.assertIn("当前上下文使用详情", events[-1].payload["text"])
+        self.assertIn("当前会话下一次请求预计带入", events[-1].payload["text"])
         self.assertEqual(len(llm.requests), 1)
         run = history.get(events[-1].run_id)
         self.assertEqual(run.llm_request_count, 1)

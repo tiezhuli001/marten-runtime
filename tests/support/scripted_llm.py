@@ -43,6 +43,16 @@ class AuthFailingLLMClient:
         raise RuntimeError("provider_http_error:401:unauthorized")
 
 
+class OverloadedLLMClient:
+    provider_name = "overloaded"
+    model_name = "overloaded-local"
+
+    def complete(self, request):  # noqa: ANN001
+        raise RuntimeError(
+            'provider_http_error:529:{"type":"error","error":{"type":"overloaded_error","message":"当前服务繁忙","http_code":"529"}}'
+        )
+
+
 class BrokenToolLLMClient:
     provider_name = "scripted"
     model_name = "scripted-local"

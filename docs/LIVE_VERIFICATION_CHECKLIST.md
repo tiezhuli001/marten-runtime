@@ -23,7 +23,7 @@ It separates three things clearly:
 Already verified in this repository:
 
 - [x] runtime boots with the websocket-first Feishu architecture
-- [x] `mcps.json` servers auto-discover tools without static local `config/mcp.toml` tool lists
+- [x] `mcps.json` servers auto-discover tools without any secondary MCP config file
 - [x] GitHub MCP tool execution works on the runtime path
 - [x] runtime context assembly replays session context into the next LLM request
 - [x] skills are visible to the LLM as startup heads and activated bodies
@@ -65,6 +65,7 @@ Already proven from a real external conversation on the self-improve slice:
 
 - [ ] `.env` contains a valid provider credential such as `MINIMAX_API_KEY` or `OPENAI_API_KEY`
 - [ ] if `.env` overrides the base URL, it points at a reachable OpenAI-compatible endpoint
+- [ ] local `config/providers.toml` or the published `config/providers.example.toml` uses the intended provider endpoints and capability flags
 - [ ] local `config/models.toml` or the published `config/models.example.toml` uses the intended live profile
 
 Blocking symptom if missing:
@@ -91,7 +92,6 @@ Relevant files:
 
 - `mcps.json`
 - `config/agents.toml`
-- `config/mcp.example.toml`
 
 ### 3. Feishu Channel
 

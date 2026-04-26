@@ -6,9 +6,9 @@ from marten_runtime.session.compaction import compact_context
 from marten_runtime.session.compacted_context import CompactedContext
 from marten_runtime.session.compaction_prompt import render_compact_summary_block
 from marten_runtime.session.models import SessionMessage
-from marten_runtime.session.tool_outcome_summary import ToolOutcomeSummary, render_tool_outcome_summary_block
 from marten_runtime.session.rehydration import rehydrate_context
 from marten_runtime.session.replay import replay_session_messages
+from marten_runtime.session.tool_outcome_summary import ToolOutcomeSummary, render_tool_outcome_summary_block
 from marten_runtime.skills.snapshot import SkillSnapshot
 from marten_runtime.tools.registry import ToolSnapshot
 
@@ -23,6 +23,7 @@ class RuntimeContext(BaseModel):
     conversation_messages: list[RuntimeMessage] = Field(default_factory=list)
     compact_summary_text: str | None = None
     tool_outcome_summary_text: str | None = None
+    memory_text: str | None = None
     working_context: dict[str, object] = Field(default_factory=dict)
     working_context_text: str | None = None
     skill_snapshot: SkillSnapshot = Field(
@@ -40,6 +41,57 @@ class RuntimeContext(BaseModel):
     )
 
 
+def _replay_start_index(
+    all_messages: list[SessionMessage],
+    replay: list[SessionMessage],
+) -> int:
+    if not replay:
+        return len(all_messages)
+    first = replay[0]
+    for index, message in enumerate(all_messages):
+        if message is first:
+            return index
+    return len(all_messages)
+
+
+def _build_rebased_compact_summary_text(
+    older_messages: list[SessionMessage],
+    compacted_context: CompactedContext,
+) -> str | None:
+    base_summary = compacted_context.summary_text.strip() or None
+    if not older_messages:
+        return base_summary
+    lines: list[str] = []
+    recent_user_turns = [message.content.strip() for message in older_messages if message.role == "user"][-3:]
+    recent_assistant_summaries = [
+        _summarize_assistant_message(message.content)
+        for message in older_messages
+        if message.role == "assistant" and str(message.content).strip()
+    ][-3:]
+    if recent_user_turns:
+        lines.append("更早的用户轮次：")
+        lines.extend(f"- {item}" for item in recent_user_turns if item)
+    if recent_assistant_summaries:
+        lines.append("更早的助手进展：")
+        lines.extend(f"- {item}" for item in recent_assistant_summaries if item)
+    next_step = str(compacted_context.next_step or "").strip()
+    if next_step:
+        lines.extend(["更早检查点中的下一步：", f"- {next_step}"])
+    open_todos = [str(item).strip() for item in compacted_context.open_todos if str(item).strip()]
+    if open_todos:
+        lines.append("更早检查点中的未完成事项：")
+        lines.extend(f"- {item}" for item in open_todos[:3])
+    pending_risks = [str(item).strip() for item in compacted_context.pending_risks if str(item).strip()]
+    if pending_risks:
+        lines.append("更早检查点中的风险/注意点：")
+        lines.extend(f"- {item}" for item in pending_risks[:3])
+    if not lines:
+        return base_summary
+    if base_summary:
+        return "\n".join([base_summary, "", "补充说明（扩大 replay 窗口后仍由摘要承接的更早前缀）：", *lines])
+    return "\n".join(["补充说明（扩大 replay 窗口后仍由摘要承接的更早前缀）：", *lines])
+
+
 def assemble_runtime_context(
     *,
     session_id: str,
@@ -54,28 +106,71 @@ def assemble_runtime_context(
     always_on_skill_text: str | None = None,
     channel_protocol_instruction_text: str | None = None,
     activated_skill_bodies: list[str] | None = None,
-    replay_limit: int = 6,
+    replay_user_turns: int = 8,
     compacted_context: CompactedContext | None = None,
     recent_tool_outcome_summaries: list[ToolOutcomeSummary | dict[str, object]] | None = None,
+    memory_text: str | None = None,
 ) -> RuntimeContext:
     all_messages = session_messages or []
     replay_source = all_messages
     compact_summary_text: str | None = None
     if compacted_context is not None:
-        compact_end = max(0, min(len(all_messages), compacted_context.source_message_range[1] if compacted_context.source_message_range else 0))
-        replay_source = all_messages[compact_end:]
-        limit = max(replay_limit, compacted_context.preserved_tail_count)
-        replay = replay_session_messages(
-            replay_source,
-            current_message=current_message,
-            limit=limit,
+        compact_end = max(
+            0,
+            min(
+                len(all_messages),
+                compacted_context.source_message_range[1]
+                if compacted_context.source_message_range
+                else 0,
+            ),
         )
-        compact_summary_text = render_compact_summary_block(compacted_context.summary_text)
+        replay_source = all_messages[compact_end:]
+        preserved_tail_user_turns = (
+            compacted_context.preserved_tail_user_turns
+            if isinstance(compacted_context.preserved_tail_user_turns, int)
+            and compacted_context.preserved_tail_user_turns > 0
+            else None
+        )
+        desired_user_turns = max(
+            replay_user_turns,
+            preserved_tail_user_turns or replay_user_turns,
+        )
+        summary_text = compacted_context.summary_text.strip() or None
+        if (
+            preserved_tail_user_turns is not None
+            and replay_user_turns > preserved_tail_user_turns
+        ):
+            replay = replay_session_messages(
+                all_messages,
+                current_message=current_message,
+                user_turns=desired_user_turns,
+            )
+            if replay:
+                replay_start = _replay_start_index(all_messages, replay)
+                if replay_start < compact_end:
+                    summary_text = _build_rebased_compact_summary_text(
+                        all_messages[:replay_start],
+                        compacted_context,
+                    )
+                    replay_source = all_messages[replay_start:]
+                else:
+                    replay_source = all_messages[compact_end:]
+        else:
+            replay = replay_session_messages(
+                replay_source,
+                current_message=current_message,
+                user_turns=desired_user_turns,
+            )
+        if summary_text:
+            compact_summary_text = render_compact_summary_block(
+                summary_text,
+                trigger_kind=compacted_context.trigger_kind,
+            )
     else:
         replay = replay_session_messages(
             all_messages,
             current_message=current_message,
-            limit=replay_limit,
+            user_turns=replay_user_turns,
         )
     context_source_messages = replay_source if compacted_context is not None else all_messages
     derived = _derive_context_inputs(context_source_messages, replay, current_message)
@@ -99,6 +194,7 @@ def assemble_runtime_context(
         ],
         compact_summary_text=compact_summary_text,
         tool_outcome_summary_text=tool_outcome_summary_text,
+        memory_text=memory_text,
         working_context=working_context,
         working_context_text=_render_working_context(working_context),
         skill_snapshot=skill_snapshot or SkillSnapshot(skill_snapshot_id="skill_default"),
@@ -141,8 +237,6 @@ def _append_section(lines: list[str], title: str, items: object) -> None:
         return
     lines.append(f"{title}:")
     lines.extend(f"- {item}" for item in rendered)
-
-
 def _derive_context_inputs(
     session_messages: list[SessionMessage],
     replay: list[SessionMessage],

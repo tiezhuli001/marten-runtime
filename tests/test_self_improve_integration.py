@@ -44,8 +44,8 @@ class SelfImproveIntegrationTests(unittest.TestCase):
                 ]
             )
             runtime.runtime_loop.llm = scripted
-            runtime.llm_client_factory.cache_client("default", scripted)
-            runtime.llm_client_factory.cache_client("minimax_coding", scripted)
+            runtime.llm_client_factory.cache_client("openai_gpt5", scripted)
+            runtime.llm_client_factory.cache_client("minimax_m25", scripted)
 
             runtime.session_store.create(
                 session_id="sess_seed",
@@ -158,8 +158,8 @@ class SelfImproveIntegrationTests(unittest.TestCase):
                 ]
             )
             runtime.runtime_loop.llm = scripted
-            runtime.llm_client_factory.cache_client("default", scripted)
-            runtime.llm_client_factory.cache_client("minimax_coding", scripted)
+            runtime.llm_client_factory.cache_client("openai_gpt5", scripted)
+            runtime.llm_client_factory.cache_client("minimax_m25", scripted)
 
             runtime.session_store.create(
                 session_id="sess_seed",

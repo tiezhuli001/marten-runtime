@@ -166,15 +166,17 @@ cp mcps.example.json mcps.json
 配置边界：
 
 - `.env`：只放 secrets 和机器本地 override
-- `mcps.json`：只放实时 MCP server 定义
+- `mcps.json`：放实时 MCP server 定义和可选工具提示
 - `config/*.example.toml`：公开提交的模板默认值
 - `config/*.toml`：对应模板的本地覆盖文件
 - `apps/<app_id>/*.md`：放 bootstrap 和 agent 行为资产
 
 最小可运行配置：
 
-- 在 `.env` 设置共享 `default` profile 需要的 provider key；当前最短路径是 `OPENAI_API_KEY`
-- 如果你想切到别的 provider 或模型，在本地 `config/models.toml` 里重定义 `profiles.default`
+- 在 `.env` 设置 provider secret；当前最短路径包括 `OPENAI_API_KEY`、`MINIMAX_API_KEY`、`KIMI_API_KEY`
+- 在 `config/providers.toml` 放 provider 连接元数据
+- 在 `config/models.toml` 放 profile 和模型选择
+- 如果你想切换 live profile，更新 `default_profile` 或 `profiles.openai_gpt5` / `profiles.minimax_m25` / `profiles.kimi_k2`
 - 如果要启用 Langfuse 外部 tracing，在 `.env` 里补齐 `LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`
 - 只有需要本地覆盖时才把 `config/*.example.toml` 复制成 `config/*.toml`
 - 只有需要外部工具时才在 `mcps.json` 配置 MCP
@@ -183,7 +185,7 @@ cp mcps.example.json mcps.json
 当前公开仓库的配置形态：
 
 - 提交：`config/agents.toml`、`config/bindings.toml`、`config/*.example.toml`
-- 本地忽略覆盖：`config/platform.toml`、`config/models.toml`、`config/channels.toml`、`config/mcp.toml`
+- 本地忽略覆盖：`config/platform.toml`、`config/providers.toml`、`config/models.toml`、`config/channels.toml`
 
 ## Privacy And Open-Source Hygiene
 
@@ -215,7 +217,7 @@ PYTHONPATH=src python -m marten_runtime.interfaces.http.serve
 - `GET /diagnostics/run/{run_id}`
 - `GET /diagnostics/trace/{trace_id}`
 
-其中 `GET /diagnostics/run/{run_id}` 会暴露 `llm_request_count` 和 `tool_calls`，便于确认一次 turn 是否真的走了预期的 `LLM -> tool -> LLM` 主链。
+其中 `GET /diagnostics/run/{run_id}` 会暴露 `llm_request_count`、`tool_calls`、`provider_ref`、`attempted_profiles`、`attempted_providers`、`failover_trigger`、`failover_stage`、`final_provider_ref`，便于确认一次 turn 是否真的走了预期的 `LLM -> tool -> LLM` 主链，以及是否发生了 provider failover。
 
 Langfuse 可观测性现在已经是可选的 tracing 面：
 

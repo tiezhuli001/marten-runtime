@@ -46,7 +46,7 @@ class ProviderRetryTests(unittest.TestCase):
         self.assertEqual(attempts["count"], 1)
 
     def test_retry_retries_retryable_upstream_http_statuses(self) -> None:
-        for status in ("429", "502", "503", "504"):
+        for status in ("429", "502", "503", "504", "529"):
             attempts = {"count": 0}
 
             def flaky_status() -> str:

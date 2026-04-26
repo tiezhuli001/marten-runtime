@@ -46,6 +46,12 @@ class SessionMessage(BaseModel):
 class SessionRecord(BaseModel):
     session_id: str
     conversation_id: str
+    channel_id: str = ""
+    user_id: str = ""
+    agent_id: str = ""
+    session_title: str = ""
+    session_preview: str = ""
+    message_count: int = 0
     state: str = "created"
     created_at: datetime
     updated_at: datetime

@@ -14,12 +14,13 @@ from marten_runtime.config.models_loader import resolve_model_profile
 from marten_runtime.session.models import SessionMessage
 from marten_runtime.subagents.store import InMemorySubagentStore
 from marten_runtime.subagents.tool_profiles import (
+    PROFILE_ORDER,
+    normalize_tool_profile_name,
     resolve_child_allowed_tools,
     resolve_effective_tool_profile,
 )
 
-VALID_TOOL_PROFILES = {"restricted", "standard", "elevated"}
-TOOL_PROFILE_ALIASES = {"default": "restricted"}
+VALID_TOOL_PROFILES = set(PROFILE_ORDER)
 logger = logging.getLogger(__name__)
 
 
@@ -69,6 +70,7 @@ class SubagentService:
         self._execution_threads: dict[str, threading.Thread] = {}
         self._execution_tokens: dict[str, str] = {}
         self._execution_controls: dict[str, _ExecutionControl] = {}
+        self._pending_background_starts: set[str] = set()
         self._lock = threading.RLock()
 
     def spawn(
@@ -81,22 +83,27 @@ class SubagentService:
         parent_agent_id: str,
         app_id: str,
         agent_id: str,
-        requested_tool_profile: str = "restricted",
+        requested_tool_profile: str = "standard",
         parent_allowed_tools: list[str] | None = None,
         origin_channel_id: str | None = None,
+        origin_delivery_target: str | None = None,
         context_mode: str = "brief_only",
         notify_on_finish: bool = True,
         include_parent_session_message: bool = True,
     ) -> dict[str, str]:
         if not task.strip():
             raise ValueError("task must not be empty")
+        resolved_agent_id = agent_id
         resolved_app_id = app_id
         if self.agent_registry is not None:
-            target = self.agent_registry.get(agent_id)
+            target = self._resolve_registered_agent(
+                requested_agent_id=agent_id,
+                fallback_agent_id=parent_agent_id,
+            )
+            resolved_agent_id = target.agent_id
             resolved_app_id = target.app_id or app_id
-        normalized_requested_profile = TOOL_PROFILE_ALIASES.get(
-            requested_tool_profile,
-            requested_tool_profile,
+        normalized_requested_profile = normalize_tool_profile_name(
+            requested_tool_profile
         )
         parent_allowed = list(parent_allowed_tools or ["runtime", "skill", "time"])
         effective_tool_profile = self._resolve_effective_tool_profile(
@@ -114,6 +121,8 @@ class SubagentService:
                 parent_session_id=parent_session_id,
                 conversation_id=f"subagent:{uuid4().hex[:8]}",
                 session_id=child_session_id,
+                agent_id=resolved_agent_id,
+                active_agent_id=resolved_agent_id,
             )
             task_record = self.store.create(
                 label=(label or task[:40]).strip(),
@@ -122,9 +131,10 @@ class SubagentService:
                 parent_agent_id=parent_agent_id,
                 parent_allowed_tools=parent_allowed,
                 origin_channel_id=origin_channel_id,
+                origin_delivery_target=origin_delivery_target,
                 child_session_id=child.session_id,
                 app_id=resolved_app_id,
-                agent_id=agent_id,
+                agent_id=resolved_agent_id,
                 tool_profile=normalized_requested_profile,
                 effective_tool_profile=effective_tool_profile,
                 context_mode=context_mode,
@@ -133,11 +143,11 @@ class SubagentService:
                 include_parent_session_message=include_parent_session_message,
             )
             queue_state = "queued"
+            if self.auto_start_background and self.runtime_loop is not None:
+                self._pending_background_starts.add(task_record.task_id)
             if len(self._running_tasks) < self.max_concurrent_subagents:
                 queue_state = "running"
                 self._running_tasks.add(task_record.task_id)
-                if self.auto_start_background and self.runtime_loop is not None:
-                    self._start_background_task(task_record.task_id)
             return {
                 "status": "accepted",
                 "task_id": task_record.task_id,
@@ -306,16 +316,14 @@ class SubagentService:
             self._execution_threads.clear()
             self._execution_tokens.clear()
             self._execution_controls.clear()
+            self._pending_background_starts.clear()
 
     def _resolve_effective_tool_profile(
         self,
         requested_tool_profile: str,
         parent_allowed_tools: list[str],
     ) -> str:
-        requested_tool_profile = TOOL_PROFILE_ALIASES.get(
-            requested_tool_profile,
-            requested_tool_profile,
-        )
+        requested_tool_profile = normalize_tool_profile_name(requested_tool_profile)
         if requested_tool_profile not in VALID_TOOL_PROFILES:
             raise ValueError(f"unknown tool profile: {requested_tool_profile}")
         return resolve_effective_tool_profile(
@@ -335,12 +343,62 @@ class SubagentService:
         )
 
     def _start_background_task(self, task_id: str) -> None:
-        if task_id in self._background_tasks:
-            return
-        thread = threading.Timer(0.01, self.run_task_by_id, args=(task_id,))
-        thread.daemon = True
-        self._background_tasks[task_id] = thread
+        with self._lock:
+            if task_id in self._background_tasks or task_id in self._execution_threads:
+                return
+            thread = threading.Thread(target=self.run_task_by_id, args=(task_id,))
+            thread.daemon = True
+            self._background_tasks[task_id] = thread
         thread.start()
+
+    def release_deferred_background_starts(self) -> int:
+        task_ids: list[str] = []
+        with self._lock:
+            for item in self.store.list_tasks():
+                task_id = item.task_id
+                if task_id not in self._pending_background_starts:
+                    continue
+                self._pending_background_starts.discard(task_id)
+                if item.status != "queued":
+                    continue
+                if task_id in self._running_tasks:
+                    task_ids.append(task_id)
+                    continue
+                if len(self._running_tasks) >= self.max_concurrent_subagents:
+                    continue
+                self._running_tasks.add(task_id)
+                task_ids.append(task_id)
+        started = 0
+        for task_id in task_ids:
+            try:
+                task = self.store.get(task_id)
+            except KeyError:
+                continue
+            if task.status != "queued":
+                continue
+            self._start_background_task(task_id)
+            started += 1
+        return started
+
+    def _start_next_queued_background_task(self) -> None:
+        if not self.auto_start_background or self.runtime_loop is None:
+            return
+        next_task_id = None
+        with self._lock:
+            if len(self._running_tasks) >= self.max_concurrent_subagents:
+                return
+            for item in self.store.list_tasks():
+                if item.status != "queued":
+                    continue
+                if item.task_id in self._running_tasks:
+                    continue
+                if item.task_id in self._pending_background_starts:
+                    continue
+                next_task_id = item.task_id
+                self._running_tasks.add(next_task_id)
+                break
+        if next_task_id is not None:
+            self._start_background_task(next_task_id)
 
     def _execute_task(self, task_id: str, execution_token: str) -> None:
         task = self.store.get(task_id)
@@ -366,7 +424,8 @@ class SubagentService:
             }
             if self.llm_client_factory is not None and self.models_config is not None:
                 run_kwargs.update(self._runtime_assets_for_agent(agent))
-            cooperative_kwargs = {
+            optional_kwargs = {
+                "session_store": self.session_store,
                 "stop_event": control.cancel_event if control is not None else None,
                 "deadline_monotonic": control.deadline_monotonic if control is not None else None,
                 "timeout_seconds_override": self._timeout_seconds_override(task.task_id),
@@ -376,7 +435,7 @@ class SubagentService:
                 parameter.kind == inspect.Parameter.VAR_KEYWORD
                 for parameter in signature.parameters.values()
             )
-            for key, value in cooperative_kwargs.items():
+            for key, value in optional_kwargs.items():
                 if accepts_kwargs or key in signature.parameters:
                     run_kwargs[key] = value
             events = self.runtime_loop.run(
@@ -456,17 +515,13 @@ class SubagentService:
             self._background_tasks.pop(task_id, None)
             self._execution_threads.pop(task_id, None)
             self._execution_controls.pop(task_id, None)
+            self._pending_background_starts.discard(task_id)
             should_start_next = (
                 self.auto_start_background
                 and len(self._running_tasks) < self.max_concurrent_subagents
             )
         if should_start_next:
-            next_task = next(
-                (item for item in self.store.list_tasks() if item.status == "queued"),
-                None,
-            )
-            if next_task is not None:
-                self._start_background_task(next_task.task_id)
+            self._start_next_queued_background_task()
 
     def _deadline_monotonic(self) -> float | None:
         if self.subagent_timeout_seconds <= 0:
@@ -489,12 +544,31 @@ class SubagentService:
                 allowed_tools=[],
                 prompt_mode="subagent",
             )
-        target = self.agent_registry.get(task.agent_id)
+        target = self._resolve_registered_agent(
+            requested_agent_id=task.agent_id,
+            fallback_agent_id=task.parent_agent_id,
+        )
         return target.model_copy(
             update={
                 "app_id": target.app_id or task.app_id,
             }
         )
+
+    def _resolve_registered_agent(
+        self,
+        *,
+        requested_agent_id: str,
+        fallback_agent_id: str,
+    ) -> AgentSpec:
+        try:
+            return self.agent_registry.get(requested_agent_id)
+        except KeyError:
+            logger.warning(
+                "subagent requested unknown agent_id=%s; falling back to parent agent_id=%s",
+                requested_agent_id,
+                fallback_agent_id,
+            )
+        return self.agent_registry.get(fallback_agent_id)
 
     def _runtime_assets_for_agent(self, agent: AgentSpec) -> dict[str, object]:
         assets = self.app_runtimes.get(agent.app_id)
@@ -520,8 +594,9 @@ class SubagentService:
             return
         if self.feishu_delivery is None:
             return
-        parent_session = self.session_store.get(task.parent_session_id)
-        chat_id = parent_session.conversation_id
+        chat_id = str(task.origin_delivery_target or "").strip()
+        if not chat_id:
+            return
         event_type = "final" if status == "completed" else "error"
         run_id = task.child_run_id or task.parent_run_id
         summary = (

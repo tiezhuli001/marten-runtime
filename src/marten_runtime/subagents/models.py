@@ -18,6 +18,7 @@ class SubagentTask(BaseModel):
     parent_agent_id: str
     parent_allowed_tools: list[str] = Field(default_factory=list)
     origin_channel_id: str | None = None
+    origin_delivery_target: str | None = None
     child_session_id: str
     child_run_id: str | None = None
     app_id: str

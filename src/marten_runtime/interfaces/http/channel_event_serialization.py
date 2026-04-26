@@ -1,25 +1,23 @@
 from __future__ import annotations
 
-import re
-
 from marten_runtime.channels.feishu.rendering import (
-    parse_feishu_card_protocol,
-    render_final_reply_card,
+    normalize_feishu_durable_text,
+    normalize_feishu_visible_text,
 )
-from marten_runtime.channels.feishu.usage import build_usage_summary_from_history
+from marten_runtime.channels.output_normalization import (
+    TerminalOutputNormalization,
+    normalize_terminal_output,
+)
 from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.history import InMemoryRunHistory
 
-_FEISHU_CARD_HISTORY_BLOCK_RE = re.compile(
-    r"\n*```feishu_card\s*\n[\s\S]*?(?:\n```)?\s*$"
-)
+
+def history_durable_text(text: str) -> str:
+    return normalize_feishu_durable_text(text)
 
 
 def history_visible_text(text: str) -> str:
-    visible_text, _ = parse_feishu_card_protocol(text)
-    if visible_text != text:
-        return visible_text
-    return _FEISHU_CARD_HISTORY_BLOCK_RE.sub("", text).rstrip()
+    return normalize_feishu_visible_text(text)
 
 
 def serialize_event_for_channel(
@@ -27,17 +25,20 @@ def serialize_event_for_channel(
     *,
     channel_id: str,
     run_history: InMemoryRunHistory | None,
+    normalized_terminal_output: TerminalOutputNormalization | None = None,
 ) -> dict[str, object]:
     payload = dict(event.payload)
-    if channel_id == "feishu" and event.event_type in {"final", "error"}:
-        raw_text = str(payload.get("text", ""))
-        visible_text = history_visible_text(raw_text)
-        payload["text"] = visible_text
-        payload["card"] = render_final_reply_card(
-            raw_text,
+    if event.event_type in {"final", "error"}:
+        normalized = normalized_terminal_output or normalize_terminal_output(
+            raw_text=str(payload.get("text", "")),
+            channel_id=channel_id,
             event_type=event.event_type,
-            usage_summary=build_usage_summary_from_history(run_history, event.run_id),
+            run_history=run_history,
+            run_id=event.run_id,
         )
+        payload["text"] = normalized.durable_text
+        if normalized.channel_payload is not None:
+            payload["card"] = normalized.channel_payload
     item = event.model_dump(mode="json")
     item["payload"] = payload
     return item

@@ -99,6 +99,8 @@ def normalize_provider_error(exc: Exception) -> ProviderTransportError:
         return ProviderTransportError("PROVIDER_AUTH_ERROR", message)
     if message.startswith("provider_http_error:429"):
         return ProviderTransportError("PROVIDER_RATE_LIMITED", message, retryable=True)
+    if message.startswith("provider_http_error:529"):
+        return ProviderTransportError("PROVIDER_UPSTREAM_UNAVAILABLE", message, retryable=True)
     if (
         message.startswith("provider_http_error:502")
         or message.startswith("provider_http_error:503")

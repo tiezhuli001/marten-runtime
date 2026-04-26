@@ -68,6 +68,8 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertNotIn("mock_search", app.state.runtime.tool_registry.list())
         self.assertIn("automation", app.state.runtime.tool_registry.list())
         self.assertIn("self_improve", app.state.runtime.tool_registry.list())
+        self.assertIn("session", app.state.runtime.tool_registry.list())
+        self.assertIn("memory", app.state.runtime.tool_registry.list())
         self.assertNotIn("register_automation", app.state.runtime.tool_registry.list())
         self.assertNotIn("list_lesson_candidates", app.state.runtime.tool_registry.list())
 
@@ -80,6 +82,8 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertIn("mcp", assistant.allowed_tools)
         self.assertIn("automation", assistant.allowed_tools)
         self.assertIn("self_improve", assistant.allowed_tools)
+        self.assertIn("session", assistant.allowed_tools)
+        self.assertIn("memory", assistant.allowed_tools)
         self.assertIn("runtime", assistant.allowed_tools)
         self.assertIn("time", assistant.allowed_tools)
         self.assertIn("spawn_subagent", assistant.allowed_tools)
@@ -88,7 +92,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertNotIn("list_lesson_candidates", assistant.allowed_tools)
         self.assertEqual(
             assistant.allowed_tools,
-            ["automation", "mcp", "runtime", "self_improve", "skill", "time", "spawn_subagent", "cancel_subagent"],
+            ["automation", "mcp", "runtime", "self_improve", "session", "memory", "skill", "time", "spawn_subagent", "cancel_subagent"],
         )
 
     def test_mcp_family_tool_is_the_only_model_visible_mcp_entrypoint(self) -> None:
@@ -102,27 +106,42 @@ class RuntimeContractTests(unittest.TestCase):
     def test_runtime_bootstrap_uses_capability_catalog_and_descriptions(self) -> None:
         app = build_test_app()
         runtime = app.state.runtime
-        snapshot = runtime.tool_registry.build_snapshot(["automation", "mcp", "runtime", "self_improve", "skill", "time"])
+        snapshot = runtime.tool_registry.build_snapshot(
+            ["automation", "mcp", "runtime", "self_improve", "session", "memory", "skill", "time"]
+        )
         automation_description = snapshot.tool_metadata["automation"]["description"]
         mcp_description = snapshot.tool_metadata["mcp"]["description"]
         runtime_description = snapshot.tool_metadata["runtime"]["description"]
+        session_description = snapshot.tool_metadata["session"]["description"]
+        time_description = snapshot.tool_metadata["time"]["description"]
 
         self.assertIn("Capability catalog:", runtime.capability_catalog_text or "")
         self.assertIn("automation", runtime.capability_catalog_text or "")
         self.assertIn("mcp", runtime.capability_catalog_text or "")
         self.assertIn("runtime", runtime.capability_catalog_text or "")
+        self.assertIn("session", runtime.capability_catalog_text or "")
+        self.assertIn("当前上下文窗口多大", runtime.capability_catalog_text or "")
+        self.assertIn("现在有哪些会话列表", runtime.capability_catalog_text or "")
+        self.assertIn("当前有哪些定时任务", runtime.capability_catalog_text or "")
         self.assertNotIn("mock_search", runtime.capability_catalog_text or "")
         self.assertNotIn("search_repositories", runtime.capability_catalog_text or "")
         self.assertTrue(automation_description)
         self.assertTrue(mcp_description)
         self.assertTrue(runtime_description)
+        self.assertTrue(session_description)
+        self.assertTrue(time_description)
         self.assertIn("automation", automation_description.lower())
+        self.assertIn("定时任务", automation_description)
         self.assertIn("github", mcp_description.lower())
         self.assertNotIn("search_repositories", mcp_description)
         self.assertNotIn("list_commits", mcp_description)
         self.assertTrue(
             "runtime" in runtime_description.lower() or "上下文" in runtime_description
         )
+        self.assertIn("上下文窗口", runtime_description)
+        self.assertIn("会话列表", session_description)
+        self.assertIn("sess_", session_description)
+        self.assertIn("现在几点", time_description)
 
     def test_runtime_bootstrap_preserves_family_tool_parameter_schemas(self) -> None:
         app = build_test_app()
@@ -359,7 +378,7 @@ class RuntimeContractTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[2]
         github_server = next(
             server
-            for server in load_mcp_servers(str(repo_root / "config/mcp.toml"), str(repo_root / "mcps.json"))
+            for server in load_mcp_servers(str(repo_root / "mcps.json"))
             if server.server_id == "github"
         )
 
@@ -421,8 +440,8 @@ class RuntimeContractTests(unittest.TestCase):
                 LLMReply(final_text="最新提交已返回。"),
             ]
         )
-        runtime.llm_client_factory.cache_client("default", runtime.runtime_loop.llm)
-        runtime.llm_client_factory.cache_client("minimax_coding", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("openai_gpt5", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_m25", runtime.runtime_loop.llm)
 
         with TestClient(app) as client:
             response = client.post(

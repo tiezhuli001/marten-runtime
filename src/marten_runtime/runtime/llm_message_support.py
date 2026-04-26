@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
@@ -10,12 +11,16 @@ from marten_runtime.runtime.llm_provider_support import (
 )
 from marten_runtime.runtime.llm_request_instructions import (
     request_specific_instruction as _request_specific_instruction,
-    should_lock_runtime_context_followup as _should_lock_runtime_context_followup,
     tool_followup_instruction as _tool_followup_instruction,
 )
 
 if TYPE_CHECKING:
-    from marten_runtime.runtime.llm_client import LLMRequest, ToolExchange
+    from marten_runtime.runtime.llm_client import (
+        FinalizationEvidenceItem,
+        FinalizationEvidenceLedger,
+        LLMRequest,
+        ToolExchange,
+    )
 
 
 def build_openai_messages(request: "LLMRequest") -> list[dict[str, object]]:
@@ -32,18 +37,28 @@ def build_openai_messages(request: "LLMRequest") -> list[dict[str, object]]:
     _append_system_message(messages, request.always_on_skill_text)
     _append_system_message(messages, request.compact_summary_text)
     _append_system_message(messages, request.tool_outcome_summary_text)
+    _append_system_message(messages, request.memory_text)
     _append_system_message(messages, request.working_context_text)
     _append_system_message(messages, _request_specific_instruction(request))
-    lock_runtime_context_followup = _should_lock_runtime_context_followup(
-        message=request.message,
-        tool_history_count=len(request.tool_history),
+    _append_system_message(
+        messages,
+        render_finalization_evidence_ledger_block(
+            request.finalization_evidence_ledger
+            if (is_tool_followup or request.request_kind == "finalization_retry")
+            else None
+        ),
     )
     _append_system_message(
         messages,
         _tool_followup_instruction(
             request.requested_tool_name,
-            lock_runtime_context_followup=lock_runtime_context_followup,
             tool_history_count=len(request.tool_history),
+            has_evidence_ledger=request.finalization_evidence_ledger is not None,
+            required_evidence_count=sum(
+                1
+                for item in (request.finalization_evidence_ledger.items if request.finalization_evidence_ledger else [])
+                if item.required_for_user_request
+            ),
         ),
     )
     for body in request.activated_skill_bodies:
@@ -68,21 +83,30 @@ def build_openai_chat_payload(
     tool_definitions = build_tool_definitions(request)
     if tool_definitions:
         body["tools"] = tool_definitions
-        body["tool_choice"] = "auto"
+        body["tool_choice"] = build_openai_tool_choice(
+            request,
+            responses_api=False,
+        ) or "auto"
     return body
 
 
 def build_tool_definitions(request: "LLMRequest") -> list[dict[str, object]]:
+    if request.request_kind == "finalization_retry":
+        return []
+    tool_names = list(request.available_tools)
+    forced_tool_name = _forced_initial_tool_name(request)
+    if forced_tool_name:
+        tool_names = [tool_name for tool_name in tool_names if tool_name == forced_tool_name]
     return [
         {
             "type": "function",
             "function": {
                 "name": tool_name,
                 "description": _tool_description(tool_name, request),
-                "parameters": _resolve_parameters_schema(tool_name, request.tool_snapshot),
+                "parameters": _tool_parameters_schema(tool_name, request),
             },
         }
-        for tool_name in request.available_tools
+        for tool_name in tool_names
     ]
 
 
@@ -91,6 +115,33 @@ def _append_system_message(
 ) -> None:
     if content:
         messages.append({"role": "system", "content": content})
+
+
+def render_finalization_evidence_ledger_block(
+    ledger: "FinalizationEvidenceLedger" | None,
+) -> str | None:
+    if ledger is None or not ledger.items:
+        return None
+    lines = [
+        "Current-turn evidence ledger:",
+        f"- tool_call_count={ledger.tool_call_count}",
+    ]
+    if ledger.model_request_count is not None:
+        lines.append(f"- model_request_count={ledger.model_request_count}")
+    lines.append(
+        "- requires_result_coverage={value}".format(
+            value="yes" if ledger.requires_result_coverage else "no"
+        )
+    )
+    lines.append(
+        "- requires_round_trip_report={value}".format(
+            value="yes" if ledger.requires_round_trip_report else "no"
+        )
+    )
+    lines.append("- evidence_items:")
+    for item in ledger.items:
+        lines.append(_render_finalization_evidence_item(item))
+    return "\n".join(lines)
 
 
 def _tool_history_for_request(request: "LLMRequest") -> list["ToolExchange"]:
@@ -107,6 +158,27 @@ def _tool_history_for_request(request: "LLMRequest") -> list["ToolExchange"]:
         )
     )
     return tool_history
+
+
+def _render_finalization_evidence_item(item: "FinalizationEvidenceItem") -> str:
+    parts = [
+        f"{item.ordinal}. tool={item.tool_name}",
+        f"required={'yes' if item.required_for_user_request else 'no'}",
+        f"source={item.evidence_source}",
+    ]
+    if item.tool_action:
+        parts.append(f"action={item.tool_action}")
+    if item.payload_summary:
+        parts.append(f"payload={_truncate_ledger_text(item.payload_summary, limit=80)}")
+    parts.append(f"result={_truncate_ledger_text(item.result_summary, limit=180)}")
+    return "- " + " | ".join(parts)
+
+
+def _truncate_ledger_text(text: str | None, *, limit: int) -> str:
+    normalized = " ".join(str(text or "").split()).strip()
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[: limit - 1].rstrip()}…"
 
 
 def _assistant_tool_call_message(
@@ -140,3 +212,70 @@ def _tool_description(tool_name: str, request: "LLMRequest") -> str:
     if isinstance(metadata, Mapping):
         return str(metadata.get("description", ""))
     return ""
+
+
+def _forced_initial_tool_name(request: "LLMRequest") -> str | None:
+    if request.tool_history or request.tool_result is not None:
+        return None
+    forced = str(request.requested_tool_name or "").strip()
+    if not forced:
+        return None
+    return forced
+
+
+def resolve_required_initial_tool_name(request: "LLMRequest") -> str | None:
+    forced_tool_name = _forced_initial_tool_name(request)
+    if forced_tool_name:
+        return forced_tool_name
+    return None
+
+
+def build_openai_tool_choice(
+    request: "LLMRequest",
+    *,
+    responses_api: bool,
+) -> dict[str, object] | None:
+    required_tool_name = resolve_required_initial_tool_name(request)
+    if not required_tool_name:
+        return None
+    if responses_api:
+        return {"type": "function", "name": required_tool_name}
+    return {"type": "function", "function": {"name": required_tool_name}}
+
+
+def _tool_parameters_schema(tool_name: str, request: "LLMRequest") -> dict[str, object]:
+    schema = _resolve_parameters_schema(tool_name, request.tool_snapshot)
+    if tool_name != "session":
+        return schema
+    if _forced_initial_tool_name(request) != "session":
+        return schema
+    return _forced_session_parameters_schema(schema, request.requested_tool_payload)
+
+
+def _forced_session_parameters_schema(
+    schema: dict[str, object],
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    narrowed = copy.deepcopy(schema)
+    properties = narrowed.setdefault("properties", {})
+    if not isinstance(properties, dict):
+        return narrowed
+    required = list(narrowed.get("required", []))
+    action = str(payload.get("action") or "").strip()
+    session_id = str(payload.get("session_id") or "").strip()
+    if action:
+        action_schema = dict(properties.get("action") or {})
+        action_schema["type"] = "string"
+        action_schema["enum"] = [action]
+        properties["action"] = action_schema
+        if "action" not in required:
+            required.append("action")
+    if session_id:
+        session_schema = dict(properties.get("session_id") or {})
+        session_schema["type"] = "string"
+        session_schema["enum"] = [session_id]
+        properties["session_id"] = session_schema
+        if "session_id" not in required:
+            required.append("session_id")
+    narrowed["required"] = required
+    return narrowed

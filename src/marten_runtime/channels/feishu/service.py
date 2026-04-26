@@ -74,6 +74,7 @@ class FeishuWebsocketService:
         client_config: FeishuWebsocketClientConfig | None = None,
         lane_manager: ConversationLaneManager | None = None,
         run_history: InMemoryRunHistory | None = None,
+        after_runtime_delivery: Callable[[Mapping[str, object]], None] | None = None,
     ) -> None:
         self.env = dict(env or {})
         self.receipt_store = receipt_store
@@ -86,6 +87,7 @@ class FeishuWebsocketService:
         self.client_config = client_config or FeishuWebsocketClientConfig()
         self.lane_manager = lane_manager
         self.run_history = run_history
+        self.after_runtime_delivery = after_runtime_delivery
         self.state = FeishuWebsocketState()
         self._fragments: dict[str, list[bytes]] = {}
         self._task: asyncio.Task[None] | None = None
@@ -292,6 +294,7 @@ class FeishuWebsocketService:
                 envelope=envelope,
                 body=body,
             )
+            self._after_runtime_delivery(body)
             self.state.last_run_id = last_run_id
             self.state.last_runtime_trace_id = envelope.trace_id
             self.state.last_event_id = event.message_id or event.event_id
@@ -438,6 +441,14 @@ class FeishuWebsocketService:
                     elapsed_ms=elapsed_ms(delivery_started_at),
                 )
         return last_run_id, delivery_results
+
+    def _after_runtime_delivery(self, body: Mapping[str, object]) -> None:
+        if self.after_runtime_delivery is None:
+            return
+        try:
+            self.after_runtime_delivery(body)
+        except Exception:
+            logger.exception("feishu after-runtime-delivery callback failed")
 
     def _build_delivery_payload(
         self,

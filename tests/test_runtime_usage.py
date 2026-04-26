@@ -121,6 +121,61 @@ class RuntimeUsageTests(unittest.TestCase):
         self.assertEqual(reply.final_text, "ok")
         self.assertIsNone(reply.usage)
 
+    def test_openai_client_extracts_usage_from_responses_path(self) -> None:
+        calls = 0
+
+        def fake_transport(
+            url: str,
+            headers: dict[str, str],
+            body: dict,
+            timeout_seconds: float = 30,
+            *,
+            stop_event=None,
+            deadline_monotonic=None,
+        ) -> dict:
+            del headers, body, timeout_seconds, stop_event, deadline_monotonic
+            nonlocal calls
+            calls += 1
+            return {
+                "status": "completed",
+                "output_text": "ok",
+                "output": [],
+                "usage": {
+                    "input_tokens": 123,
+                    "output_tokens": 45,
+                    "total_tokens": 168,
+                    "input_tokens_details": {"cached_tokens": 7},
+                    "output_tokens_details": {"reasoning_tokens": 9},
+                },
+            }
+
+        client = OpenAIChatLLMClient(
+            api_key="secret",
+            model="gpt-5.4",
+            profile_name="default",
+            transport=fake_transport,
+        )
+
+        reply = client.complete(
+            LLMRequest(
+                session_id="sess_usage_responses",
+                trace_id="trace_usage_responses",
+                message="hello",
+                agent_id="main",
+                app_id="main_agent",
+            )
+        )
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(reply.final_text, "ok")
+        self.assertIsNotNone(reply.usage)
+        assert reply.usage is not None
+        self.assertEqual(reply.usage.input_tokens, 123)
+        self.assertEqual(reply.usage.output_tokens, 45)
+        self.assertEqual(reply.usage.total_tokens, 168)
+        self.assertEqual(reply.usage.cached_input_tokens, 7)
+        self.assertEqual(reply.usage.reasoning_output_tokens, 9)
+
 
 if __name__ == "__main__":
     unittest.main()

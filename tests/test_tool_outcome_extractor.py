@@ -44,6 +44,7 @@ class ToolOutcomeExtractorTests(unittest.TestCase):
         assert summary is not None
         self.assertIn("repo_helper", summary.summary_text)
         self.assertNotIn("Read repository files", summary.summary_text)
+        self.assertTrue(summary.keep_next_turn)
 
     def test_extract_time_fallback_summary_marks_volatile(self) -> None:
         summary = extract_tool_outcome_summary(
@@ -80,6 +81,7 @@ class ToolOutcomeExtractorTests(unittest.TestCase):
                 "url=https://github.com/CloudWide851/easy-agent",
             ],
         )
+        self.assertFalse(summary.keep_next_turn)
 
     def test_extract_generic_tool_summary_returns_none_when_noisy_or_unstructured(self) -> None:
         summary = extract_tool_outcome_summary(

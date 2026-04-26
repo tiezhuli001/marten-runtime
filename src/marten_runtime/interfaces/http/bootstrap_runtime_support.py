@@ -12,6 +12,7 @@ from marten_runtime.automation.sqlite_store import SQLiteAutomationStore
 from marten_runtime.automation.store import AutomationStore
 from marten_runtime.config.automations_loader import load_automations
 from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
+from marten_runtime.session.sqlite_store import SQLiteSessionStore
 
 
 @dataclass
@@ -37,15 +38,16 @@ def load_app_runtimes(
 
 def build_stateful_stores(
     repo_root: Path,
-) -> tuple[SQLiteAutomationStore, SQLiteSelfImproveStore]:
+) -> tuple[SQLiteAutomationStore, SQLiteSelfImproveStore, SQLiteSessionStore]:
     automation_store = SQLiteAutomationStore(repo_root / "data" / "automations.sqlite3")
     self_improve_store = SQLiteSelfImproveStore(
         repo_root / "data" / "self_improve.sqlite3"
     )
+    session_store = SQLiteSessionStore(repo_root / "data" / "sessions.sqlite3")
     for job in load_automations(str(repo_root / "config" / "automations.toml")):
         automation_store.save(job)
     ensure_self_improve_automation(automation_store)
-    return automation_store, self_improve_store
+    return automation_store, self_improve_store, session_store
 
 
 def has_feishu_credentials(env: Mapping[str, str]) -> bool:

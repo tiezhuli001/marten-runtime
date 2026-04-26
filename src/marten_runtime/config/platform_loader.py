@@ -1,12 +1,13 @@
 import tomllib
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from marten_runtime.config.file_resolver import resolve_config_path
 
 
 class RuntimeConfig(BaseModel):
     mode: str
+    session_replay_user_turns: int = Field(default=8, gt=0)
 
 
 class ServerConfig(BaseModel):
@@ -24,7 +25,10 @@ def load_platform_config(path: str, env: dict[str, str] | None = None) -> Platfo
     resolved = resolve_config_path(path)
     if resolved is None:
         config = PlatformConfig(
-            runtime=RuntimeConfig(mode="rewrite-first"),
+            runtime=RuntimeConfig(
+                mode="rewrite-first",
+                session_replay_user_turns=8,
+            ),
             server=ServerConfig(
                 host="0.0.0.0",
                 port=8000,
@@ -41,15 +45,19 @@ def load_platform_config(path: str, env: dict[str, str] | None = None) -> Platfo
     host = overrides.get("SERVER_HOST")
     port = overrides.get("SERVER_PORT")
     public_base_url = overrides.get("SERVER_PUBLIC_BASE_URL")
-    return config.model_copy(
-        update={
-            "server": config.server.model_copy(
-                update={
-                    "host": host or config.server.host,
-                    "port": int(port) if port else config.server.port,
-                    "public_base_url": public_base_url or config.server.public_base_url,
-                }
-            )
-        }
+    session_replay_user_turns = overrides.get("SESSION_REPLAY_USER_TURNS")
+    return PlatformConfig(
+        runtime=RuntimeConfig(
+            mode=config.runtime.mode,
+            session_replay_user_turns=(
+                int(session_replay_user_turns)
+                if session_replay_user_turns
+                else config.runtime.session_replay_user_turns
+            ),
+        ),
+        server=ServerConfig(
+            host=host or config.server.host,
+            port=int(port) if port else config.server.port,
+            public_base_url=public_base_url or config.server.public_base_url,
+        ),
     )
-

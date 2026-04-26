@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from marten_runtime.config.env_loader import load_env_file
+from marten_runtime.config.providers_loader import ProviderConfig, ProvidersConfig
 from marten_runtime.config.models_loader import ModelProfile
 from marten_runtime.runtime.llm_client import OpenAIChatLLMClient, build_llm_client
 
@@ -28,15 +29,30 @@ class EnvLoaderTests(unittest.TestCase):
             env_path = Path(tmp) / ".env"
             env_path.write_text("MINIMAX_API_KEY=file-secret\n", encoding="utf-8")
             profile = ModelProfile(
-                provider="openai",
+                provider_ref="minimax",
                 model="MiniMax-M2.5",
-                base_url="https://api.minimaxi.com/v1",
-                api_key_env="MINIMAX_API_KEY",
+            )
+            providers = ProvidersConfig(
+                providers={
+                    "minimax": ProviderConfig(
+                        adapter="openai_compat",
+                        base_url="https://api.minimaxi.com/v1",
+                        api_key_env="MINIMAX_API_KEY",
+                        supports_responses_api=False,
+                        supports_responses_streaming=False,
+                        supports_chat_completions=True,
+                    )
+                }
             )
 
             with patch.dict(os.environ, {}, clear=True):
                 load_env_file(env_path)
-                client = build_llm_client(profile_name="minimax_coding", profile=profile, env=os.environ)
+                client = build_llm_client(
+                    profile_name="minimax_m25",
+                    profile=profile,
+                    providers_config=providers,
+                    env=os.environ,
+                )
 
                 self.assertIsInstance(client, OpenAIChatLLMClient)
                 assert isinstance(client, OpenAIChatLLMClient)

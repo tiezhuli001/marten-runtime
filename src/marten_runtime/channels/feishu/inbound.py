@@ -64,6 +64,7 @@ def to_inbound_envelope(event: FeishuInboundEvent) -> InboundEnvelope:
         conversation_id=event.chat_id,
         message_id=message_id,
         body=event.text,
+        source_transport="feishu_websocket",
         received_at=datetime.now(timezone.utc),
         dedupe_key=dedupe_key,
         trace_id=f"trace_{uuid4().hex[:8]}",

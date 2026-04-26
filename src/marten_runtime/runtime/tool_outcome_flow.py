@@ -152,6 +152,11 @@ def resolve_summary_volatile_flag(
     return True
 
 
+def has_durable_continuation_facts(facts: list[ToolOutcomeFact]) -> bool:
+    durable_fact_keys = {"full_name", "default_branch", "name", "repo", "branch", "url"}
+    return any(fact.key in durable_fact_keys for fact in facts)
+
+
 def build_fallback_tool_episode_summary(
     *,
     run_id: str,
@@ -172,6 +177,7 @@ def build_fallback_tool_episode_summary(
         run_id=run_id,
         source_kind=infer_episode_source_kind(history, tool_snapshot),
         summary_text=f"上一轮工具调用完成：{final_text.strip()}",
+        keep_next_turn=False,
     )
 
 
@@ -194,13 +200,12 @@ def build_combined_tool_episode_summary(
         facts=facts,
         fallback_summary=fallback_summary,
     )
+    durable_facts_keep_next_turn = has_durable_continuation_facts(facts)
     keep_next_turn = bool(
         (
             draft.keep_next_turn
             or bool(fallback_summary is not None and fallback_summary.keep_next_turn)
-        )
-        and not bool(
-            fallback_summary is not None and not fallback_summary.keep_next_turn
+            or durable_facts_keep_next_turn
         )
         and not volatile
     )

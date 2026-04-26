@@ -4,7 +4,7 @@ import json
 import re
 from collections.abc import Mapping
 
-from marten_runtime.config.models_loader import ModelProfile
+from marten_runtime.config.providers_loader import ProviderConfig
 from marten_runtime.runtime.timing import elapsed_ms
 from marten_runtime.runtime.usage_models import NormalizedUsage
 from marten_runtime.tools.registry import ToolSnapshot
@@ -24,11 +24,17 @@ def extract_openai_usage(
     usage = payload.get("usage")
     if not isinstance(usage, dict):
         return None
-    prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
-    completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+    prompt_tokens = int(
+        usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0
+    )
+    completion_tokens = int(
+        usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0
+    )
     total_tokens = int(usage.get("total_tokens", prompt_tokens + completion_tokens) or 0)
-    prompt_details = usage.get("prompt_tokens_details")
-    completion_details = usage.get("completion_tokens_details")
+    prompt_details = usage.get("prompt_tokens_details", usage.get("input_tokens_details"))
+    completion_details = usage.get(
+        "completion_tokens_details", usage.get("output_tokens_details")
+    )
     cached_tokens = None
     if isinstance(prompt_details, dict) and prompt_details.get("cached_tokens") is not None:
         cached_tokens = int(prompt_details.get("cached_tokens", 0) or 0)
@@ -95,11 +101,11 @@ def resolve_parameters_schema(tool_name: str, tool_snapshot: ToolSnapshot) -> di
     return {"type": "object"}
 
 
-def resolve_base_url(*, profile: ModelProfile, env: Mapping[str, str]) -> str | None:
-    api_key_env = profile.api_key_env or "OPENAI_API_KEY"
+def resolve_base_url(*, provider: ProviderConfig, env: Mapping[str, str]) -> str | None:
+    api_key_env = provider.api_key_env
     if api_key_env.endswith("_API_KEY"):
         base_env = f"{api_key_env.removesuffix('_API_KEY')}_API_BASE"
         override = env.get(base_env)
         if override:
             return override
-    return profile.base_url
+    return provider.base_url

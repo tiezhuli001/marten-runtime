@@ -47,8 +47,23 @@ class ToolEpisodeSummaryPromptTests(unittest.TestCase):
         self.assertIsInstance(parsed, ToolEpisodeSummaryDraft)
         self.assertEqual(parsed.facts[0].key, "repo")
 
+    def test_parse_tool_episode_summary_response_defaults_keep_next_turn_to_false(self) -> None:
+        parsed = parse_tool_episode_summary_response(
+            """
+            {
+              "summary": "上一轮通过 github MCP 查询了 easy-agent。",
+              "facts": [{"key": "repo", "value": "CloudWide851/easy-agent"}],
+              "volatile": false,
+              "refresh_hint": ""
+            }
+            """
+        )
+
+        self.assertFalse(parsed.keep_next_turn)
+
     def test_prompt_requires_preserving_hidden_but_durable_tool_facts(self) -> None:
         self.assertIn("即使最终回复为了遵守用户要求而省略细节", TOOL_EPISODE_SUMMARY_SYSTEM_PROMPT)
+        self.assertIn("keep_next_turn: 默认 false", TOOL_EPISODE_SUMMARY_SYSTEM_PROMPT)
 
     def test_extract_tool_episode_summary_block_splits_visible_text_and_summary(self) -> None:
         parsed = extract_tool_episode_summary_block(

@@ -12,6 +12,7 @@ from marten_runtime.channels.feishu.rendering_support import (
     default_card_title,
     derive_plain_title,
     render_section_item,
+    strip_protocol_shell_residue,
 )
 from marten_runtime.channels.feishu.usage import format_usage_summary
 
@@ -27,6 +28,9 @@ _FEISHU_CARD_BARE_JSON_BLOCK_RE = re.compile(r"\n*feishu_card\s*\n```json\s*\n(?
 _FEISHU_CARD_TRAILING_JSON_RE = re.compile(r"\n+(?P<body>\{[\s\S]*\})\s*$")
 _FEISHU_CARD_PARAM_RE = re.compile(
     r"<parameter name=\"(?P<name>[^\"]+)\">(?P<value>[\s\S]*?)</parameter>"
+)
+_FEISHU_VISIBLE_TAIL_BLOCK_RE = re.compile(
+    r"\n*```feishu_card\s*\n[\s\S]*?(?:\n```)?\s*$"
 )
 
 
@@ -61,6 +65,12 @@ _BACKGROUND_COMPLETED_RE = re.compile(
 _BACKGROUND_STATUS_RE = re.compile(
     r"^后台任务(?P<status>failed|timed_out|cancelled)[:：]\s*(?P<label>[^\n]+?)(?:\n(?P<detail>[\s\S]*))?$"
 )
+_TERMINAL_FOLLOWUP_PREFIXES = (
+    "如果你需要",
+    "如果你要",
+    "如果你愿意",
+    "我也可以继续帮你",
+)
 
 
 
@@ -76,12 +86,84 @@ def parse_feishu_card_protocol(text: str) -> tuple[str, FeishuCardProtocol | Non
     try:
         visible_text, payload = _extract_protocol_payload(text)
         if payload is None:
-            return text, None
+            return strip_trailing_followup_offer(text), None
         card = _validate_protocol_payload(payload)
     except Exception as exc:
         logger.info("feishu_card_protocol action=ignore reason=%s", str(exc))
-        return text, None
-    return visible_text, card
+        return strip_trailing_followup_offer(text), None
+    return strip_trailing_followup_offer(visible_text), card
+
+
+def normalize_feishu_visible_text(text: str) -> str:
+    visible_text, _ = parse_feishu_card_protocol(text)
+    protocol_context = (
+        visible_text != text
+        or "feishu_card" in text
+        or "<invoke name=\"feishu_card\">" in text
+        or "<minimax:tool_call>" in text
+        or "</minimax:tool_call>" in text
+    )
+    if visible_text != text:
+        return strip_protocol_shell_residue(visible_text, protocol_context=protocol_context)
+    cleaned = _FEISHU_VISIBLE_TAIL_BLOCK_RE.sub("", text).rstrip()
+    return strip_protocol_shell_residue(cleaned, protocol_context=protocol_context)
+
+
+def normalize_feishu_durable_text(text: str) -> str:
+    visible_text, protocol = parse_feishu_card_protocol(text)
+    if protocol is None:
+        return normalize_feishu_visible_text(text)
+    lead = dedupe_visible_text_against_protocol(visible_text, protocol).strip()
+    parts: list[str] = []
+    if lead:
+        parts.append(lead)
+    title = str(protocol.title or "").strip()
+    if title and not parts:
+        parts.append(title)
+    summary = str(protocol.summary or "").strip()
+    if summary and not _durable_part_is_covered(summary, parts):
+        parts.append(summary)
+    for section in protocol.sections:
+        items = [
+            render_section_item(item)
+            for item in section.items
+            if str(item).strip()
+        ]
+        if not items:
+            continue
+        title = str(section.title or "").strip()
+        section_lines = [*([title] if title else []), *items]
+        section_text = "\n".join(section_lines).strip()
+        if section_text and not _durable_part_is_covered(section_text, parts):
+            parts.append(section_text)
+    normalized = "\n\n".join(part for part in parts if part.strip()).strip()
+    return normalized or normalize_feishu_visible_text(text)
+
+
+def strip_trailing_followup_offer(text: str) -> str:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return normalized
+    paragraphs = re.split(r"\n\s*\n", normalized)
+    if not paragraphs:
+        return normalized
+    last = paragraphs[-1]
+    first_line = next((line.strip() for line in last.splitlines() if line.strip()), "")
+    if any(first_line.startswith(prefix) for prefix in _TERMINAL_FOLLOWUP_PREFIXES):
+        kept = "\n\n".join(part.strip() for part in paragraphs[:-1] if part.strip()).strip()
+        return kept
+    return normalized
+
+
+def _durable_part_is_covered(candidate: str, parts: list[str]) -> bool:
+    normalized_candidate = re.sub(r"\s+", " ", candidate).strip()
+    if not normalized_candidate:
+        return True
+    for part in parts:
+        normalized_part = re.sub(r"\s+", " ", part).strip()
+        if normalized_candidate == normalized_part or normalized_candidate in normalized_part:
+            return True
+    return False
 
 
 def _extract_protocol_payload(text: str) -> tuple[str, dict[str, object] | None]:
@@ -258,7 +340,7 @@ def _parse_subagent_terminal_card(text: str) -> SubagentTerminalCard | None:
             continue
         resolved_title = title(match.group("status")) if callable(title) else title
         label = (match.groupdict().get("label") or "").strip()
-        detail = (match.groupdict().get("detail") or "").strip() or None
+        detail = _sanitize_terminal_detail((match.groupdict().get("detail") or "").strip()) or None
         summary = f"{summary_prefix}：{label}" if label else None
         return SubagentTerminalCard(
             title=resolved_title,
@@ -266,6 +348,17 @@ def _parse_subagent_terminal_card(text: str) -> SubagentTerminalCard | None:
             visible_text=detail,
         )
     return None
+
+
+def _sanitize_terminal_detail(detail: str) -> str:
+    if not detail:
+        return detail
+    lines = detail.splitlines()
+    for index, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        if any(stripped.startswith(prefix) for prefix in _TERMINAL_FOLLOWUP_PREFIXES):
+            return "\n".join(line.rstrip() for line in lines[:index]).strip()
+    return "\n".join(line.rstrip() for line in lines).strip()
 
 
 def _map_background_status_title(status: str) -> str:
@@ -282,6 +375,13 @@ def _render_fallback_structured_card(
     event_type: str = "final",
     usage_summary: dict[str, int] | None = None,
 ) -> dict[str, object] | None:
+    parsed_card = _render_multisection_plain_text_card(
+        text,
+        event_type=event_type,
+        usage_summary=usage_summary,
+    )
+    if parsed_card is not None:
+        return parsed_card
     lines = [line.rstrip() for line in text.splitlines()]
     bullet_indexes = [index for index, line in enumerate(lines) if line.lstrip().startswith("- ")]
     if len(bullet_indexes) < 2:
@@ -308,10 +408,271 @@ def _derive_fallback_heading(text: str) -> tuple[str | None, str | None]:
     cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", text).strip()
     if not cleaned:
         return None, None
+    cleaned = " ".join(line.strip() for line in cleaned.splitlines() if line.strip())
     if "，" in cleaned:
         title, summary = cleaned.split("，", 1)
         return title.rstrip("：:。 "), summary.rstrip("：:。 ")
     return cleaned.rstrip("：:。 "), None
+
+
+def _render_multisection_plain_text_card(
+    text: str,
+    *,
+    event_type: str,
+    usage_summary: dict[str, int] | None,
+) -> dict[str, object] | None:
+    paragraphs = _split_plaintext_paragraphs(text)
+    if not paragraphs:
+        return None
+    session_card = _render_session_catalog_plain_text_card(
+        paragraphs,
+        event_type=event_type,
+        usage_summary=usage_summary,
+        fallback_text=text,
+    )
+    if session_card is not None:
+        return session_card
+
+    visible_text: str | None = None
+    title: str | None = None
+    summary: str | None = None
+    note: str | None = None
+    sections: list[FeishuCardSection] = []
+    intro_consumed = False
+    if (
+        len(paragraphs) >= 2
+        and len(paragraphs[0]) == 1
+        and not _paragraph_has_list_items(paragraphs[0])
+        and _extract_plaintext_list_items(paragraphs[1]) is not None
+    ):
+        title, summary = _derive_fallback_heading(paragraphs[0][0])
+        intro_consumed = True
+
+    for index, lines in enumerate(paragraphs):
+        if index == 0 and intro_consumed:
+            continue
+        if (
+            index == len(paragraphs) - 1
+            and index > 0
+            and not _paragraph_has_list_items(lines)
+            and sections
+                ):
+            note = " ".join(line.strip() for line in lines if line.strip())
+            continue
+        if _paragraph_is_heading_plus_list(lines):
+            section_title = _normalize_section_title(lines[0])
+            derived_title, derived_summary = _derive_fallback_heading(lines[0])
+            if title is None and _should_promote_heading_to_card_title(
+                heading=section_title,
+                visible_text=visible_text,
+                paragraph_count=len(paragraphs),
+                has_derived_summary=bool(derived_summary),
+            ):
+                title = derived_title
+                summary = summary or derived_summary
+                section_title = "详情"
+            sections.append(
+                FeishuCardSection(
+                    title=section_title,
+                    items=_extract_plaintext_list_items(lines[1:]) or [],
+                )
+            )
+            continue
+        list_items = _extract_plaintext_list_items(lines)
+        if list_items is not None:
+            sections.append(
+                FeishuCardSection(
+                    title=None,
+                    items=list_items,
+                )
+            )
+            continue
+        paragraph_text = "\n".join(line.strip() for line in lines if line.strip()).strip()
+        if not paragraph_text:
+            continue
+        if visible_text is None:
+            visible_text = paragraph_text
+        else:
+            visible_text = f"{visible_text}\n\n{paragraph_text}"
+    if not sections:
+        return None
+    title_source = text if sections and title is None else (visible_text or text)
+    resolved_title = title or derive_plain_title(title_source, event_type=event_type)
+    return _build_generic_card(
+        title=resolved_title,
+        visible_text=visible_text,
+        summary=summary,
+        sections=sections,
+        note=note,
+        fallback_text=text,
+        header_template=default_card_template(event_type),
+        usage_summary=usage_summary,
+    )
+
+
+def _render_session_catalog_plain_text_card(
+    paragraphs: list[list[str]],
+    *,
+    event_type: str,
+    usage_summary: dict[str, int] | None,
+    fallback_text: str,
+) -> dict[str, object] | None:
+    if not paragraphs:
+        return None
+    first_paragraph = [line.strip() for line in paragraphs[0] if line.strip()]
+    if not first_paragraph:
+        return None
+    header_line = first_paragraph[0]
+    if not header_line.startswith("当前有 ") or "可见会话" not in header_line:
+        return None
+    items: list[str] = []
+    note: str | None = None
+    item_paragraphs: list[list[str]] = []
+    if first_paragraph[1:]:
+        item_paragraphs.extend(_split_session_catalog_items(first_paragraph[1:]))
+    if len(paragraphs) > 1:
+        item_paragraphs.extend(paragraphs[1:])
+    for paragraph in item_paragraphs:
+        lines = [line.strip() for line in paragraph if line.strip()]
+        if not lines:
+            continue
+        if len(lines) == 1 and lines[0].startswith("其余 ") and "session.show" in lines[0]:
+            note = lines[0]
+            continue
+        if not re.match(r"^\d+[.)]\s+", lines[0]):
+            return None
+        items.append(_format_session_catalog_item(lines))
+    if not items:
+        return None
+    return _build_generic_card(
+        title="会话列表",
+        visible_text=None,
+        summary=header_line,
+        sections=[FeishuCardSection(title="会话详情", items=items)],
+        note=note,
+        fallback_text=fallback_text,
+        header_template=default_card_template(event_type),
+        usage_summary=usage_summary,
+    )
+
+
+def _format_session_catalog_item(lines: list[str]) -> str:
+    if not lines:
+        return ""
+    head, *tail = lines
+    normalized_tail = [f"- {line.strip()}" for line in tail if line.strip()]
+    return "\n".join([head, *normalized_tail])
+
+
+def _split_session_catalog_items(lines: list[str]) -> list[list[str]]:
+    items: list[list[str]] = []
+    current: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if re.match(r"^\d+[.)]\s+", stripped):
+            if current:
+                items.append(current)
+            current = [stripped]
+            continue
+        if not current:
+            return []
+        current.append(stripped)
+    if current:
+        items.append(current)
+    return items
+
+
+def _split_plaintext_paragraphs(text: str) -> list[list[str]]:
+    paragraphs: list[list[str]] = []
+    current: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        if not line.strip():
+            if current:
+                paragraphs.append(current)
+                current = []
+            continue
+        current.append(line)
+    if current:
+        paragraphs.append(current)
+    return paragraphs
+
+
+def _paragraph_has_list_items(lines: list[str]) -> bool:
+    return any(_is_plaintext_list_item(line) for line in lines)
+
+
+def _paragraph_is_list_only(lines: list[str]) -> bool:
+    return _extract_plaintext_list_items(lines) is not None
+
+
+def _paragraph_is_heading_plus_list(lines: list[str]) -> bool:
+    return (
+        len(lines) >= 2
+        and not _is_plaintext_list_item(lines[0])
+        and _extract_plaintext_list_items(lines[1:]) is not None
+    )
+
+
+def _is_plaintext_list_item(line: str) -> bool:
+    return bool(re.match(r"^\s*(?:[-*•]\s+|\d+[.)]\s+)", line))
+
+
+def _normalize_plaintext_item(line: str) -> str:
+    stripped = line.strip()
+    if re.match(r"^\d+[.)]\s+", stripped):
+        return stripped
+    return re.sub(r"^\s*[-*•]\s+", "", stripped)
+
+
+def _extract_plaintext_list_items(lines: list[str]) -> list[str] | None:
+    items: list[str] = []
+    current_lines: list[str] = []
+    saw_list_item = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _is_plaintext_list_item(stripped):
+            if current_lines:
+                items.append("\n".join(current_lines))
+            current_lines = [_normalize_plaintext_item(stripped)]
+            saw_list_item = True
+            continue
+        if not saw_list_item or not current_lines:
+            return None
+        current_lines.append(stripped)
+    if current_lines:
+        items.append("\n".join(current_lines))
+    return items if items else None
+
+
+def _normalize_section_title(line: str) -> str:
+    return re.sub(r"\*\*(.*?)\*\*", r"\1", line).strip().rstrip("：:。 ")
+
+
+def _should_promote_heading_to_card_title(
+    *,
+    heading: str,
+    visible_text: str | None,
+    paragraph_count: int,
+    has_derived_summary: bool,
+) -> bool:
+    normalized_heading = heading.strip()
+    if visible_text:
+        return False
+    if paragraph_count != 1:
+        return False
+    if has_derived_summary:
+        return True
+    return (
+        normalized_heading == "已切换到新会话"
+        or normalized_heading.startswith("已切换到会话")
+        or normalized_heading.startswith("当前已在会话")
+        or normalized_heading.startswith("会话详情")
+    )
 
 
 def _markdown_div(content: str) -> dict[str, object]:

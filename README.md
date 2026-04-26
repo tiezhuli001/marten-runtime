@@ -192,15 +192,17 @@ cp mcps.example.json mcps.json
 Configuration boundaries:
 
 - `.env`: secrets and machine-local overrides only
-- `mcps.json`: live MCP server definitions only
+- `mcps.json`: live MCP server definitions and optional tool hints
 - `config/*.example.toml`: published template defaults
 - `config/*.toml`: optional local overrides for the corresponding example file
 - `apps/<app_id>/*.md`: bootstrap and agent behavior assets
 
 Minimal practical setup:
 
-- set the provider key required by the shared `default` profile in `.env`; the committed shortest path is `OPENAI_API_KEY`
-- redefine `profiles.default` in local `config/models.toml` when you want another provider or model
+- set provider secrets in `.env`; the committed shortest paths are `OPENAI_API_KEY`, `MINIMAX_API_KEY`, and `KIMI_API_KEY`
+- keep provider connection metadata in `config/providers.toml`
+- keep model/profile selection in `config/models.toml`
+- set `default_profile` or update `profiles.openai_gpt5` / `profiles.minimax_m25` / `profiles.kimi_k2` when you want another live profile
 - set `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY` in `.env` when you want external tracing in Langfuse
 - optionally copy `config/*.example.toml` to `config/*.toml` only for local overrides
 - add MCP servers to `mcps.json` only when you need external tools
@@ -209,7 +211,7 @@ Minimal practical setup:
 Published config shape:
 
 - committed: `config/agents.toml`, `config/bindings.toml`, `config/*.example.toml`
-- ignored local overrides: `config/platform.toml`, `config/models.toml`, `config/channels.toml`, `config/mcp.toml`
+- ignored local overrides: `config/platform.toml`, `config/providers.toml`, `config/models.toml`, `config/channels.toml`
 
 ## Privacy And Open-Source Hygiene
 
@@ -242,6 +244,7 @@ Useful endpoints:
 - `GET /diagnostics/trace/{trace_id}`
 
 Run diagnostics include `llm_request_count` and `tool_calls`, so operator checks can verify whether a turn stayed on the intended `LLM -> tool -> LLM` path.
+Run diagnostics also expose `provider_ref`, `attempted_profiles`, `attempted_providers`, `failover_trigger`, `failover_stage`, and `final_provider_ref`.
 
 Langfuse observability is now supported as an optional tracing surface:
 

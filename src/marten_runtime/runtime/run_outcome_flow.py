@@ -28,6 +28,14 @@ def tool_rejection_text(error_code: str) -> str:
     return error_code.lower()
 
 
+def provider_failure_text(error_code: str) -> str:
+    if error_code in {"PROVIDER_UPSTREAM_UNAVAILABLE", "PROVIDER_RATE_LIMITED"}:
+        return "当前模型服务繁忙，请稍后重试。"
+    if error_code == "PROVIDER_AUTH_ERROR":
+        return "当前模型配置不可用，请联系管理员检查服务配置。"
+    return "暂时没有生成可见回复，请重试。"
+
+
 def is_provider_failure(exc: Exception) -> bool:
     if isinstance(exc, (ProviderTransportError, TimeoutError, OSError)):
         return True
@@ -222,15 +230,7 @@ def append_post_turn_summary(
     if not tool_history or not final_text.strip():
         return
     latest = tool_history[-1]
-    if (
-        latest.tool_name == "runtime"
-        and str(
-            (latest.tool_result or {}).get("action")
-            or (latest.tool_payload or {}).get("action")
-            or ""
-        )
-        == "context_status"
-    ):
+    if _should_skip_post_turn_summary(latest):
         return
     if any(item.tool_name in {"self_improve", "automation"} for item in tool_history):
         return
@@ -244,6 +244,21 @@ def append_post_turn_summary(
     )
     if summary is not None:
         history.append_tool_outcome_summary(run_id, summary)
+
+
+def _should_skip_post_turn_summary(latest: ToolExchange) -> bool:
+    action = str(
+        (latest.tool_result or {}).get("action")
+        or (latest.tool_payload or {}).get("action")
+        or ""
+    ).strip()
+    if latest.tool_name == "runtime" and action == "context_status":
+        return True
+    if latest.tool_name == "session" and action in {"list", "show", "new", "resume"}:
+        return True
+    if latest.tool_name == "mcp" and action in {"list", "detail"}:
+        return True
+    return False
 
 
 def trigger_review_from_success(

@@ -52,6 +52,7 @@ class ToolOutcomeSummaryTests(unittest.TestCase):
                         ToolOutcomeFact.create("default_branch", "main"),
                         ToolOutcomeFact.create("name", "codex"),
                     ],
+                    keep_next_turn=True,
                 ),
                 ToolOutcomeSummary.create(
                     run_id="run_time",
@@ -65,7 +66,7 @@ class ToolOutcomeSummaryTests(unittest.TestCase):
 
         self.assertIsNotNone(block)
         assert block is not None
-        self.assertIn("Recent tool outcome summary", block)
+        self.assertIn("只有当前消息明确承接上一轮结果时才参考", block)
         self.assertIn("openai/codex", block)
         self.assertIn("default_branch=main", block)
         self.assertNotIn("time 工具", block)
@@ -76,6 +77,7 @@ class ToolOutcomeSummaryTests(unittest.TestCase):
                 run_id=f"run_{idx}",
                 source_kind="builtin",
                 summary_text="结果 " * 40,
+                keep_next_turn=True,
             )
             for idx in range(4)
         ]
@@ -84,7 +86,7 @@ class ToolOutcomeSummaryTests(unittest.TestCase):
 
         self.assertIsNotNone(block)
         assert block is not None
-        self.assertIn("Recent tool outcome", block)
+        self.assertIn("工具结果摘要", block)
         self.assertLessEqual(len(block), 140)
 
 
