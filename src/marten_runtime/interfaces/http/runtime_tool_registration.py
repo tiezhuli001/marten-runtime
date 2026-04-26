@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from marten_runtime.data_access.adapter import DomainDataAdapter
 from marten_runtime.runtime.capabilities import get_parameters_schema, render_tool_description
+from marten_runtime.session.transition import SessionTransitionResult
 from marten_runtime.tools.builtins.automation_tool import run_automation_tool
 from marten_runtime.tools.builtins.memory_tool import run_memory_tool
 from marten_runtime.tools.builtins.mcp_tool import run_mcp_tool
@@ -106,6 +107,9 @@ def register_family_tools(
             payload,
             session_store=runtime_state.session_store,
             tool_context=tool_context,
+            record_transition=lambda transition: record_session_transition(
+                runtime_state, transition
+            ),
         ),
         description=render_tool_description(capability_declarations["session"]),
         parameters_schema=get_parameters_schema(capability_declarations["session"]),
@@ -157,3 +161,20 @@ def runtime_latest_checkpoint_available(
         )
     except KeyError:
         return False
+
+
+def record_session_transition(
+    runtime_state: HTTPRuntimeState,
+    transition: SessionTransitionResult,
+) -> None:
+    runtime_state.latest_session_transition = {
+        "action": transition.action,
+        "source_session_id": transition.source_session_id,
+        "target_session_id": transition.target_session_id,
+        "compaction_attempted": transition.compaction_attempted,
+        "compaction_succeeded": transition.compaction_succeeded,
+        "compaction_reason": transition.compaction_reason,
+        "compaction_job": (
+            dict(transition.compaction_job) if transition.compaction_job is not None else None
+        ),
+    }

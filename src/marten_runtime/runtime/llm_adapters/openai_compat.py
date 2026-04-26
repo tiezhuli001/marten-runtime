@@ -8,8 +8,10 @@ import httpx
 
 from marten_runtime.config.providers_loader import ProviderConfig
 from marten_runtime.runtime.llm_message_support import (
+    build_openai_tool_choice,
     build_openai_messages,
     build_tool_definitions,
+    resolve_required_initial_tool_name,
 )
 from marten_runtime.runtime.llm_provider_support import (
     extract_openai_usage as _extract_openai_usage,
@@ -19,7 +21,6 @@ from marten_runtime.runtime.llm_provider_support import (
 )
 from marten_runtime.runtime.llm_request_instructions import (
     is_tool_followup_request as _is_tool_followup_request,
-    should_use_wider_interactive_timeout as _should_use_wider_interactive_timeout,
 )
 from marten_runtime.runtime.llm_transport_support import (
     invoke_transport as _invoke_transport,
@@ -137,6 +138,10 @@ class OpenAICompatLLMClient:
                 if use_responses_api
                 else self._parse_reply(payload)
             )
+            _raise_for_missing_required_initial_tool_call(
+                request=request,
+                reply=reply,
+            )
             self.last_call_diagnostics = ProviderCallDiagnostics(
                 request_kind=request.request_kind,
                 timeout_seconds=timeout_seconds,
@@ -167,14 +172,12 @@ class OpenAICompatLLMClient:
             return max(1, int(math.ceil(request.timeout_seconds_override)))
         if _is_tool_followup_request(request):
             return self.interactive_tool_followup_timeout_seconds
-        if request.request_kind == "interactive" and _should_use_wider_interactive_timeout(request):
-            return self.default_timeout_seconds
         if request.request_kind == "interactive":
             return self.interactive_timeout_seconds
         return self.default_timeout_seconds
 
     def _retry_policy_for(self, request) -> RetryPolicy:
-        if request.request_kind == "interactive":
+        if request.request_kind in {"interactive", "finalization_retry"}:
             return self.interactive_retry_policy
         return self.retry_policy
 
@@ -301,7 +304,9 @@ class OpenAICompatLLMClient:
         tool_definitions = _build_responses_tool_definitions(request)
         if tool_definitions:
             body["tools"] = tool_definitions
-            body["tool_choice"] = "auto"
+            body["tool_choice"] = (
+                build_openai_tool_choice(request, responses_api=True) or "auto"
+            )
         return body
 
     def _parse_responses_reply(self, payload: dict):
@@ -312,13 +317,8 @@ class OpenAICompatLLMClient:
             model_name=self.model_name,
         )
         function_calls = _extract_responses_function_calls(payload)
-        if len(function_calls) > 1:
-            raise ProviderTransportError(
-                "PROVIDER_RESPONSE_INVALID",
-                "provider_response_invalid:multiple_function_calls_not_supported",
-            )
         if function_calls:
-            function = function_calls[0]
+            function = _select_single_responses_function_call(function_calls)
             return _llm_reply(
                 tool_name=str(function.get("name") or ""),
                 tool_payload=_parse_tool_arguments(function.get("arguments", "{}")),
@@ -397,8 +397,7 @@ def _convert_message_to_responses_input_items(message: dict[str, object]) -> lis
                 {
                     "type": "message",
                     "role": "assistant",
-                    "content": [{"type": "output_text", "text": content}],
-                    "status": "completed",
+                    "content": [{"type": "input_text", "text": content}],
                 }
             )
         for index, tool_call in enumerate(message.get("tool_calls") or [], start=1):
@@ -510,6 +509,33 @@ def _extract_responses_function_calls(payload: dict[str, object]) -> list[dict[s
         if isinstance(item, dict) and item.get("type") == "function_call":
             function_calls.append(item)
     return function_calls
+
+
+def _select_single_responses_function_call(
+    function_calls: list[dict[str, object]],
+) -> dict[str, object]:
+    if not function_calls:
+        raise ProviderTransportError(
+            "PROVIDER_RESPONSE_INVALID",
+            "provider_response_invalid:responses_missing_function_call",
+        )
+    first = function_calls[0]
+    return first
+
+
+def _responses_function_call_signature(
+    function_call: dict[str, object],
+) -> tuple[str, str]:
+    name = str(function_call.get("name") or "")
+    arguments = function_call.get("arguments", "{}")
+    raw_arguments = arguments if isinstance(arguments, str) else json.dumps(arguments, sort_keys=True)
+    try:
+        parsed = json.loads(raw_arguments)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        normalized_arguments = str(raw_arguments)
+    else:
+        normalized_arguments = json.dumps(parsed, sort_keys=True, ensure_ascii=True)
+    return name, normalized_arguments
 
 
 def _raise_for_responses_error(payload: dict[str, object]) -> None:
@@ -682,6 +708,23 @@ def _consume_responses_sse(response: httpx.Response) -> dict:
     if output_text_chunks:
         payload["output_text"] = "".join(output_text_chunks)
     return payload
+
+
+def _raise_for_missing_required_initial_tool_call(*, request, reply) -> None:
+    required_tool_name = resolve_required_initial_tool_name(request)
+    if not required_tool_name:
+        return
+    actual_tool_name = str(reply.tool_name or "").strip()
+    if actual_tool_name == required_tool_name:
+        return
+    actual_label = actual_tool_name or "final_text"
+    raise ProviderTransportError(
+        "PROVIDER_RESPONSE_INVALID",
+        (
+            "provider_response_invalid:"
+            f"missing_required_initial_tool_call:{required_tool_name}:{actual_label}"
+        ),
+    )
 
 
 def _iter_sse_events(response: httpx.Response):

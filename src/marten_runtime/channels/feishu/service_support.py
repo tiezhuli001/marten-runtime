@@ -122,6 +122,11 @@ def build_delivery_payload(
     event_type = str(event_payload["event_type"])
     payload_body = event_payload.get("payload")
     text = str(payload_body.get("text", "")) if isinstance(payload_body, Mapping) else ""
+    card = None
+    if isinstance(payload_body, Mapping):
+        candidate = payload_body.get("card")
+        if isinstance(candidate, Mapping):
+            card = dict(candidate)
     run_id = str(event_payload["run_id"])
     return FeishuDeliveryPayload(
         chat_id=event.chat_id,
@@ -131,6 +136,7 @@ def build_delivery_payload(
         trace_id=str(event_payload["trace_id"]),
         sequence=int(event_payload["sequence"]),
         text=text,
+        card=card,
         dedupe_key=getattr(envelope, "dedupe_key", None) if event_type in {"final", "error"} else None,
         usage_summary=(
             build_usage_summary_from_history(run_history, run_id)

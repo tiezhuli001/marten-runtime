@@ -10,6 +10,7 @@ class InboundEnvelope(BaseModel):
     message_id: str
     body: str
     requested_agent_id: str | None = None
+    source_transport: str = "unknown"
     received_at: datetime
     enqueued_at: datetime | None = None
     started_at: datetime | None = None

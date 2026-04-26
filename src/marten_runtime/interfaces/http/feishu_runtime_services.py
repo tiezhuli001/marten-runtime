@@ -36,6 +36,7 @@ def build_feishu_websocket_service(
     delivery_client: FeishuDeliveryClient,
     lane_manager: ConversationLaneManager,
     run_history: InMemoryRunHistory | None,
+    after_runtime_delivery=None,
 ) -> FeishuWebsocketService:
     return FeishuWebsocketService(
         env=env,
@@ -49,4 +50,5 @@ def build_feishu_websocket_service(
         ),
         lane_manager=lane_manager,
         run_history=run_history,
+        after_runtime_delivery=after_runtime_delivery,
     )

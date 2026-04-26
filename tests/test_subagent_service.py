@@ -1,3 +1,4 @@
+import time
 import unittest
 from datetime import datetime, timezone
 from threading import Event, Thread
@@ -54,6 +55,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                         sequence=2,
                         trace_id=trace_id or "trace_child_reserved",
                         payload={"text": "child finished"},
+                        created_at=datetime.now(timezone.utc),
                     )
                 ]
 
@@ -105,8 +107,8 @@ class SubagentServiceContractTests(unittest.TestCase):
         self.assertEqual(first["queue_state"], "running")
         self.assertEqual(second["queue_state"], "queued")
 
+        service.release_deferred_background_starts()
         release.set()
-        import time
         for _ in range(20):
             if service.store.get(first["task_id"]).status == "succeeded":
                 break
@@ -249,6 +251,35 @@ class SubagentServiceContractTests(unittest.TestCase):
         self.assertEqual(task.parent_run_id, "run_parent")
         self.assertEqual(task.status, "queued")
 
+    def test_spawn_child_session_inherits_parent_owner_metadata(self) -> None:
+        service = self._build_service()
+        service.session_store.set_active_agent("sess_parent", "coding")
+        service.session_store.set_catalog_metadata(
+            "sess_parent",
+            user_id="user-a",
+            agent_id="coding",
+            session_title="parent",
+            session_preview="preview",
+        )
+
+        result = service.spawn(
+            task="research private context",
+            label="owner",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="coding",
+            app_id="main_agent",
+            agent_id="coding",
+            requested_tool_profile="restricted",
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        child = service.session_store.get(result["child_session_id"])
+        self.assertEqual(child.user_id, "user-a")
+        self.assertEqual(child.agent_id, "coding")
+        self.assertEqual(child.active_agent_id, "coding")
+
     def test_subagent_execution_uses_registered_target_agent_runtime_assets(self) -> None:
         from marten_runtime.agents.registry import AgentRegistry
         from marten_runtime.agents.specs import AgentSpec
@@ -273,6 +304,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                         sequence=1,
                         trace_id=kwargs.get("trace_id", "trace_child_target_agent"),
                         payload={"text": "child finished"},
+                        created_at=datetime.now(timezone.utc),
                     )
                 ]
 
@@ -408,6 +440,240 @@ class SubagentServiceContractTests(unittest.TestCase):
         self.assertEqual(task.agent_id, "coding")
         self.assertEqual(task.app_id, "code_assistant")
 
+    def test_spawn_child_session_uses_resolved_target_agent_metadata(self) -> None:
+        from marten_runtime.agents.registry import AgentRegistry
+        from marten_runtime.agents.specs import AgentSpec
+        from marten_runtime.subagents.service import SubagentService
+
+        session_store = SessionStore()
+        session_store.create(
+            session_id="sess_parent",
+            conversation_id="conv-parent",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="test",
+            user_id="user-a",
+        )
+        session_store.set_active_agent("sess_parent", "main")
+        session_store.set_catalog_metadata(
+            "sess_parent",
+            user_id="user-a",
+            agent_id="main",
+            session_title="parent",
+            session_preview="preview",
+        )
+        agent_registry = AgentRegistry()
+        agent_registry.register(
+            AgentSpec(
+                agent_id="coding",
+                role="coding_agent",
+                app_id="code_assistant",
+                allowed_tools=["runtime", "skill", "time"],
+                prompt_mode="child",
+                model_profile="openai_gpt5",
+            )
+        )
+        service = SubagentService(
+            session_store=session_store,
+            run_history=InMemoryRunHistory(),
+            tool_registry=ToolRegistry(),
+            runtime_loop=None,
+            max_concurrent_subagents=1,
+            max_queued_subagents=4,
+            subagent_timeout_seconds=5,
+            agent_registry=agent_registry,
+        )
+
+        result = service.spawn(
+            task="write a child coding summary",
+            label="coding-child",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="coding",
+            requested_tool_profile="restricted",
+            parent_allowed_tools=["runtime", "skill", "time"],
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        child = service.session_store.get(result["child_session_id"])
+        self.assertEqual(child.channel_id, "test")
+        self.assertEqual(child.user_id, "user-a")
+        self.assertEqual(child.agent_id, "coding")
+        self.assertEqual(child.active_agent_id, "coding")
+
+    def test_auto_start_background_waits_for_explicit_parent_turn_release(self) -> None:
+        from marten_runtime.subagents.service import SubagentService
+
+        entered = Event()
+        release = Event()
+
+        class BlockingRuntimeLoop:
+            def run(self, session_id, message, trace_id=None, agent=None, session_messages=None, compacted_context=None, request_kind="interactive", parent_run_id=None, **kwargs):  # noqa: ANN001,E501
+                entered.set()
+                release.wait(timeout=1.0)
+                return [
+                    OutboundEvent(
+                        session_id=session_id,
+                        run_id="run_child_deferred",
+                        event_id="evt_child_deferred",
+                        event_type="final",
+                        sequence=2,
+                        trace_id=trace_id or "trace_child_deferred",
+                        payload={"text": "child finished"},
+                        created_at=datetime.now(timezone.utc),
+                    )
+                ]
+
+        session_store = SessionStore()
+        session_store.create(
+            session_id="sess_parent",
+            conversation_id="conv-parent",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        service = SubagentService(
+            session_store=session_store,
+            run_history=InMemoryRunHistory(),
+            tool_registry=ToolRegistry(),
+            runtime_loop=BlockingRuntimeLoop(),
+            max_concurrent_subagents=1,
+            max_queued_subagents=4,
+            subagent_timeout_seconds=5,
+            auto_start_background=True,
+        )
+
+        accepted = service.spawn(
+            task="background followup",
+            label="deferred-child",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            parent_allowed_tools=["runtime", "skill", "time"],
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        self.assertEqual(accepted["queue_state"], "running")
+        self.assertFalse(entered.wait(timeout=0.35))
+
+        service.release_deferred_background_starts()
+        self.assertTrue(entered.wait(timeout=1.0))
+        release.set()
+        for _ in range(50):
+            if service.store.get(accepted["task_id"]).status == "succeeded":
+                break
+            time.sleep(0.02)
+
+        self.assertEqual(service.store.get(accepted["task_id"]).status, "succeeded")
+
+    def test_auto_start_queued_child_waits_for_explicit_parent_turn_release_after_capacity_frees(self) -> None:
+        from marten_runtime.subagents.service import SubagentService
+
+        old_entered = Event()
+        release_old = Event()
+        queued_entered = Event()
+        release_queued = Event()
+
+        class BlockingRuntimeLoop:
+            def run(self, session_id, message, trace_id=None, agent=None, session_messages=None, compacted_context=None, request_kind="interactive", parent_run_id=None, **kwargs):  # noqa: ANN001,E501
+                if message == "old running child":
+                    old_entered.set()
+                    release_old.wait(timeout=1.0)
+                    text = "old child finished"
+                    run_id = "run_old_child"
+                    event_id = "evt_old_child"
+                else:
+                    queued_entered.set()
+                    release_queued.wait(timeout=1.0)
+                    text = "queued child finished"
+                    run_id = "run_queued_child"
+                    event_id = "evt_queued_child"
+                return [
+                    OutboundEvent(
+                        session_id=session_id,
+                        run_id=run_id,
+                        event_id=event_id,
+                        event_type="final",
+                        sequence=2,
+                        trace_id=trace_id or f"trace_{event_id}",
+                        payload={"text": text},
+                        created_at=datetime.now(timezone.utc),
+                    )
+                ]
+
+        session_store = SessionStore()
+        session_store.create(
+            session_id="sess_parent",
+            conversation_id="conv-parent",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        service = SubagentService(
+            session_store=session_store,
+            run_history=InMemoryRunHistory(),
+            tool_registry=ToolRegistry(),
+            runtime_loop=BlockingRuntimeLoop(),
+            max_concurrent_subagents=1,
+            max_queued_subagents=4,
+            subagent_timeout_seconds=5,
+            auto_start_background=True,
+        )
+        old = service.spawn(
+            task="old running child",
+            label="old-child",
+            parent_session_id="sess_parent",
+            parent_run_id="run_old_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            parent_allowed_tools=["runtime", "skill", "time"],
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+        service.release_deferred_background_starts()
+        self.assertTrue(old_entered.wait(timeout=1.0))
+
+        queued = service.spawn(
+            task="current turn queued child",
+            label="queued-child",
+            parent_session_id="sess_parent",
+            parent_run_id="run_current_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            parent_allowed_tools=["runtime", "skill", "time"],
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        self.assertEqual(queued["queue_state"], "queued")
+        release_old.set()
+        for _ in range(50):
+            if service.store.get(old["task_id"]).status == "succeeded":
+                break
+            time.sleep(0.02)
+        self.assertEqual(service.store.get(old["task_id"]).status, "succeeded")
+        self.assertFalse(queued_entered.wait(timeout=0.35))
+        self.assertEqual(service.store.get(queued["task_id"]).status, "queued")
+
+        service.release_deferred_background_starts()
+        self.assertTrue(queued_entered.wait(timeout=1.0))
+        release_queued.set()
+        for _ in range(50):
+            if service.store.get(queued["task_id"]).status == "succeeded":
+                break
+            time.sleep(0.02)
+
+        self.assertEqual(service.store.get(queued["task_id"]).status, "succeeded")
+
     def test_spawn_queues_when_concurrency_cap_is_reached(self) -> None:
         service = self._build_service()
         service._running_tasks.add("task_running")
@@ -475,7 +741,7 @@ class SubagentServiceContractTests(unittest.TestCase):
         task = service.store.get(result["task_id"])
         self.assertEqual(task.effective_tool_profile, "restricted")
 
-    def test_spawn_accepts_default_profile_alias_and_normalizes_to_restricted(self) -> None:
+    def test_spawn_accepts_default_profile_alias_and_normalizes_to_standard(self) -> None:
         service = self._build_service()
 
         result = service.spawn(
@@ -487,15 +753,36 @@ class SubagentServiceContractTests(unittest.TestCase):
             app_id="main_agent",
             agent_id="main",
             requested_tool_profile="default",
-            parent_allowed_tools=["runtime", "skill", "time"],
+            parent_allowed_tools=["automation", "mcp", "runtime", "skill", "time"],
             context_mode="brief_only",
             notify_on_finish=True,
         )
 
-        self.assertEqual(result["effective_tool_profile"], "restricted")
+        self.assertEqual(result["effective_tool_profile"], "standard")
         task = service.store.get(result["task_id"])
-        self.assertEqual(task.tool_profile, "restricted")
-        self.assertEqual(task.effective_tool_profile, "restricted")
+        self.assertEqual(task.tool_profile, "standard")
+        self.assertEqual(task.effective_tool_profile, "standard")
+
+    def test_spawn_defaults_omitted_profile_to_standard(self) -> None:
+        service = self._build_service()
+
+        result = service.spawn(
+            task="background followup",
+            label="implicit-default",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            parent_allowed_tools=["automation", "mcp", "runtime", "skill", "time"],
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        self.assertEqual(result["effective_tool_profile"], "standard")
+        task = service.store.get(result["task_id"])
+        self.assertEqual(task.tool_profile, "standard")
+        self.assertEqual(task.effective_tool_profile, "standard")
 
     def test_spawn_accepts_mcp_profile_alias_and_normalizes_to_standard(self) -> None:
         service = self._build_service()
@@ -583,6 +870,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                         sequence=2,
                         trace_id=trace_id or "trace_child_blocked",
                         payload={"text": "child finished too late"},
+                        created_at=datetime.now(timezone.utc),
                     )
                 ]
 
@@ -644,6 +932,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                         sequence=2,
                         trace_id=trace_id or "trace_child_timeout",
                         payload={"text": "child finished too late"},
+                        created_at=datetime.now(timezone.utc),
                     )
                 ]
 
@@ -798,6 +1087,7 @@ class SubagentServiceContractTests(unittest.TestCase):
             notify_on_finish=True,
         )
 
+        service.release_deferred_background_starts()
         self.assertTrue(entered.wait(timeout=1.0))
         service.cancel_task(first["task_id"])
         self.assertEqual(service.store.get(first["task_id"]).status, "cancelled")
@@ -805,7 +1095,6 @@ class SubagentServiceContractTests(unittest.TestCase):
         self.assertIn(first["task_id"], service._running_tasks)
 
         release.set()
-        import time
         for _ in range(50):
             if service.store.get(second["task_id"]).status != "queued":
                 break
@@ -993,6 +1282,7 @@ class SubagentServiceContractTests(unittest.TestCase):
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
             origin_channel_id="feishu",
+            origin_delivery_target="oc_test_chat",
             context_mode="brief_only",
             notify_on_finish=True,
         )
@@ -1008,6 +1298,69 @@ class SubagentServiceContractTests(unittest.TestCase):
         self.assertEqual(payload.run_id, "run_child_notify")
         self.assertIn("后台任务已完成", payload.text)
         self.assertIn("child finished summary", payload.text)
+
+    def test_simulated_feishu_origin_task_skips_background_delivery_without_live_target(self) -> None:
+        from marten_runtime.runtime.events import OutboundEvent
+        from marten_runtime.subagents.service import SubagentService
+
+        class SuccessRuntimeLoop:
+            def run(self, session_id, message, trace_id=None, agent=None, session_messages=None, compacted_context=None, request_kind="interactive", parent_run_id=None):  # noqa: ANN001,E501
+                return [
+                    OutboundEvent(
+                        session_id=session_id,
+                        run_id="run_child_notify_skip",
+                        event_id="evt_child_notify_skip",
+                        event_type="final",
+                        sequence=2,
+                        trace_id=trace_id or "trace_child_notify_skip",
+                        payload={"text": "child finished summary"},
+                        created_at=datetime.now(timezone.utc),
+                    )
+                ]
+
+        session_store = SessionStore()
+        session_store.create(
+            session_id="sess_parent_simulated",
+            conversation_id="feishu-subagent-20260425",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        delivery = FakeDeliveryClient()
+        history = InMemoryRunHistory()
+        service = SubagentService(
+            session_store=session_store,
+            run_history=history,
+            tool_registry=ToolRegistry(),
+            runtime_loop=SuccessRuntimeLoop(),
+            max_concurrent_subagents=1,
+            max_queued_subagents=4,
+            subagent_timeout_seconds=5,
+            feishu_delivery=delivery,
+        )
+        accepted = service.spawn(
+            task="background followup",
+            label="notify-feishu-simulated",
+            parent_session_id="sess_parent_simulated",
+            parent_run_id="run_parent_simulated",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            parent_allowed_tools=["runtime", "skill", "time"],
+            origin_channel_id="feishu",
+            origin_delivery_target=None,
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        service.run_next_queued_task()
+
+        task = service.store.get(accepted["task_id"])
+        self.assertEqual(task.status, "succeeded")
+        self.assertEqual(len(delivery.payloads), 0)
+        parent = session_store.get("sess_parent_simulated")
+        self.assertEqual(parent.history[-1].role, "system")
+        self.assertIn("subagent task completed", parent.history[-1].content)
 
     def test_successful_feishu_origin_task_notification_carries_child_run_usage_summary(self) -> None:
         from marten_runtime.runtime.events import OutboundEvent
@@ -1088,6 +1441,7 @@ class SubagentServiceContractTests(unittest.TestCase):
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
             origin_channel_id="feishu",
+            origin_delivery_target="oc_test_chat",
             context_mode="brief_only",
             notify_on_finish=True,
         )
@@ -1107,6 +1461,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                 "cumulative_input_tokens": 1600,
                 "cumulative_output_tokens": 77,
                 "cumulative_tokens": 1677,
+                "llm_request_count": 0,
                 "estimated_only": False,
             },
         )

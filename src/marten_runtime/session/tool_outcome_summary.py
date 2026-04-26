@@ -130,7 +130,10 @@ def render_tool_outcome_summary_block(
             break
     if not rendered:
         return None
-    heading = "Recent tool outcome summary:" if len(rendered) == 1 else "Recent tool outcome summaries:"
+    heading = (
+        "以下仅是上一轮可延续的工具结果摘要，只有当前消息明确承接上一轮结果时才参考。"
+        "不要因为上一轮刚用了某个工具族，就在本轮复用同一路径："
+    )
     text = heading + "\n" + "\n".join(rendered)
     if len(text) <= max_chars:
         return text

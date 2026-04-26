@@ -13,6 +13,7 @@ def ingest_message(payload: dict[str, str]) -> InboundEnvelope:
         message_id=payload["message_id"],
         body=payload["body"],
         requested_agent_id=payload.get("requested_agent_id"),
+        source_transport="http_api",
         received_at=datetime.now(timezone.utc),
         dedupe_key=build_dedupe_key(
             channel_id=payload["channel_id"],

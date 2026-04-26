@@ -140,6 +140,8 @@ class GatewayContractTests(unittest.TestCase):
         )
 
         self.assertIn("session_id", message)
+        self.assertIn("active_session_id", message)
+        self.assertEqual(message["active_session_id"], message["session_id"])
         self.assertIn("events", message)
         self.assertEqual(event.trace_id, "trace_1")
         snapshot = compact_context("sess_1", "goal")
@@ -556,6 +558,81 @@ class GatewayContractTests(unittest.TestCase):
             delivered[-1]["dedupe_key"],
             f"feishu:oc_test_chat:{expected_scheduled_for}",
         )
+
+    def test_manual_automation_trigger_preserves_durable_text_and_card_for_feishu_delivery(
+        self,
+    ) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        delivered: list[dict[str, object]] = []
+
+        class _RecordingDeliveryClient:
+            def deliver(self, payload):
+                delivered.append(payload.model_dump(mode="json"))
+                return {"ok": True, "action": "send", "message_id": "om_structured"}
+
+        runtime.feishu_delivery = _RecordingDeliveryClient()
+        runtime.automation_store.save(
+            AutomationJob(
+                automation_id="daily_structured",
+                name="daily_structured",
+                app_id="main_agent",
+                agent_id="main",
+                prompt_template="hello from structured automation",
+                schedule_kind="daily",
+                schedule_expr="09:30",
+                timezone="Asia/Shanghai",
+                session_target="isolated",
+                delivery_channel="feishu",
+                delivery_target="oc_structured_chat",
+                skill_id="github_trending_digest",
+            )
+        )
+
+        def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
+            return [
+                OutboundEvent(
+                    session_id=session_id,
+                    run_id="run_structured_automation",
+                    event_id="evt_structured_automation_progress",
+                    event_type="progress",
+                    sequence=1,
+                    trace_id=trace_id or "trace_missing",
+                    payload={"text": "running"},
+                    created_at=datetime.now(timezone.utc),
+                ),
+                OutboundEvent(
+                    session_id=session_id,
+                    run_id="run_structured_automation",
+                    event_id="evt_structured_automation_final",
+                    event_type="final",
+                    sequence=2,
+                    trace_id=trace_id or "trace_missing",
+                    payload={
+                        "text": (
+                            "检查完成。\n\n"
+                            "```feishu_card\n"
+                            '{"title":"检查结果","summary":"共 2 项","sections":[{"items":["builtin 正常","mcp 正常"]}]}\n'
+                            "```"
+                        )
+                    },
+                    created_at=datetime.now(timezone.utc),
+                ),
+            ]
+
+        runtime.runtime_loop.run = fake_run  # type: ignore[method-assign]
+
+        with TestClient(app) as client:
+            response = client.post("/automations/daily_structured/trigger")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        final_event = body["events"][-1]
+        expected_durable_text = "检查完成。\n\n共 2 项\n\n- builtin 正常\n- mcp 正常"
+        self.assertEqual(final_event["payload"]["text"], expected_durable_text)
+        self.assertEqual(final_event["payload"]["card"]["header"]["title"]["content"], "检查结果")
+        self.assertEqual(delivered[-1]["text"], expected_durable_text)
+        self.assertEqual(delivered[-1]["card"]["header"]["title"]["content"], "检查结果")
 
     def test_manual_automation_trigger_without_skill_id_does_not_500(self) -> None:
         app = build_test_app()

@@ -269,6 +269,7 @@ Move compaction tail semantics to **user-turn units**.
 Recommended artifact fields:
 
 - keep `source_message_range`
+  - this range should stay indexed against the full persisted `session_messages` history so restore can slice without replayable-index remapping
 - add `preserved_tail_user_turns`
 - keep `created_at`
 - keep existing summary fields such as `next_step`, `open_todos`, and `pending_risks`
@@ -446,7 +447,10 @@ Recommended additions:
 
 - current replay policy user-turn count
 - whether the latest switch-triggered compaction ran
-- whether the active session is restoring through compact summary reuse
+- keep runtime diagnostics process-scoped:
+  - expose latest in-process switch-compaction outcome
+  - do not invent a fake single “active session” for the whole runtime
+  - per-session compact-summary reuse belongs in session diagnostics and `runtime.context_status`
 
 ### `runtime.context_status`
 
@@ -507,7 +511,8 @@ The first implementation should prove behavior with focused tests.
 
 Recommended implementation order:
 
-1. introduce replay policy dataclass and turn-based replay tests
+1. introduce replay policy plumbing and turn-based replay tests
+   - for the current repository shape, prefer threading one integer through existing call sites over adding a new standalone replay-policy service or dataclass
 2. update `CompactedContext` contract to use preserved tail user turns
 3. add session transition helper for switch-triggered compaction
 4. wire `session.new` and `session.resume` through the helper

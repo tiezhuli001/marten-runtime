@@ -1,7 +1,8 @@
+import sqlite3
 import unittest
 from datetime import datetime, timezone
-from tempfile import TemporaryDirectory
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from marten_runtime.runtime.usage_models import NormalizedUsage
 from marten_runtime.session.compacted_context import CompactedContext
@@ -28,6 +29,72 @@ class SQLiteSessionStoreTests(unittest.TestCase):
         self.assertEqual(reloaded.config_snapshot_id, "cfg_bootstrap")
         self.assertEqual(reloaded.bootstrap_manifest_id, "boot_default")
 
+    def test_legacy_sessions_schema_is_upgraded_before_first_get(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            created_at = datetime(2026, 4, 23, 10, 0, tzinfo=timezone.utc).isoformat()
+            with sqlite3.connect(path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE sessions (
+                        session_id TEXT PRIMARY KEY,
+                        conversation_id TEXT NOT NULL,
+                        state TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, conversation_id, state, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    ("sess_legacy", "conv-legacy", "created", created_at, created_at),
+                )
+
+            reloaded = SQLiteSessionStore(path).get("sess_legacy")
+
+        self.assertEqual(reloaded.session_id, "sess_legacy")
+        self.assertEqual(reloaded.active_agent_id, "main")
+        self.assertEqual(reloaded.session_kind, "main")
+        self.assertEqual(reloaded.lineage_depth, 0)
+        self.assertEqual(reloaded.config_snapshot_id, "cfg_bootstrap")
+        self.assertEqual(reloaded.bootstrap_manifest_id, "boot_default")
+        self.assertEqual(reloaded.tool_call_count, 0)
+
+    def test_legacy_agent_id_backfills_active_agent_id_before_first_get(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            created_at = datetime(2026, 4, 24, 9, 0, tzinfo=timezone.utc).isoformat()
+            with sqlite3.connect(path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE sessions (
+                        session_id TEXT PRIMARY KEY,
+                        conversation_id TEXT NOT NULL,
+                        state TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        agent_id TEXT NOT NULL DEFAULT ''
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, conversation_id, state, created_at, updated_at, agent_id
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    ("sess_coding", "conv-coding", "created", created_at, created_at, "coding"),
+                )
+
+            reloaded = SQLiteSessionStore(path).get("sess_coding")
+
+        self.assertEqual(reloaded.agent_id, "coding")
+        self.assertEqual(reloaded.active_agent_id, "coding")
+
     def test_round_trip_preserves_message_order(self) -> None:
         with TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "sessions.sqlite3"
@@ -45,6 +112,70 @@ class SQLiteSessionStoreTests(unittest.TestCase):
 
         self.assertEqual([item.content for item in reloaded.history[-2:]], ["first", "second"])
 
+    def test_remove_last_message_if_match_removes_exact_trailing_message(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            store = SQLiteSessionStore(path)
+            store.create(
+                session_id="sess_remove",
+                conversation_id="conv-remove",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+            )
+            previous = SessionMessage.user(
+                "existing",
+                created_at=datetime(2026, 4, 21, 9, 0, tzinfo=timezone.utc),
+            )
+            control = SessionMessage.user(
+                "切换到新会话",
+                created_at=datetime(2026, 4, 21, 9, 1, tzinfo=timezone.utc),
+            )
+            store.append_message("sess_remove", previous)
+            store.append_message("sess_remove", control)
+
+            updated = store.remove_last_message_if_match(
+                "sess_remove",
+                control,
+                restore_updated_at=previous.created_at,
+                restore_last_event_at=previous.created_at,
+            )
+
+        self.assertEqual([item.content for item in updated.history], ["created", "existing"])
+        self.assertEqual(updated.message_count, 1)
+        self.assertEqual(updated.updated_at, previous.created_at)
+        self.assertEqual(updated.last_event_at, previous.created_at)
+
+    def test_remove_last_message_if_match_keeps_history_when_message_differs(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            store = SQLiteSessionStore(path)
+            store.create(
+                session_id="sess_keep",
+                conversation_id="conv-keep",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+            )
+            control = SessionMessage.user(
+                "切换到新会话",
+                created_at=datetime(2026, 4, 21, 9, 1, tzinfo=timezone.utc),
+            )
+            store.append_message("sess_keep", control)
+
+            updated = store.remove_last_message_if_match(
+                "sess_keep",
+                SessionMessage.user(
+                    "切换到旧会话",
+                    created_at=control.created_at,
+                ),
+                restore_updated_at=datetime(2026, 4, 21, 9, 0, tzinfo=timezone.utc),
+                restore_last_event_at=datetime(2026, 4, 21, 9, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual([item.content for item in updated.history], ["created", "切换到新会话"])
+        self.assertEqual(updated.message_count, 1)
+        self.assertEqual(updated.updated_at, control.created_at)
+        self.assertEqual(updated.last_event_at, control.created_at)
+
     def test_round_trip_preserves_compacted_context_and_usage(self) -> None:
         with TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "sessions.sqlite3"
@@ -60,6 +191,8 @@ class SQLiteSessionStoreTests(unittest.TestCase):
                 session_id="sess_state",
                 summary_text="当前进展：已完成状态恢复。",
                 source_message_range=[0, 2],
+                preserved_tail_user_turns=5,
+                trigger_kind="context_pressure_proactive",
             )
             usage = NormalizedUsage(
                 input_tokens=120,
@@ -76,6 +209,8 @@ class SQLiteSessionStoreTests(unittest.TestCase):
 
         self.assertIsNotNone(reloaded.latest_compacted_context)
         self.assertEqual(reloaded.latest_compacted_context.summary_text, compacted.summary_text)
+        self.assertEqual(reloaded.latest_compacted_context.trigger_kind, "context_pressure_proactive")
+        self.assertEqual(reloaded.latest_compacted_context.preserved_tail_user_turns, 5)
         self.assertIsNotNone(reloaded.latest_actual_usage)
         self.assertEqual(reloaded.latest_actual_usage.total_tokens, 150)
 
@@ -143,6 +278,27 @@ class SQLiteSessionStoreTests(unittest.TestCase):
 
         self.assertNotEqual(http_session.session_id, feishu_session.session_id)
 
+    def test_empty_user_id_does_not_resolve_user_owned_conversation_binding(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            store = SQLiteSessionStore(path)
+            store.create(
+                session_id="sess_user_a",
+                conversation_id="conv-shared",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="feishu",
+                user_id="user-a",
+            )
+
+            resolved = SQLiteSessionStore(path).resolve_session_for_conversation(
+                channel_id="feishu",
+                conversation_id="conv-shared",
+                user_id="",
+            )
+
+        self.assertIsNone(resolved)
+
     def test_bind_conversation_moves_session_to_new_conversation_exclusively(self) -> None:
         with TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "sessions.sqlite3"
@@ -209,6 +365,74 @@ class SQLiteSessionStoreTests(unittest.TestCase):
         self.assertEqual(reloaded.session_kind, "subagent")
         self.assertEqual(reloaded.lineage_depth, 1)
 
+    def test_round_trip_preserves_child_session_owner_metadata(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            store = SQLiteSessionStore(path)
+            parent = store.create(
+                session_id="sess_parent_owner",
+                conversation_id="conv-parent-owner",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="feishu",
+                user_id="user-a",
+            )
+            store.set_active_agent(parent.session_id, "coding")
+            store.set_catalog_metadata(
+                parent.session_id,
+                user_id="user-a",
+                agent_id="coding",
+                session_title="parent",
+                session_preview="preview",
+            )
+            store.create_child_session(
+                parent_session_id=parent.session_id,
+                conversation_id="conv-child-owner",
+                session_id="sess_child_owner",
+            )
+
+            reloaded = SQLiteSessionStore(path).get("sess_child_owner")
+
+        self.assertEqual(reloaded.channel_id, "feishu")
+        self.assertEqual(reloaded.user_id, "user-a")
+        self.assertEqual(reloaded.agent_id, "coding")
+        self.assertEqual(reloaded.active_agent_id, "coding")
+
+    def test_round_trip_preserves_child_session_target_agent_metadata(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            store = SQLiteSessionStore(path)
+            parent = store.create(
+                session_id="sess_parent_target_agent",
+                conversation_id="conv-parent-target-agent",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="feishu",
+                user_id="user-a",
+            )
+            store.set_active_agent(parent.session_id, "main")
+            store.set_catalog_metadata(
+                parent.session_id,
+                user_id="user-a",
+                agent_id="main",
+                session_title="parent",
+                session_preview="preview",
+            )
+            store.create_child_session(
+                parent_session_id=parent.session_id,
+                conversation_id="conv-child-target-agent",
+                session_id="sess_child_target_agent",
+                agent_id="coding",
+                active_agent_id="coding",
+            )
+
+            reloaded = SQLiteSessionStore(path).get("sess_child_target_agent")
+
+        self.assertEqual(reloaded.channel_id, "feishu")
+        self.assertEqual(reloaded.user_id, "user-a")
+        self.assertEqual(reloaded.agent_id, "coding")
+        self.assertEqual(reloaded.active_agent_id, "coding")
+
     def test_round_trip_preserves_catalog_metadata(self) -> None:
         with TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "sessions.sqlite3"
@@ -264,6 +488,210 @@ class SQLiteSessionStoreTests(unittest.TestCase):
         self.assertEqual(listed[0].session_title, "会话列表")
         self.assertEqual(listed[0].message_count, 1)
         self.assertEqual(listed[0].history, [])
+
+    def test_compaction_job_round_trip_claim_and_complete(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            store = SQLiteSessionStore(path)
+            session = store.create(
+                session_id="sess_job",
+                conversation_id="conv-job",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+            )
+            store.append_message(session.session_id, SessionMessage.user("历史 1"))
+            job = store.enqueue_compaction_job(
+                source_session_id=session.session_id,
+                current_message="切换会话",
+                preserved_tail_user_turns=2,
+                source_message_range=[0, 2],
+                snapshot_message_count=len(store.get(session.session_id).history),
+                compaction_profile_name="minimax_m25",
+            )
+
+            claimed = store.claim_next_compaction_job()
+            self.assertIsNotNone(claimed)
+            self.assertEqual(claimed["job_id"], job["job_id"])
+            self.assertEqual(claimed["status"], "running")
+            self.assertIsNotNone(claimed["started_at"])
+
+            store.mark_compaction_job_succeeded(
+                job["job_id"],
+                queue_wait_ms=12,
+                compaction_llm_ms=345,
+                persist_ms=8,
+                result_reason="generated",
+                source_range_end=2,
+                write_applied=True,
+            )
+            reloaded = SQLiteSessionStore(path)
+            finished = reloaded.get_compaction_job(job["job_id"])
+
+        self.assertEqual(finished["status"], "succeeded")
+        self.assertEqual(finished["queue_wait_ms"], 12)
+        self.assertEqual(finished["compaction_llm_ms"], 345)
+        self.assertEqual(finished["persist_ms"], 8)
+        self.assertEqual(finished["result_reason"], "generated")
+        self.assertTrue(finished["write_applied"])
+        self.assertEqual(finished["compaction_profile_name"], "minimax_m25")
+        self.assertIsNotNone(finished["finished_at"])
+
+    def test_compaction_job_schema_adds_missing_profile_column_on_reload(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            enqueued_at = datetime(2026, 4, 23, 11, 0, tzinfo=timezone.utc).isoformat()
+            with sqlite3.connect(path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE session_compaction_jobs (
+                        job_id TEXT PRIMARY KEY,
+                        source_session_id TEXT NOT NULL,
+                        current_message TEXT NOT NULL,
+                        preserved_tail_user_turns INTEGER NOT NULL,
+                        source_message_range_json TEXT NOT NULL,
+                        snapshot_message_count INTEGER NOT NULL DEFAULT 0,
+                        enqueue_status TEXT NOT NULL DEFAULT 'queued',
+                        status TEXT NOT NULL DEFAULT 'queued',
+                        enqueued_at TEXT NOT NULL,
+                        started_at TEXT,
+                        finished_at TEXT,
+                        queue_wait_ms INTEGER NOT NULL DEFAULT 0,
+                        compaction_llm_ms INTEGER NOT NULL DEFAULT 0,
+                        persist_ms INTEGER NOT NULL DEFAULT 0,
+                        source_range_end INTEGER,
+                        write_applied INTEGER NOT NULL DEFAULT 0,
+                        result_reason TEXT,
+                        error_code TEXT,
+                        error_text TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO session_compaction_jobs (
+                        job_id, source_session_id, current_message, preserved_tail_user_turns,
+                        source_message_range_json, snapshot_message_count, enqueue_status,
+                        status, enqueued_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "job_legacy",
+                        "sess_legacy",
+                        "切换会话",
+                        2,
+                        "[0, 2]",
+                        3,
+                        "queued",
+                        "queued",
+                        enqueued_at,
+                    ),
+                )
+
+            job = SQLiteSessionStore(path).get_compaction_job("job_legacy")
+
+        self.assertEqual(job["job_id"], "job_legacy")
+        self.assertIsNone(job["compaction_profile_name"])
+
+    def test_claim_next_compaction_job_recreates_missing_job_table(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            store = SQLiteSessionStore(path)
+            with sqlite3.connect(path) as conn:
+                conn.execute("DROP TABLE session_compaction_jobs")
+
+            claimed = store.claim_next_compaction_job()
+            jobs = SQLiteSessionStore(path).list_compaction_jobs()
+
+        self.assertIsNone(claimed)
+        self.assertEqual(jobs, [])
+
+    def test_reset_running_compaction_jobs_requeues_stale_jobs(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            store = SQLiteSessionStore(path)
+            session = store.create(
+                session_id="sess_job",
+                conversation_id="conv-job",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+            )
+            job = store.enqueue_compaction_job(
+                source_session_id=session.session_id,
+                current_message="切换会话",
+                preserved_tail_user_turns=2,
+                source_message_range=[0, 1],
+                snapshot_message_count=len(store.get(session.session_id).history),
+            )
+            claimed = store.claim_next_compaction_job()
+            self.assertEqual(claimed["status"], "running")
+
+            store.reset_running_compaction_jobs()
+            reloaded = SQLiteSessionStore(path)
+            reset_job = reloaded.get_compaction_job(job["job_id"])
+
+        self.assertEqual(reset_job["status"], "queued")
+        self.assertIsNone(reset_job["started_at"])
+        self.assertEqual(reset_job["result_reason"], "requeued_startup")
+
+    def test_set_compacted_context_if_newer_keeps_new_messages(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            store = SQLiteSessionStore(path)
+            session = store.create(
+                session_id="sess_compact",
+                conversation_id="conv-compact",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+            )
+            store.append_message(session.session_id, SessionMessage.user("历史 1"))
+            store.append_message(session.session_id, SessionMessage.assistant("历史 1 完成"))
+            compacted = CompactedContext(
+                compact_id="cmp_new",
+                session_id=session.session_id,
+                summary_text="压缩摘要",
+                source_message_range=[0, 2],
+                preserved_tail_user_turns=1,
+            )
+
+            store.append_message(session.session_id, SessionMessage.user("最新问题"))
+            applied = store.set_compacted_context_if_newer(session.session_id, compacted)
+            reloaded = SQLiteSessionStore(path).get(session.session_id)
+
+        self.assertTrue(applied)
+        self.assertEqual(reloaded.latest_compacted_context.summary_text, "压缩摘要")
+        self.assertEqual(reloaded.history[-1].content, "最新问题")
+
+    def test_set_compacted_context_if_newer_rejects_older_range(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            store = SQLiteSessionStore(path)
+            session = store.create(
+                session_id="sess_compact",
+                conversation_id="conv-compact",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+            )
+            current = CompactedContext(
+                compact_id="cmp_current",
+                session_id=session.session_id,
+                summary_text="新摘要",
+                source_message_range=[0, 4],
+                preserved_tail_user_turns=1,
+            )
+            older = CompactedContext(
+                compact_id="cmp_old",
+                session_id=session.session_id,
+                summary_text="旧摘要",
+                source_message_range=[0, 2],
+                preserved_tail_user_turns=1,
+            )
+            store.set_compacted_context(session.session_id, current)
+
+            applied = store.set_compacted_context_if_newer(session.session_id, older)
+            reloaded = SQLiteSessionStore(path).get(session.session_id)
+
+        self.assertFalse(applied)
+        self.assertEqual(reloaded.latest_compacted_context.compact_id, "cmp_current")
 
 
 if __name__ == "__main__":

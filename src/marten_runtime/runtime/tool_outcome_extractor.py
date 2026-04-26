@@ -31,6 +31,7 @@ def extract_tool_outcome_summary(
             tool_name=tool_name,
             summary_text=f"上一轮加载了 skill {skill_id}。",
             facts=[ToolOutcomeFact.create("skill_id", skill_id)],
+            keep_next_turn=True,
         )
     if tool_name == "time":
         return ToolOutcomeSummary.create(
@@ -57,6 +58,7 @@ def extract_tool_outcome_summary(
             tool_name=tool_name,
             summary_text=summary,
             facts=facts,
+            keep_next_turn=False,
         )
     facts = _small_facts(result, keys=("id", "name", "status", "url"))
     if not facts:

@@ -1,3 +1,4 @@
+import json
 import time
 import unittest
 from threading import Event
@@ -7,6 +8,9 @@ from fastapi.testclient import TestClient
 from marten_runtime.runtime.llm_client import LLMReply
 from marten_runtime.runtime.usage_models import NormalizedUsage
 from tests.http_app_support import build_test_app
+
+PARENT_SUBAGENT_ACK = "已受理，子 agent 正在后台执行，完成后会通知你结果。"
+QUEUED_SUBAGENT_ACK = "已受理，子 agent 已进入队列，开始后会通知你结果。"
 
 
 class SubagentEndToEndLLM:
@@ -26,6 +30,7 @@ class SubagentEndToEndLLM:
                 tool_payload={
                     "task": "run child repo inspection",
                     "label": "repo-child",
+                    "finalize_response": True,
                 },
             )
         return LLMReply(final_text="background subagent accepted")
@@ -57,6 +62,7 @@ class SubagentUsageEndToEndLLM:
                 tool_payload={
                     "task": "run child repo inspection",
                     "label": "repo-child-usage",
+                    "finalize_response": True,
                 },
             )
         return LLMReply(final_text="background subagent accepted")
@@ -81,6 +87,7 @@ class InvalidSubagentAgentIdLLM:
                     "label": "repo-child-invalid-agent",
                     "tool_profile": "mcp:github-or-web",
                     "agent_id": "github-subagent",
+                    "finalize_response": True,
                 },
             )
         return LLMReply(final_text="background subagent accepted")
@@ -143,6 +150,18 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
             history = parent_session.json()["history"]
             self.assertEqual(history[-1]["role"], "system")
             self.assertIn("subagent task completed", history[-1]["content"])
+            assistant_positions = [
+                index for index, item in enumerate(history) if item["role"] == "assistant"
+            ]
+            completion_positions = [
+                index
+                for index, item in enumerate(history)
+                if item["role"] == "system"
+                and "subagent task completed" in item["content"]
+            ]
+            self.assertTrue(assistant_positions)
+            self.assertTrue(completion_positions)
+            self.assertLess(assistant_positions[-1], completion_positions[-1])
 
             child_run = client.get(f"/diagnostics/run/{task['child_run_id']}")
             self.assertEqual(child_run.status_code, 200)
@@ -150,6 +169,103 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
 
         self.assertTrue(any(req.request_kind == "subagent" for req in llm.requests))
         self.assertTrue(any(req.request_kind == "interactive" for req in llm.requests))
+
+    def test_http_simulated_feishu_message_path_skips_external_child_delivery(self) -> None:
+        app = self._configure_runtime_with_llm(SubagentEndToEndLLM())
+        runtime = app.state.runtime
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "feishu",
+                    "user_id": "u1",
+                    "conversation_id": "feishu-simulated-subagent-http",
+                    "message_id": "msg-1",
+                    "body": "please inspect this repo in background",
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            final_text = response.json()["events"][-1]["payload"]["text"]
+            self.assertEqual(final_text, PARENT_SUBAGENT_ACK)
+
+            tasks = client.get("/diagnostics/subagents")
+            self.assertEqual(tasks.status_code, 200)
+            task_id = tasks.json()["items"][0]["task_id"]
+            task = self._wait_for_task_status(client, task_id, {"succeeded"})
+
+            self.assertEqual(task["origin_channel_id"], "feishu")
+            self.assertIsNone(task["origin_delivery_target"])
+            self.assertEqual(runtime.feishu_delivery.dead_letter_queue.count(), 0)
+
+    def test_feishu_websocket_parent_ack_is_delivered_before_child_completion_notification(self) -> None:
+        from marten_runtime.channels.feishu.delivery import FeishuDeliveryPayload
+
+        class OrderingDeliveryClient:
+            def __init__(self) -> None:
+                self.order: list[str] = []
+                self.child_delivered = Event()
+
+            def add_reaction(self, message_id: str, emoji_type: str = "OnIt") -> dict[str, object]:
+                return {"ok": True, "message_id": message_id, "emoji_type": emoji_type}
+
+            def deliver(self, payload: FeishuDeliveryPayload) -> dict[str, object]:
+                if payload.event_type == "progress":
+                    self.order.append("progress")
+                elif "后台任务已完成" in payload.text:
+                    self.order.append("child")
+                    self.child_delivered.set()
+                else:
+                    self.child_delivered.wait(timeout=0.5)
+                    self.order.append("parent_ack")
+                return {
+                    "ok": True,
+                    "action": "send",
+                    "message_id": f"om_{len(self.order)}",
+                    "event_id": payload.event_id,
+                    "event_type": payload.event_type,
+                    "run_id": payload.run_id,
+                    "trace_id": payload.trace_id,
+                    "sequence": payload.sequence,
+                }
+
+        app = self._configure_runtime_with_llm(SubagentEndToEndLLM())
+        runtime = app.state.runtime
+        delivery = OrderingDeliveryClient()
+        runtime.feishu_delivery = delivery
+        runtime.subagent_service.feishu_delivery = delivery
+        runtime.feishu_socket_service.delivery_client = delivery
+        payload = {
+            "schema": "2.0",
+            "header": {
+                "event_id": "evt_feishu_subagent_order",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {"user_id": "u1"},
+                },
+                "message": {
+                    "message_id": "msg_feishu_subagent_order",
+                    "chat_id": "chat_feishu_subagent_order",
+                    "content": json.dumps({"text": "please inspect this repo in background"}),
+                },
+            },
+        }
+
+        with TestClient(app):
+            result = runtime.feishu_socket_service.handle_event_payload(payload)
+            self.assertEqual(result.status, "accepted")
+            task_id = runtime.subagent_service.store.list_tasks()[0].task_id
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                if runtime.subagent_service.store.get(task_id).status == "succeeded":
+                    break
+                time.sleep(0.05)
+
+            self.assertEqual(runtime.subagent_service.store.get(task_id).status, "succeeded")
+            self.assertLess(delivery.order.index("parent_ack"), delivery.order.index("child"))
 
     def test_http_message_path_returns_parent_ack_while_child_still_running(self) -> None:
         class BlockingChildLLM:
@@ -171,6 +287,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                         tool_payload={
                             "task": "run child repo inspection",
                             "label": "repo-child-blocking",
+                            "finalize_response": True,
                         },
                     )
                 return LLMReply(final_text="parent followup should not run")
@@ -191,9 +308,9 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200)
             final_text = response.json()["events"][-1]["payload"]["text"]
-            self.assertEqual(final_text, "parent followup should not run")
+            self.assertEqual(final_text, PARENT_SUBAGENT_ACK)
             interactive_requests = [item for item in llm.requests if item.request_kind == "interactive"]
-            self.assertEqual(len(interactive_requests), 2)
+            self.assertEqual(len(interactive_requests), 1)
 
             tasks = client.get("/diagnostics/subagents")
             self.assertEqual(tasks.status_code, 200)
@@ -251,7 +368,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(
                 response.json()["events"][-1]["payload"]["text"],
-                "background subagent accepted",
+                PARENT_SUBAGENT_ACK,
             )
 
             task = self._wait_for_task_status(
@@ -286,6 +403,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                         tool_payload={
                             "task": f"run child repo inspection {self.spawn_count}",
                             "label": f"repo-child-{self.spawn_count}",
+                            "finalize_response": True,
                         },
                     )
                 return LLMReply(final_text="unexpected parent followup")
@@ -309,7 +427,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(
                     response.json()["events"][-1]["payload"]["text"],
-                    "unexpected parent followup",
+                    PARENT_SUBAGENT_ACK,
                 )
 
             deadline = time.time() + 2.0
@@ -337,7 +455,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
             self.assertEqual(sixth.status_code, 200)
             self.assertEqual(
                 sixth.json()["events"][-1]["payload"]["text"],
-                "unexpected parent followup",
+                QUEUED_SUBAGENT_ACK,
             )
 
             deadline = time.time() + 2.0
@@ -389,6 +507,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                         tool_payload={
                             "task": f"run child repo inspection {self.spawn_count}",
                             "label": f"repo-child-{self.spawn_count}",
+                            "finalize_response": True,
                         },
                     )
                 return LLMReply(final_text="unexpected parent followup")
@@ -411,7 +530,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
             self.assertEqual(first.status_code, 200)
             self.assertEqual(
                 first.json()["events"][-1]["payload"]["text"],
-                "unexpected parent followup",
+                PARENT_SUBAGENT_ACK,
             )
 
             deadline = time.time() + 2.0
@@ -440,7 +559,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
             self.assertEqual(second.status_code, 200)
             self.assertEqual(
                 second.json()["events"][-1]["payload"]["text"],
-                "unexpected parent followup",
+                QUEUED_SUBAGENT_ACK,
             )
 
             deadline = time.time() + 2.0
@@ -494,6 +613,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                         tool_payload={
                             "task": "run child repo inspection",
                             "label": "repo-child-cancel",
+                            "finalize_response": True,
                         },
                     )
                 return LLMReply(final_text="cancel accepted")
@@ -567,6 +687,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                         tool_payload={
                             "task": "run child repo inspection",
                             "label": "repo-child-timeout",
+                            "finalize_response": True,
                         },
                     )
                 return LLMReply(final_text="unexpected parent followup")

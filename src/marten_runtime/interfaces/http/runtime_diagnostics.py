@@ -6,6 +6,9 @@ from urllib.parse import urlsplit
 from fastapi import Request
 
 from marten_runtime.interfaces.http.bootstrap import HTTPRuntimeState
+from marten_runtime.runtime.llm_provider_support import resolve_base_url
+
+RECENT_TOOL_OUTCOME_SUMMARY_LIMIT = 3
 
 
 def resolve_runtime_server_surface(
@@ -80,6 +83,16 @@ def serialize_runtime_diagnostics(
     )
     latest_skill_candidate = pending_skill_candidates[0] if pending_skill_candidates else None
     server_surface = resolve_runtime_server_surface(runtime, request)
+    compaction_jobs = (
+        runtime.session_store.list_compaction_jobs()
+        if hasattr(runtime.session_store, "list_compaction_jobs")
+        else []
+    )
+    latest_compaction_job = compaction_jobs[-1] if compaction_jobs else None
+    queued_compaction_jobs = [
+        item for item in compaction_jobs if str(item.get("status") or "").strip() == "queued"
+    ]
+    worker = getattr(runtime, "compaction_worker", None)
     return {
         "config_snapshot_id": runtime.config_snapshot.config_snapshot_id,
         "app_id": runtime.app_manifest.app_id,
@@ -92,7 +105,15 @@ def serialize_runtime_diagnostics(
             {
                 "provider_ref": provider_ref,
                 "adapter": provider.adapter,
-                "base_url": provider.base_url,
+                "base_url": resolve_base_url(
+                    provider=provider,
+                    env=runtime.env,
+                ),
+                "configured_base_url": provider.base_url,
+                "effective_base_url": resolve_base_url(
+                    provider=provider,
+                    env=runtime.env,
+                ),
                 "api_key_env": provider.api_key_env,
             }
             for provider_ref, provider in sorted(runtime.providers_config.providers.items())
@@ -189,6 +210,18 @@ def serialize_runtime_diagnostics(
             "store_path": runtime.session_store.storage_path(),
             "count": runtime.session_store.count(),
             "binding_count": runtime.session_store.binding_count(),
+            "session_replay_user_turns": runtime.platform_config.runtime.session_replay_user_turns,
+            "recent_tool_outcome_summary_limit": RECENT_TOOL_OUTCOME_SUMMARY_LIMIT,
         },
+        "compaction_worker": {
+            "enabled": worker is not None,
+            "running": bool(
+                worker is not None
+                and getattr(getattr(worker, "_thread", None), "is_alive", lambda: False)()
+            ),
+            "queue_depth": len(queued_compaction_jobs),
+            "latest_job": latest_compaction_job,
+        },
+        "latest_session_transition": runtime.latest_session_transition,
         "env_loaded": runtime.env_load_result.loaded,
     }

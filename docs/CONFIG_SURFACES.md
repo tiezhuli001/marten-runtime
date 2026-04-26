@@ -21,8 +21,10 @@ This page answers one question: which value belongs in which file.
 | Default model/profile selection | `config/models.example.toml` or local `config/models.toml` | `default_profile`, `[profiles.*]`, `provider_ref`, `fallback_profiles` |
 | Runtime bind host/port defaults | `config/platform.example.toml` or local `config/platform.toml` | `[server].host`, `[server].port` |
 | Optional public HTTP base URL | `config/platform.example.toml` or local `config/platform.toml` | `[server].public_base_url` |
+| Session replay turn budget | `config/platform.example.toml` or local `config/platform.toml` | `[runtime].session_replay_user_turns` |
 | Local host/port override | `.env` | `SERVER_HOST`, `SERVER_PORT` |
 | Local public base override | `.env` | `SERVER_PUBLIC_BASE_URL` |
+| Session replay turn override | `.env` | `SESSION_REPLAY_USER_TURNS` |
 | Feishu enable/mode/autostart | `config/channels.example.toml` or local `config/channels.toml` | `[feishu].enabled`, `connection_mode`, `auto_start` |
 | Feishu inbound scope restriction | `config/channels.example.toml` or local `config/channels.toml` | `[feishu].allowed_chat_types`, `allowed_chat_ids` |
 | Feishu reconnect policy | `config/channels.example.toml` or local `config/channels.toml` | `[feishu.websocket]` |
@@ -33,6 +35,24 @@ This page answers one question: which value belongs in which file.
 | MCP optional tool hints | `mcps.json` | `servers.<id>.tools[]` |
 | App binding / manifest | `apps/<app_id>/app.toml` | app-local fields |
 | Model bootstrap instructions | `apps/<app_id>/*.md` | `AGENTS.md`, `TOOLS.md`, `SOUL.md`, `BOOTSTRAP.md` |
+
+## Session Restore Contract
+
+Session restore stays on the thin runtime path and remains bounded.
+
+Runtime-owned restore shape:
+
+- prompt base
+- compacted summary
+- recent `8` user turns by default
+- recent `3` tool outcome summaries
+- thin memory
+
+Operator surface:
+
+- default replay budget lives at `[runtime].session_replay_user_turns = 8`
+- local override lives at `SESSION_REPLAY_USER_TURNS`
+- this slice keeps one replay knob only
 
 ## Planned GitHub Hot Repos Digest MVP
 

@@ -8,6 +8,7 @@ from marten_runtime.runtime.history import CompactionDiagnostics, InMemoryRunHis
 from marten_runtime.runtime.llm_client import LLMReply, LLMRequest, ScriptedLLMClient
 from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.runtime.usage_models import NormalizedUsage
+from marten_runtime.session.compacted_context import CompactedContext
 from marten_runtime.session.compaction_trigger import CompactionSettings
 from marten_runtime.tools.builtins.runtime_tool import (
     render_runtime_context_status_text,
@@ -87,6 +88,14 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
             tool_context={
                 "run_id": run.run_id,
                 "model_profile": "minimax_m25",
+                "session_replay_user_turns": 8,
+                "compacted_context": CompactedContext(
+                    compact_id="cmp_runtime",
+                    session_id="sess_runtime",
+                    summary_text="当前进展：已压缩。",
+                    source_message_range=[0, 2],
+                    preserved_tail_user_turns=8,
+                ),
                 "current_request": LLMRequest(
                     session_id="sess_runtime",
                     trace_id="trace_runtime",
@@ -114,6 +123,9 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
         self.assertEqual(result["effective_window"], 900)
         self.assertEqual(result["latest_checkpoint"], "available")
         self.assertEqual(result["compaction_status"], "proactive-used")
+        self.assertEqual(result["replay_user_turns"], 8)
+        self.assertEqual(result["recent_tool_outcome_summary_limit"], 3)
+        self.assertTrue(result["using_compacted_context"])
         self.assertIn("tokens", result["summary"])
         self.assertNotIn("compacted_context_id", result)
 
@@ -246,7 +258,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
 
         text = render_runtime_context_status_text(result)
         self.assertIn("当前上下文使用详情", text)
-        self.assertIn("切换会话后会按目标会话重新计算", text)
+        self.assertIn("有效窗口：184000 tokens（原始窗口 200000）", text)
         self.assertIn("压缩状态：稳定", text)
 
     def test_runtime_tool_uses_previous_run_actual_peak_for_direct_runtime_query(
@@ -306,7 +318,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
         text = render_runtime_context_status_text(result)
         self.assertIn("当前上下文使用详情", text)
         self.assertIn("当前会话下一次请求预计带入", text)
-        self.assertIn("切换会话后会按目标会话重新计算", text)
+        self.assertIn("有效窗口：184000 tokens（原始窗口 200000）", text)
 
     def test_runtime_tool_skips_intermediate_no_llm_runs_when_finding_last_actual_peak(
         self,
@@ -486,6 +498,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
                     "input_tokens_estimate": 3673,
                     "estimator_kind": "tokenizer",
                 },
+                "using_compacted_context": True,
                 "current_run": {
                     "initial_input_tokens_estimate": 3604,
                     "peak_input_tokens_estimate": 3743,
@@ -509,8 +522,95 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
 
         self.assertIn("当前上下文使用详情", text)
         self.assertIn("当前会话下一次请求预计带入 3673 tokens（约 2% / 184000）", text)
-        self.assertIn("切换会话后会按目标会话重新计算", text)
-        self.assertIn("压缩状态：已有可复用压缩检查点", text)
+        self.assertIn("有效窗口：184000 tokens（原始窗口 200000）", text)
+        self.assertIn("压缩状态：稳定", text)
+
+    def test_render_runtime_context_status_text_keeps_pressure_checkpoint_as_compaction_state(
+        self,
+    ) -> None:
+        text = render_runtime_context_status_text(
+            {
+                "action": "context_status",
+                "effective_window": 184000,
+                "context_window": 200000,
+                "estimate_source": "tokenizer",
+                "next_request_estimate": {
+                    "input_tokens_estimate": 3673,
+                    "estimator_kind": "tokenizer",
+                },
+                "checkpoint_trigger_kind": "context_pressure_proactive",
+                "using_compacted_context": True,
+                "compaction_status": "checkpoint-available",
+            }
+        )
+
+        self.assertIn("压缩状态：当前请求正在复用上下文压缩检查点", text)
+
+    def test_runtime_tool_summary_hides_history_summary_from_compaction_status(
+        self,
+    ) -> None:
+        runtime, history = self._build_scripted_runtime_loop()
+        run = history.start(
+            session_id="sess_runtime_checkpoint_reuse",
+            trace_id="trace_runtime_checkpoint_reuse",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        history.set_compaction(
+            run.run_id,
+            CompactionDiagnostics(
+                decision="none",
+                advisory_threshold_tokens=110400,
+                proactive_threshold_tokens=147200,
+                used_compacted_context=True,
+                compacted_context_id="cmp_runtime_checkpoint_reuse",
+            ),
+        )
+
+        result = run_runtime_tool(
+            {"action": "context_status"},
+            tool_context={
+                "run_id": run.run_id,
+                "model_profile": "openai_gpt5",
+                "compacted_context": CompactedContext(
+                    compact_id="cmp_runtime_checkpoint_reuse",
+                    session_id="sess_runtime_checkpoint_reuse",
+                    summary_text="历史摘要",
+                    source_message_range=[0, 2],
+                    preserved_tail_user_turns=8,
+                ),
+                "current_request": LLMRequest(
+                    session_id="sess_runtime_checkpoint_reuse",
+                    trace_id="trace_runtime_checkpoint_reuse",
+                    message="当前会话上下文窗口多大",
+                    agent_id="main",
+                    app_id="main_agent",
+                ),
+            },
+            runtime_loop=runtime,
+            run_history=history,
+            latest_checkpoint_available=True,
+        )
+
+        self.assertIn("稳定", result["summary"])
+        self.assertNotIn("历史摘要", result["summary"])
+
+    def test_runtime_tool_checkpoint_without_trigger_keeps_stable_compaction_status(self) -> None:
+        text = render_runtime_context_status_text(
+            {
+                "action": "context_status",
+                "effective_window": 184000,
+                "context_window": 200000,
+                "next_request_estimate": {
+                    "input_tokens_estimate": 10224,
+                    "estimator_kind": "tokenizer",
+                },
+                "using_compacted_context": True,
+                "compaction_status": "checkpoint-available",
+            }
+        )
+
+        self.assertIn("压缩状态：稳定", text)
 
     def test_runtime_tool_summary_does_not_blame_tool_injection_when_peak_matches_initial(
         self,

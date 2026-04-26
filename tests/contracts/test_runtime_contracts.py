@@ -106,27 +106,42 @@ class RuntimeContractTests(unittest.TestCase):
     def test_runtime_bootstrap_uses_capability_catalog_and_descriptions(self) -> None:
         app = build_test_app()
         runtime = app.state.runtime
-        snapshot = runtime.tool_registry.build_snapshot(["automation", "mcp", "runtime", "self_improve", "skill", "time"])
+        snapshot = runtime.tool_registry.build_snapshot(
+            ["automation", "mcp", "runtime", "self_improve", "session", "memory", "skill", "time"]
+        )
         automation_description = snapshot.tool_metadata["automation"]["description"]
         mcp_description = snapshot.tool_metadata["mcp"]["description"]
         runtime_description = snapshot.tool_metadata["runtime"]["description"]
+        session_description = snapshot.tool_metadata["session"]["description"]
+        time_description = snapshot.tool_metadata["time"]["description"]
 
         self.assertIn("Capability catalog:", runtime.capability_catalog_text or "")
         self.assertIn("automation", runtime.capability_catalog_text or "")
         self.assertIn("mcp", runtime.capability_catalog_text or "")
         self.assertIn("runtime", runtime.capability_catalog_text or "")
+        self.assertIn("session", runtime.capability_catalog_text or "")
+        self.assertIn("当前上下文窗口多大", runtime.capability_catalog_text or "")
+        self.assertIn("现在有哪些会话列表", runtime.capability_catalog_text or "")
+        self.assertIn("当前有哪些定时任务", runtime.capability_catalog_text or "")
         self.assertNotIn("mock_search", runtime.capability_catalog_text or "")
         self.assertNotIn("search_repositories", runtime.capability_catalog_text or "")
         self.assertTrue(automation_description)
         self.assertTrue(mcp_description)
         self.assertTrue(runtime_description)
+        self.assertTrue(session_description)
+        self.assertTrue(time_description)
         self.assertIn("automation", automation_description.lower())
+        self.assertIn("定时任务", automation_description)
         self.assertIn("github", mcp_description.lower())
         self.assertNotIn("search_repositories", mcp_description)
         self.assertNotIn("list_commits", mcp_description)
         self.assertTrue(
             "runtime" in runtime_description.lower() or "上下文" in runtime_description
         )
+        self.assertIn("上下文窗口", runtime_description)
+        self.assertIn("会话列表", session_description)
+        self.assertIn("sess_", session_description)
+        self.assertIn("现在几点", time_description)
 
     def test_runtime_bootstrap_preserves_family_tool_parameter_schemas(self) -> None:
         app = build_test_app()

@@ -10,6 +10,22 @@ from marten_runtime.session.store import SessionStore
 
 
 class SessionStoreTests(unittest.TestCase):
+    def test_compacted_context_serializes_preserved_tail_user_turns(self) -> None:
+        compacted = CompactedContext(
+            compact_id="cmp_tail_turns",
+            session_id="sess_tail_turns",
+            summary_text="当前进展：已完成 A。",
+            source_message_range=[0, 2],
+            preserved_tail_user_turns=6,
+            trigger_kind="context_pressure_proactive",
+        )
+
+        payload = compacted.model_dump()
+
+        self.assertEqual(payload["preserved_tail_user_turns"], 6)
+        self.assertEqual(payload["trigger_kind"], "context_pressure_proactive")
+        self.assertNotIn("preserved_tail_count", payload)
+
     def test_create_session_freezes_snapshot_ids(self) -> None:
         store = SessionStore()
         snapshot = ConfigSnapshot()
@@ -49,6 +65,66 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(updated.last_event_at, message.created_at)
         self.assertEqual(updated.history[-1].content, "hello")
 
+    def test_remove_last_message_if_match_removes_exact_trailing_message(self) -> None:
+        store = SessionStore()
+        store.create(
+            session_id="sess_remove",
+            conversation_id="conv-remove",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        previous = SessionMessage.user(
+            "existing",
+            created_at=datetime(2026, 4, 21, 9, 0, tzinfo=timezone.utc),
+        )
+        control = SessionMessage.user(
+            "切换到新会话",
+            created_at=datetime(2026, 4, 21, 9, 1, tzinfo=timezone.utc),
+        )
+        store.append_message("sess_remove", previous)
+        store.append_message("sess_remove", control)
+
+        updated = store.remove_last_message_if_match(
+            "sess_remove",
+            control,
+            restore_updated_at=previous.created_at,
+            restore_last_event_at=previous.created_at,
+        )
+
+        self.assertEqual([item.content for item in updated.history], ["created", "existing"])
+        self.assertEqual(updated.message_count, 1)
+        self.assertEqual(updated.updated_at, previous.created_at)
+        self.assertEqual(updated.last_event_at, previous.created_at)
+
+    def test_remove_last_message_if_match_keeps_history_when_message_differs(self) -> None:
+        store = SessionStore()
+        store.create(
+            session_id="sess_keep",
+            conversation_id="conv-keep",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        control = SessionMessage.user(
+            "切换到新会话",
+            created_at=datetime(2026, 4, 21, 9, 1, tzinfo=timezone.utc),
+        )
+        store.append_message("sess_keep", control)
+
+        updated = store.remove_last_message_if_match(
+            "sess_keep",
+            SessionMessage.user(
+                "切换到旧会话",
+                created_at=control.created_at,
+            ),
+            restore_updated_at=datetime(2026, 4, 21, 9, 0, tzinfo=timezone.utc),
+            restore_last_event_at=datetime(2026, 4, 21, 9, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual([item.content for item in updated.history], ["created", "切换到新会话"])
+        self.assertEqual(updated.message_count, 1)
+        self.assertEqual(updated.updated_at, control.created_at)
+        self.assertEqual(updated.last_event_at, control.created_at)
+
     def test_get_or_create_by_conversation_reuses_session(self) -> None:
         store = SessionStore()
 
@@ -82,6 +158,25 @@ class SessionStoreTests(unittest.TestCase):
         )
 
         self.assertNotEqual(http_session.session_id, feishu_session.session_id)
+
+    def test_empty_user_id_does_not_resolve_user_owned_conversation_binding(self) -> None:
+        store = SessionStore()
+        store.create(
+            session_id="sess_user_a",
+            conversation_id="conv-shared",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="feishu",
+            user_id="user-a",
+        )
+
+        self.assertIsNone(
+            store.resolve_session_for_conversation(
+                channel_id="feishu",
+                conversation_id="conv-shared",
+                user_id="",
+            )
+        )
 
     def test_bind_conversation_moves_session_to_new_conversation_exclusively(self) -> None:
         store = SessionStore()
@@ -234,6 +329,68 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(child.config_snapshot_id, parent.config_snapshot_id)
         self.assertEqual(child.bootstrap_manifest_id, parent.bootstrap_manifest_id)
         self.assertEqual(store.get(child.session_id).parent_session_id, parent.session_id)
+
+    def test_create_child_session_inherits_parent_owner_metadata(self) -> None:
+        store = SessionStore()
+        parent = store.create(
+            session_id="sess_parent_owner",
+            conversation_id="conv-parent-owner",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="feishu",
+            user_id="user-a",
+        )
+        store.set_active_agent(parent.session_id, "coding")
+        store.set_catalog_metadata(
+            parent.session_id,
+            user_id="user-a",
+            agent_id="coding",
+            session_title="parent",
+            session_preview="preview",
+        )
+
+        child = store.create_child_session(
+            parent_session_id=parent.session_id,
+            conversation_id="conv-child-owner",
+            session_id="sess_child_owner",
+        )
+
+        self.assertEqual(child.channel_id, "feishu")
+        self.assertEqual(child.user_id, "user-a")
+        self.assertEqual(child.agent_id, "coding")
+        self.assertEqual(child.active_agent_id, "coding")
+
+    def test_create_child_session_can_use_target_agent_metadata(self) -> None:
+        store = SessionStore()
+        parent = store.create(
+            session_id="sess_parent_target_agent",
+            conversation_id="conv-parent-target-agent",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="feishu",
+            user_id="user-a",
+        )
+        store.set_active_agent(parent.session_id, "main")
+        store.set_catalog_metadata(
+            parent.session_id,
+            user_id="user-a",
+            agent_id="main",
+            session_title="parent",
+            session_preview="preview",
+        )
+
+        child = store.create_child_session(
+            parent_session_id=parent.session_id,
+            conversation_id="conv-child-target-agent",
+            session_id="sess_child_target_agent",
+            agent_id="coding",
+            active_agent_id="coding",
+        )
+
+        self.assertEqual(child.channel_id, "feishu")
+        self.assertEqual(child.user_id, "user-a")
+        self.assertEqual(child.agent_id, "coding")
+        self.assertEqual(child.active_agent_id, "coding")
 
     def test_create_session_exposes_catalog_metadata_defaults(self) -> None:
         store = SessionStore()

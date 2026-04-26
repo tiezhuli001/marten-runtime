@@ -6,6 +6,9 @@ from pydantic import BaseModel, Field
 from marten_runtime.runtime.usage_models import NormalizedUsage, ProviderCallDiagnostics
 from marten_runtime.session.tool_outcome_summary import ToolOutcomeSummary
 
+FINALIZATION_DIAGNOSTIC_ITEM_LIMIT = 3
+FINALIZATION_DIAGNOSTIC_TEXT_LIMIT = 280
+
 
 class CompactionDiagnostics(BaseModel):
     decision: str = "none"
@@ -37,6 +40,16 @@ class ExternalObservabilityRefs(BaseModel):
     langfuse_url: str | None = None
 
 
+class FinalizationDiagnostics(BaseModel):
+    assessment: str | None = None
+    request_kind: str | None = None
+    required_evidence_count: int = 0
+    missing_evidence_items: list[str] = Field(default_factory=list)
+    retry_triggered: bool = False
+    recovered_from_fragments: bool = False
+    invalid_final_text: str | None = None
+
+
 class RunRecord(BaseModel):
     run_id: str
     trace_id: str
@@ -57,9 +70,16 @@ class RunRecord(BaseModel):
     provider_ref: str | None = None
     attempted_profiles: list[str] = Field(default_factory=list)
     attempted_providers: list[str] = Field(default_factory=list)
+    failover_skipped_profiles: list[dict[str, str]] = Field(default_factory=list)
     failover_trigger: str | None = None
     failover_stage: str | None = None
     final_provider_ref: str | None = None
+    contract_repair_triggered: bool = False
+    contract_repair_reason: str | None = None
+    contract_repair_attempt_count: int = 0
+    contract_repair_outcome: str | None = None
+    contract_repair_selected_tool: str | None = None
+    contract_repair_provider_ref: str | None = None
     llm_request_count: int = 0
     preflight_input_tokens_estimate: int = 0
     preflight_estimator_kind: str = "rough"
@@ -84,6 +104,7 @@ class RunRecord(BaseModel):
     queue: RunQueueDiagnostics = Field(default_factory=RunQueueDiagnostics)
     compaction: CompactionDiagnostics = Field(default_factory=CompactionDiagnostics)
     external_observability: ExternalObservabilityRefs = Field(default_factory=ExternalObservabilityRefs)
+    finalization: FinalizationDiagnostics = Field(default_factory=FinalizationDiagnostics)
 
 
 class InMemoryRunHistory:
@@ -151,6 +172,46 @@ class InMemoryRunHistory:
         record.failover_trigger = failover_trigger
         record.failover_stage = failover_stage
         record.final_provider_ref = final_provider_ref
+
+    def record_failover_skipped_profile(
+        self,
+        run_id: str,
+        *,
+        profile_name: str,
+        reason: str,
+    ) -> None:
+        record = self._items[run_id]
+        record.failover_skipped_profiles.append(
+            {
+                "profile_name": profile_name,
+                "reason": reason,
+            }
+        )
+
+    def set_contract_repair_state(
+        self,
+        run_id: str,
+        *,
+        triggered: bool | None = None,
+        reason: str | None = None,
+        attempt_count: int | None = None,
+        outcome: str | None = None,
+        selected_tool: str | None = None,
+        provider_ref: str | None = None,
+    ) -> None:
+        record = self._items[run_id]
+        if triggered is not None:
+            record.contract_repair_triggered = triggered
+        if reason is not None:
+            record.contract_repair_reason = reason
+        if attempt_count is not None:
+            record.contract_repair_attempt_count = attempt_count
+        if outcome is not None:
+            record.contract_repair_outcome = outcome
+        if selected_tool is not None or record.contract_repair_selected_tool is not None:
+            record.contract_repair_selected_tool = selected_tool
+        if provider_ref is not None:
+            record.contract_repair_provider_ref = provider_ref
 
     def get(self, run_id: str) -> RunRecord:
         return self._items[run_id]
@@ -295,3 +356,54 @@ class InMemoryRunHistory:
             langfuse_trace_id=langfuse_trace_id,
             langfuse_url=langfuse_url,
         )
+
+    def set_finalization_state(
+        self,
+        run_id: str,
+        *,
+        assessment: str | None = None,
+        request_kind: str | None = None,
+        required_evidence_count: int | None = None,
+        missing_evidence_items: list[str] | None = None,
+        retry_triggered: bool | None = None,
+        recovered_from_fragments: bool | None = None,
+        invalid_final_text: str | None = None,
+    ) -> None:
+        record = self._items[run_id]
+        if assessment is not None:
+            record.finalization.assessment = _normalize_diagnostic_text(assessment)
+        if request_kind is not None:
+            record.finalization.request_kind = _normalize_diagnostic_text(request_kind)
+        if required_evidence_count is not None:
+            record.finalization.required_evidence_count = max(0, int(required_evidence_count))
+        if missing_evidence_items is not None:
+            record.finalization.missing_evidence_items = _normalize_diagnostic_items(
+                missing_evidence_items
+            )
+        if retry_triggered is not None:
+            record.finalization.retry_triggered = bool(retry_triggered)
+        if recovered_from_fragments is not None:
+            record.finalization.recovered_from_fragments = bool(recovered_from_fragments)
+        if invalid_final_text is not None:
+            record.finalization.invalid_final_text = _normalize_diagnostic_text(
+                invalid_final_text
+            )
+
+
+def _normalize_diagnostic_items(items: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for item in items[:FINALIZATION_DIAGNOSTIC_ITEM_LIMIT]:
+        text = _normalize_diagnostic_text(item)
+        if not text:
+            continue
+        normalized.append(text)
+    return normalized
+
+
+def _normalize_diagnostic_text(text: str | None) -> str | None:
+    normalized = " ".join(str(text or "").split()).strip()
+    if not normalized:
+        return None
+    if len(normalized) <= FINALIZATION_DIAGNOSTIC_TEXT_LIMIT:
+        return normalized
+    return f"{normalized[: FINALIZATION_DIAGNOSTIC_TEXT_LIMIT - 1].rstrip()}…"

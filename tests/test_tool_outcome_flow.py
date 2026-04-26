@@ -120,6 +120,7 @@ class ToolOutcomeFlowTests(unittest.TestCase):
         self.assertIsNotNone(summary)
         self.assertEqual(summary.summary_text, "上一轮工具调用完成：已完成查询")
         self.assertEqual(summary.source_kind, "builtin")
+        self.assertFalse(summary.keep_next_turn)
 
     def test_build_combined_tool_episode_summary_merges_draft_and_fallback_semantics(self) -> None:
         summary = build_combined_tool_episode_summary(
@@ -163,6 +164,47 @@ class ToolOutcomeFlowTests(unittest.TestCase):
                 "url=https://github.com/CloudWide851/easy-agent",
             ],
         )
+
+    def test_build_combined_tool_episode_summary_restores_keep_next_turn_from_durable_facts(self) -> None:
+        fallback = build_fallback_tool_episode_summary(
+            run_id="run_test",
+            history=[
+                ToolExchange(
+                    tool_name="mock_search",
+                    tool_result={
+                        "full_name": "CloudWide851/easy-agent",
+                        "default_branch": "main",
+                    },
+                )
+            ],
+            final_text="已完成检查",
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_test", tool_metadata={}),
+        )
+
+        summary = build_combined_tool_episode_summary(
+            run_id="run_test",
+            history=[
+                ToolExchange(
+                    tool_name="mock_search",
+                    tool_result={
+                        "full_name": "CloudWide851/easy-agent",
+                        "default_branch": "main",
+                    },
+                )
+            ],
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_test", tool_metadata={}),
+            draft=ToolEpisodeSummaryDraft(
+                summary="已完成检查该仓库。",
+                facts=[],
+                volatile=False,
+                keep_next_turn=False,
+                refresh_hint="",
+            ),
+            fallback_summary=fallback,
+        )
+
+        self.assertFalse(fallback.keep_next_turn)
+        self.assertTrue(summary.keep_next_turn)
 
 
 if __name__ == "__main__":

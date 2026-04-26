@@ -1,5 +1,6 @@
 import json
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
@@ -10,7 +11,10 @@ from marten_runtime.interfaces.http.bootstrap import build_http_runtime
 from marten_runtime.interfaces.http.app import create_app
 from marten_runtime.mcp.models import MCPServerSpec, MCPToolSpec
 from marten_runtime.observability.langfuse import build_langfuse_observer
+from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
+from marten_runtime.session.compacted_context import CompactedContext
+from marten_runtime.session.models import SessionMessage
 from marten_runtime.tools.builtins.mcp_tool import run_mcp_tool
 from tests.http_app_support import build_test_app
 
@@ -207,6 +211,101 @@ class PromptTooLongThenCompactThenFinalLLMClient:
 
 
 class AcceptanceTests(unittest.TestCase):
+    def test_feishu_second_turn_reuses_durable_detail_from_previous_structured_reply(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        captured_second_turn_history: list[SessionMessage] = []
+
+        def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
+            if message == "先给我检查结果":
+                return [
+                    OutboundEvent(
+                        session_id=session_id,
+                        run_id="run_acceptance_feishu_durable_1",
+                        event_id="evt_acceptance_feishu_durable_progress_1",
+                        event_type="progress",
+                        sequence=1,
+                        trace_id=trace_id or "trace_missing",
+                        payload={"text": "running"},
+                        created_at=datetime.now(timezone.utc),
+                    ),
+                    OutboundEvent(
+                        session_id=session_id,
+                        run_id="run_acceptance_feishu_durable_1",
+                        event_id="evt_acceptance_feishu_durable_final_1",
+                        event_type="final",
+                        sequence=2,
+                        trace_id=trace_id or "trace_missing",
+                        payload={
+                            "text": (
+                                "检查完成。\n\n"
+                                "```feishu_card\n"
+                                '{"title":"检查结果","summary":"共 2 项","sections":[{"items":["builtin 正常","mcp 正常"]}]}\n'
+                                "```"
+                            )
+                        },
+                        created_at=datetime.now(timezone.utc),
+                    ),
+                ]
+            captured_second_turn_history.extend(kwargs.get("session_messages") or [])
+            return [
+                OutboundEvent(
+                    session_id=session_id,
+                    run_id="run_acceptance_feishu_durable_2",
+                    event_id="evt_acceptance_feishu_durable_progress_2",
+                    event_type="progress",
+                    sequence=1,
+                    trace_id=trace_id or "trace_missing",
+                    payload={"text": "running"},
+                    created_at=datetime.now(timezone.utc),
+                ),
+                OutboundEvent(
+                    session_id=session_id,
+                    run_id="run_acceptance_feishu_durable_2",
+                    event_id="evt_acceptance_feishu_durable_final_2",
+                    event_type="final",
+                    sequence=2,
+                    trace_id=trace_id or "trace_missing",
+                    payload={"text": "第二轮已读取到 mcp 正常"},
+                    created_at=datetime.now(timezone.utc),
+                ),
+            ]
+
+        runtime.runtime_loop.run = fake_run  # type: ignore[method-assign]
+
+        with TestClient(app) as client:
+            first = client.post(
+                "/messages",
+                json={
+                    "channel_id": "feishu",
+                    "user_id": "demo",
+                    "conversation_id": "acceptance-feishu-durable",
+                    "message_id": "1",
+                    "body": "先给我检查结果",
+                },
+            )
+            second = client.post(
+                "/messages",
+                json={
+                    "channel_id": "feishu",
+                    "user_id": "demo",
+                    "conversation_id": "acceptance-feishu-durable",
+                    "message_id": "2",
+                    "body": "刚才 mcp 的结果是什么？",
+                },
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertTrue(
+            any(
+                item.role == "assistant"
+                and item.content == "检查完成。\n\n共 2 项\n\n- builtin 正常\n- mcp 正常"
+                for item in captured_second_turn_history
+            )
+        )
+        self.assertEqual(second.json()["events"][-1]["payload"]["text"], "第二轮已读取到 mcp 正常")
+
     def test_langfuse_full_chain_covers_plain_builtin_and_mcp_turns(self) -> None:
         app = build_test_app()
         runtime = app.state.runtime
@@ -488,6 +587,57 @@ class AcceptanceTests(unittest.TestCase):
         self.assertNotIn("mock_search", mcp.json()["events"][-1]["payload"]["text"])
         self.assertEqual(coding.json()["events"][0]["event_type"], "progress")
 
+    def test_http_messages_retryable_thin_summary_recovers_and_exposes_finalization_diagnostics(
+        self,
+    ) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        scripted = ScriptedLLMClient(
+            [
+                LLMReply(tool_name="time", tool_payload={"timezone": "Asia/Shanghai"}),
+                LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
+                LLMReply(tool_name="mcp", tool_payload={"action": "list"}),
+                LLMReply(
+                    final_text="当前可用 MCP 服务共 1 个。\n- 1. github（38 个工具，状态 discovered）"
+                ),
+                LLMReply(final_text="工具执行失败，请重试。"),
+            ]
+        )
+        runtime.runtime_loop.llm = scripted
+        runtime.llm_client_factory.cache_client("openai_gpt5", scripted)
+        runtime.llm_client_factory.cache_client("minimax_m25", scripted)
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "acc-finalization-recovery",
+                    "message_id": "1",
+                    "body": (
+                        "请严格按顺序先调用 time 获取当前时间，"
+                        "再调用 runtime 查看当前 run 的 context_status，"
+                        "再调用 mcp 列出 github server 的可用工具。"
+                    ),
+                },
+            )
+            run_id = response.json()["events"][-1]["run_id"]
+            run_diag = client.get(f"/diagnostics/run/{run_id}").json()
+
+        self.assertEqual(response.status_code, 200)
+        final_text = response.json()["events"][-1]["payload"]["text"]
+        self.assertIn("现在是北京时间", final_text)
+        self.assertIn("当前上下文使用详情", final_text)
+        self.assertIn("当前可用 MCP 服务共", final_text)
+        self.assertEqual(run_diag["finalization"]["assessment"], "retryable_degraded")
+        self.assertEqual(run_diag["finalization"]["request_kind"], "finalization_retry")
+        self.assertEqual(run_diag["finalization"]["required_evidence_count"], 3)
+        self.assertTrue(run_diag["finalization"]["retry_triggered"])
+        self.assertTrue(run_diag["finalization"]["recovered_from_fragments"])
+        self.assertEqual(len(run_diag["finalization"]["missing_evidence_items"]), 3)
+        self.assertEqual(run_diag["finalization"]["invalid_final_text"], "工具执行失败，请重试。")
+
     def test_http_messages_persists_tool_outcome_summary_after_tool_turn(self) -> None:
         app = build_test_app()
         runtime = app.state.runtime
@@ -608,7 +758,10 @@ class AcceptanceTests(unittest.TestCase):
             main_llm = ScriptedLLMClient([LLMReply(final_text="main route")])
             coding_llm = ScriptedLLMClient(
                 [
-                    LLMReply(tool_name="session", tool_payload={"action": "new"}),
+                    LLMReply(
+                        tool_name="session",
+                        tool_payload={"action": "new", "finalize_response": True},
+                    ),
                     LLMReply(final_text="coding route retained"),
                 ]
             )
@@ -643,12 +796,732 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 200)
         self.assertIn("已切换到新会话", first.json()["events"][-1]["payload"]["text"])
+        self.assertNotEqual(first.json()["active_session_id"], first.json()["session_id"])
+        self.assertEqual(second.json()["active_session_id"], second.json()["session_id"])
         self.assertEqual(second.json()["events"][-1]["payload"]["text"], "coding route retained")
         self.assertEqual(session_response.status_code, 200)
         self.assertEqual(session_response.json()["active_agent_id"], "coding")
         self.assertEqual(len(main_llm.requests), 0)
         self.assertEqual(coding_llm.requests[0].agent_id, "coding")
         self.assertEqual(coding_llm.requests[1].agent_id, "coding")
+
+    def test_http_session_new_persists_confirmation_on_active_session_only(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            _write_session_enabled_coding_repo(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
+            coding_llm = ScriptedLLMClient(
+                [LLMReply(tool_name="session", tool_payload={"action": "new"})]
+            )
+            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt5", coding_llm)
+            test_app.state.runtime.runtime_loop.llm = coding_llm
+
+            with TestClient(test_app) as client:
+                switched = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": "session-new-confirmation-placement",
+                        "message_id": "switch",
+                        "body": "切换到新会话",
+                        "requested_agent_id": "coding",
+                    },
+                )
+
+            source_session = test_app.state.runtime.session_store.get(switched.json()["session_id"])
+            target_session = test_app.state.runtime.session_store.get(switched.json()["active_session_id"])
+
+        self.assertEqual(switched.status_code, 200)
+        confirmation_text = switched.json()["events"][-1]["payload"]["text"]
+        source_assistant_messages = [
+            item.content for item in source_session.history if item.role == "assistant"
+        ]
+        target_assistant_messages = [
+            item.content for item in target_session.history if item.role == "assistant"
+        ]
+        self.assertNotIn(confirmation_text, source_assistant_messages)
+        self.assertNotIn(confirmation_text, target_assistant_messages)
+        self.assertIsNone(source_session.last_run_id)
+        self.assertEqual(target_session.last_run_id, switched.json()["events"][-1]["run_id"])
+
+    def test_http_session_new_defers_compaction_and_excludes_switch_request_from_compacted_prefix(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            _write_session_enabled_coding_repo(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
+            main_llm = ScriptedLLMClient(
+                [
+                    *[LLMReply(final_text=f"seed-{turn}") for turn in range(1, 10)],
+                    LLMReply(tool_name="session", tool_payload={"action": "new"}),
+                    LLMReply(final_text="已切换到新会话。"),
+                ]
+            )
+            compaction_llm = ScriptedLLMClient([LLMReply(final_text="当前进展：旧会话已压缩。")])
+            test_app.state.runtime.compaction_worker.stop()
+            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt5", main_llm)
+            test_app.state.runtime.runtime_loop.llm = main_llm
+            test_app.state.runtime.llm_client_factory.create_isolated = lambda profile_name: compaction_llm
+
+            with TestClient(test_app) as client:
+                old_session_id = ""
+                for turn in range(1, 10):
+                    seeded = client.post(
+                        "/messages",
+                        json={
+                            "channel_id": "http",
+                            "user_id": "demo",
+                            "conversation_id": "session-new-compaction",
+                            "message_id": f"seed-{turn}",
+                            "body": f"历史任务 {turn}",
+                            "requested_agent_id": "coding" if turn == 1 else None,
+                        },
+                    )
+                    old_session_id = seeded.json()["session_id"]
+                switched = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": "session-new-compaction",
+                        "message_id": "switch",
+                        "body": "切到新会话",
+                    },
+                )
+                drained = test_app.state.runtime.compaction_worker.run_once()
+
+            old_session = test_app.state.runtime.session_store.get(old_session_id)
+            new_session_id = test_app.state.runtime.session_store.resolve_session_for_conversation(
+                channel_id="http",
+                conversation_id="session-new-compaction",
+                user_id="demo",
+            )
+
+        self.assertEqual(switched.status_code, 200)
+        self.assertTrue(drained)
+        self.assertIsNotNone(new_session_id)
+        self.assertNotEqual(new_session_id, old_session_id)
+        self.assertIsNotNone(old_session.latest_compacted_context)
+        assert old_session.latest_compacted_context is not None
+        self.assertIn("当前进展", old_session.latest_compacted_context.summary_text)
+        compaction_request = next(
+            request for request in compaction_llm.requests if request.agent_id == "compaction"
+        )
+        compacted_messages = [item.content for item in compaction_request.conversation_messages]
+        self.assertNotIn("切到新会话", compacted_messages)
+
+    def test_http_session_resume_switches_immediately_and_completes_source_compaction_in_background(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            _write_session_enabled_coding_repo(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
+            runtime = test_app.state.runtime
+            runtime.compaction_worker.stop()
+            current = runtime.session_store.create(
+                session_id="sess_current",
+                conversation_id="resume-async-current",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="http",
+            )
+            target = runtime.session_store.create(
+                session_id="sess_target",
+                conversation_id="resume-async-target",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="http",
+            )
+            runtime.session_store.set_catalog_metadata(
+                current.session_id,
+                user_id="demo",
+                agent_id="coding",
+                session_title="current",
+                session_preview="current preview",
+            )
+            runtime.session_store.set_catalog_metadata(
+                target.session_id,
+                user_id="demo",
+                agent_id="coding",
+                session_title="target",
+                session_preview="target preview",
+            )
+            for turn in range(1, 11):
+                runtime.session_store.append_message(current.session_id, SessionMessage.user(f"历史 {turn}"))
+                runtime.session_store.append_message(current.session_id, SessionMessage.assistant(f"完成 {turn}"))
+            runtime.session_store.append_message(current.session_id, SessionMessage.user("恢复旧会话"))
+            resume_llm = ScriptedLLMClient(
+                [
+                    LLMReply(
+                        tool_name="session",
+                        tool_payload={"action": "resume", "session_id": target.session_id},
+                    ),
+                    LLMReply(final_text=f"已切换到会话 `{target.session_id}`。"),
+                ]
+            )
+            compaction_llm = ScriptedLLMClient([LLMReply(final_text="当前进展：source 已压缩。")])
+            runtime.llm_client_factory.cache_client("openai_gpt5", resume_llm)
+            runtime.runtime_loop.llm = resume_llm
+            runtime.llm_client_factory.create_isolated = lambda profile_name: compaction_llm
+
+            with TestClient(test_app) as client:
+                resumed = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": "resume-async-current",
+                        "message_id": "resume",
+                        "body": f"恢复到 {target.session_id}",
+                        "requested_agent_id": "coding",
+                    },
+                )
+                source_before = runtime.session_store.get(current.session_id)
+                transition_before = runtime.latest_session_transition
+                drained = runtime.compaction_worker.run_once()
+                source_after = runtime.session_store.get(current.session_id)
+                rebound_session_id = runtime.session_store.resolve_session_for_conversation(
+                    channel_id="http",
+                    conversation_id="resume-async-current",
+                    user_id="demo",
+                )
+
+        self.assertEqual(resumed.status_code, 200)
+        self.assertEqual(rebound_session_id, target.session_id)
+        self.assertIsNone(source_before.latest_compacted_context)
+        self.assertEqual(transition_before["compaction_reason"], "deferred")
+        self.assertEqual(transition_before["compaction_job"]["enqueue_status"], "queued")
+        self.assertTrue(drained)
+        self.assertIsNotNone(source_after.latest_compacted_context)
+        self.assertIn("当前进展", source_after.latest_compacted_context.summary_text)
+
+    def test_http_session_resume_next_turn_restores_compact_summary_recent_turns_and_tool_summaries(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            _write_session_enabled_coding_repo(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
+            runtime = test_app.state.runtime
+            current = runtime.session_store.create(
+                session_id="sess_current",
+                conversation_id="resume-current",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="http",
+            )
+            target = runtime.session_store.create(
+                session_id="sess_target",
+                conversation_id="resume-old",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="http",
+            )
+            runtime.session_store.set_catalog_metadata(
+                current.session_id,
+                user_id="demo",
+                agent_id="coding",
+                session_title="current",
+                session_preview="current preview",
+            )
+            runtime.session_store.set_catalog_metadata(
+                target.session_id,
+                user_id="demo",
+                agent_id="coding",
+                session_title="target",
+                session_preview="target preview",
+            )
+            for turn in range(1, 11):
+                runtime.session_store.append_message(target.session_id, SessionMessage.user(f"u{turn}"))
+                runtime.session_store.append_message(target.session_id, SessionMessage.assistant(f"a{turn}"))
+            runtime.session_store.set_compacted_context(
+                target.session_id,
+                CompactedContext(
+                    compact_id="cmp_resume_target",
+                    session_id=target.session_id,
+                    summary_text="当前进展：前两轮已压缩。",
+                    source_message_range=[0, 5],
+                    preserved_tail_user_turns=8,
+                ),
+            )
+            runtime.session_store.append_tool_outcome_summary(
+                target.session_id,
+                {
+                    "summary_id": "sum_resume_target",
+                    "run_id": "run_resume_target",
+                    "source_kind": "builtin",
+                    "summary_text": "上一轮调用了 time 工具，timezone=UTC。",
+                },
+            )
+            resume_llm = ScriptedLLMClient(
+                [
+                    LLMReply(
+                        tool_name="session",
+                        tool_payload={"action": "resume", "session_id": target.session_id},
+                    ),
+                    LLMReply(final_text="已恢复旧会话。"),
+                ]
+            )
+            followup_llm = ScriptedLLMClient([LLMReply(final_text="restored-ok")])
+            runtime.llm_client_factory.cache_client("openai_gpt5", resume_llm)
+            runtime.runtime_loop.llm = resume_llm
+
+            with TestClient(test_app) as client:
+                resumed = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": "resume-current",
+                        "message_id": "resume",
+                        "body": f"恢复到 {target.session_id}",
+                        "requested_agent_id": "coding",
+                    },
+                )
+                runtime.llm_client_factory.cache_client("openai_gpt5", followup_llm)
+                runtime.runtime_loop.llm = followup_llm
+                followup = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": "resume-current",
+                        "message_id": "followup",
+                        "body": "继续处理",
+                    },
+                )
+
+        self.assertEqual(resumed.status_code, 200)
+        self.assertEqual(followup.status_code, 200)
+        self.assertIn("当前进展", followup_llm.requests[0].compact_summary_text or "")
+        self.assertIn("time 工具", followup_llm.requests[0].tool_outcome_summary_text or "")
+        self.assertEqual(
+            [item.content for item in followup_llm.requests[0].conversation_messages],
+            [entry for turn in range(3, 11) for entry in (f"u{turn}", f"a{turn}")],
+        )
+
+    def test_http_session_resume_persists_confirmation_on_target_session_only(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            _write_session_enabled_coding_repo(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
+            runtime = test_app.state.runtime
+            current = runtime.session_store.create(
+                session_id="sess_resume_current",
+                conversation_id="resume-confirm-current",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="http",
+            )
+            target = runtime.session_store.create(
+                session_id="sess_resume_target",
+                conversation_id="resume-confirm-target",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="http",
+            )
+            runtime.session_store.set_catalog_metadata(
+                current.session_id,
+                user_id="demo",
+                agent_id="coding",
+                session_title="current",
+                session_preview="current preview",
+            )
+            runtime.session_store.set_catalog_metadata(
+                target.session_id,
+                user_id="demo",
+                agent_id="coding",
+                session_title="target",
+                session_preview="target preview",
+            )
+            current_mark_at = SessionMessage.user("seed current").created_at
+            target_mark_at = SessionMessage.user("seed target").created_at
+            runtime.session_store.mark_run(current.session_id, "run_previous_current", current_mark_at)
+            runtime.session_store.mark_run(target.session_id, "run_previous_target", target_mark_at)
+            resume_llm = ScriptedLLMClient(
+                [
+                    LLMReply(
+                        tool_name="session",
+                        tool_payload={"action": "resume", "session_id": target.session_id},
+                    )
+                ]
+            )
+            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt5", resume_llm)
+            test_app.state.runtime.runtime_loop.llm = resume_llm
+
+            with TestClient(test_app) as client:
+                resumed = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": current.conversation_id,
+                        "message_id": "resume",
+                        "body": f"恢复会话 {target.session_id}",
+                        "requested_agent_id": "coding",
+                    },
+                )
+
+            reloaded_current = test_app.state.runtime.session_store.get(current.session_id)
+            reloaded_target = test_app.state.runtime.session_store.get(target.session_id)
+
+        self.assertEqual(resumed.status_code, 200)
+        confirmation_text = resumed.json()["events"][-1]["payload"]["text"]
+        current_assistant_messages = [
+            item.content for item in reloaded_current.history if item.role == "assistant"
+        ]
+        target_assistant_messages = [
+            item.content for item in reloaded_target.history if item.role == "assistant"
+        ]
+        self.assertNotIn(confirmation_text, current_assistant_messages)
+        self.assertNotIn(confirmation_text, target_assistant_messages)
+        self.assertEqual(reloaded_current.last_run_id, "run_previous_current")
+        self.assertEqual(reloaded_target.last_run_id, resumed.json()["events"][-1]["run_id"])
+
+    def test_http_session_resume_then_business_reply_persists_final_text_on_target_session(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            _write_session_enabled_coding_repo(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
+            runtime = test_app.state.runtime
+            current = runtime.session_store.create(
+                session_id="sess_resume_current",
+                conversation_id="resume-business-current",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="http",
+            )
+            target = runtime.session_store.create(
+                session_id="sess_resume_target",
+                conversation_id="resume-business-target",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="http",
+            )
+            runtime.session_store.set_catalog_metadata(
+                current.session_id,
+                user_id="demo",
+                agent_id="coding",
+                session_title="current",
+                session_preview="current preview",
+            )
+            runtime.session_store.set_catalog_metadata(
+                target.session_id,
+                user_id="demo",
+                agent_id="coding",
+                session_title="target",
+                session_preview="target preview",
+            )
+            runtime.session_store.append_message(
+                target.session_id,
+                SessionMessage.user("target history user"),
+            )
+            runtime.session_store.append_message(
+                target.session_id,
+                SessionMessage.assistant("target history assistant"),
+            )
+            resume_llm = ScriptedLLMClient(
+                [
+                    LLMReply(
+                        tool_name="session",
+                        tool_payload={"action": "resume", "session_id": target.session_id},
+                    ),
+                    LLMReply(final_text="真正答案"),
+                ]
+            )
+            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt5", resume_llm)
+            test_app.state.runtime.runtime_loop.llm = resume_llm
+
+            with TestClient(test_app) as client:
+                resumed = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": current.conversation_id,
+                        "message_id": "resume-business",
+                        "body": f"恢复会话 {target.session_id} 并继续总结",
+                        "requested_agent_id": "coding",
+                    },
+                )
+
+            reloaded_current = test_app.state.runtime.session_store.get(current.session_id)
+            reloaded_target = test_app.state.runtime.session_store.get(target.session_id)
+
+        self.assertEqual(resumed.status_code, 200)
+        self.assertEqual(resumed.json()["events"][-1]["payload"]["text"], "真正答案")
+        current_assistant_messages = [
+            item.content for item in reloaded_current.history if item.role == "assistant"
+        ]
+        target_assistant_messages = [
+            item.content for item in reloaded_target.history if item.role == "assistant"
+        ]
+        self.assertNotIn("真正答案", current_assistant_messages)
+        self.assertIn("真正答案", target_assistant_messages)
+        self.assertEqual(reloaded_target.last_run_id, resumed.json()["events"][-1]["run_id"])
+
+    def test_http_session_resume_confirmation_with_business_body_persists_on_target_session(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            _write_session_enabled_coding_repo(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
+            runtime = test_app.state.runtime
+            current = runtime.session_store.create(
+                session_id="sess_resume_mixed_current",
+                conversation_id="resume-mixed-current",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="http",
+            )
+            target = runtime.session_store.create(
+                session_id="sess_resume_mixed_target",
+                conversation_id="resume-mixed-target",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="http",
+            )
+            runtime.session_store.set_catalog_metadata(
+                current.session_id,
+                user_id="demo",
+                agent_id="coding",
+                session_title="current",
+                session_preview="current preview",
+            )
+            runtime.session_store.set_catalog_metadata(
+                target.session_id,
+                user_id="demo",
+                agent_id="coding",
+                session_title="target",
+                session_preview="target preview",
+            )
+            runtime.session_store.append_message(
+                target.session_id,
+                SessionMessage.assistant("old a"),
+            )
+            final_text = (
+                f"已切换到会话 `{target.session_id}`\n"
+                "- 消息数：2\n"
+                "- 结论：继续沿用旧方案"
+            )
+            resume_llm = ScriptedLLMClient(
+                [
+                    LLMReply(
+                        tool_name="session",
+                        tool_payload={"action": "resume", "session_id": target.session_id},
+                    ),
+                    LLMReply(final_text=final_text),
+                ]
+            )
+            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt5", resume_llm)
+            test_app.state.runtime.runtime_loop.llm = resume_llm
+
+            with TestClient(test_app) as client:
+                resumed = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": current.conversation_id,
+                        "message_id": "resume-mixed",
+                        "body": f"恢复会话 {target.session_id} 并继续总结",
+                        "requested_agent_id": "coding",
+                    },
+                )
+
+            reloaded_current = test_app.state.runtime.session_store.get(current.session_id)
+            reloaded_target = test_app.state.runtime.session_store.get(target.session_id)
+
+        self.assertEqual(resumed.status_code, 200)
+        current_assistant_messages = [
+            item.content for item in reloaded_current.history if item.role == "assistant"
+        ]
+        target_assistant_messages = [
+            item.content for item in reloaded_target.history if item.role == "assistant"
+        ]
+        self.assertNotIn(final_text, current_assistant_messages)
+        self.assertIn(final_text, target_assistant_messages)
+
+    def test_http_same_session_resume_short_circuits_without_persisting_control_messages(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            _write_session_enabled_coding_repo(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
+            runtime = test_app.state.runtime
+            current = runtime.session_store.create(
+                session_id="sess_same_current",
+                conversation_id="same-session-resume",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="http",
+            )
+            runtime.session_store.set_catalog_metadata(
+                current.session_id,
+                user_id="demo",
+                agent_id="coding",
+                session_title="current",
+                session_preview="current preview",
+            )
+            runtime.session_store.append_message(
+                current.session_id,
+                SessionMessage.user("seed current"),
+            )
+            before = runtime.session_store.get(current.session_id)
+            before_history = [(item.role, item.content) for item in before.history]
+            resume_llm = ScriptedLLMClient(
+                [
+                    LLMReply(
+                        tool_name="session",
+                        tool_payload={
+                            "action": "resume",
+                            "session_id": current.session_id,
+                            "finalize_response": True,
+                        },
+                    )
+                ]
+            )
+            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt5", resume_llm)
+            test_app.state.runtime.runtime_loop.llm = resume_llm
+
+            with TestClient(test_app) as client:
+                resumed = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": current.conversation_id,
+                        "message_id": "resume-same",
+                        "body": f"恢复会话 {current.session_id}",
+                        "requested_agent_id": "coding",
+                    },
+                )
+
+            reloaded_current = test_app.state.runtime.session_store.get(current.session_id)
+
+        self.assertEqual(resumed.status_code, 200)
+        confirmation_text = resumed.json()["events"][-1]["payload"]["text"]
+        self.assertIn(f"当前已在会话 `{current.session_id}`", confirmation_text)
+        self.assertEqual(
+            [(item.role, item.content) for item in reloaded_current.history],
+            before_history,
+        )
+        self.assertEqual(reloaded_current.last_run_id, resumed.json()["events"][-1]["run_id"])
+
+    def test_http_session_switch_control_messages_do_not_persist_into_replay_history(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            _write_session_enabled_coding_repo(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
+            runtime = test_app.state.runtime
+            source = runtime.session_store.create(
+                session_id="sess_switch_source",
+                conversation_id="session-switch-cleanup",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="http",
+            )
+            runtime.session_store.set_catalog_metadata(
+                source.session_id,
+                user_id="demo",
+                agent_id="coding",
+                session_title="source",
+                session_preview="source preview",
+            )
+            runtime.session_store.append_message(source.session_id, SessionMessage.user("历史任务"))
+            runtime.session_store.append_message(source.session_id, SessionMessage.assistant("历史结果"))
+            switch_llm = ScriptedLLMClient(
+                [LLMReply(tool_name="session", tool_payload={"action": "new"})]
+            )
+            runtime.llm_client_factory.cache_client("openai_gpt5", switch_llm)
+            runtime.runtime_loop.llm = switch_llm
+
+            with TestClient(test_app) as client:
+                switched = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": source.conversation_id,
+                        "message_id": "switch",
+                        "body": "切换到新会话",
+                        "requested_agent_id": "coding",
+                    },
+                )
+                switched_run_id = switched.json()["events"][-1]["run_id"]
+                new_session_id = switched.json()["active_session_id"]
+                source_after_switch = runtime.session_store.get(source.session_id)
+                new_session_after_switch = runtime.session_store.get(new_session_id)
+
+                resume_llm = ScriptedLLMClient(
+                    [
+                        LLMReply(
+                            tool_name="session",
+                            tool_payload={"action": "resume", "session_id": source.session_id},
+                        )
+                    ]
+                )
+                runtime.llm_client_factory.cache_client("openai_gpt5", resume_llm)
+                runtime.runtime_loop.llm = resume_llm
+                resumed = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": source.conversation_id,
+                        "message_id": "resume",
+                        "body": f"恢复到 {source.session_id}",
+                        "requested_agent_id": "coding",
+                    },
+                )
+                resumed_run_id = resumed.json()["events"][-1]["run_id"]
+                source_after_resume = runtime.session_store.get(source.session_id)
+                new_session_after_resume = runtime.session_store.get(new_session_id)
+
+                followup_llm = ScriptedLLMClient([LLMReply(final_text="restored-ok")])
+                runtime.llm_client_factory.cache_client("openai_gpt5", followup_llm)
+                runtime.runtime_loop.llm = followup_llm
+                followup = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": source.conversation_id,
+                        "message_id": "followup",
+                        "body": "继续处理",
+                    },
+                )
+
+            final_source = runtime.session_store.get(source.session_id)
+            final_new_session = runtime.session_store.get(new_session_id)
+
+        self.assertEqual(switched.status_code, 200)
+        self.assertEqual(resumed.status_code, 200)
+        self.assertEqual(followup.status_code, 200)
+        self.assertNotEqual(new_session_id, source.session_id)
+        self.assertIsNone(source_after_switch.last_run_id)
+        self.assertEqual(new_session_after_switch.last_run_id, switched_run_id)
+        self.assertEqual(source_after_resume.last_run_id, resumed_run_id)
+        self.assertEqual(new_session_after_resume.last_run_id, switched_run_id)
+        self.assertNotIn(
+            "切换到新会话",
+            [item.content for item in final_source.history if item.role == "user"],
+        )
+        self.assertNotIn(
+            f"恢复到 {source.session_id}",
+            [item.content for item in final_source.history if item.role == "user"],
+        )
+        self.assertNotIn(
+            "切换到新会话",
+            [item.content for item in final_new_session.history if item.role == "user"],
+        )
+        self.assertNotIn(
+            f"恢复到 {source.session_id}",
+            [item.content for item in final_new_session.history if item.role == "user"],
+        )
+        self.assertEqual(
+            [item.content for item in followup_llm.requests[0].conversation_messages],
+            ["历史任务", "历史结果"],
+        )
 
     def test_http_runtime_switches_app_manifest_and_bootstrap_prompt_by_selected_agent(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -715,6 +1588,7 @@ class AcceptanceTests(unittest.TestCase):
                         "body": "补充第二轮上下文，方便后续压缩" * 10,
                     },
                 )
+                test_app.state.runtime.platform_config.runtime.session_replay_user_turns = 1
                 compacting_llm = ScriptedLLMClient(
                     [
                         LLMReply(final_text="当前进展：较早历史已压缩。\n关键决策：保留最近原始尾部。"),
@@ -777,6 +1651,7 @@ class AcceptanceTests(unittest.TestCase):
                         "body": "第二轮历史内容" * 10,
                     },
                 )
+                test_app.state.runtime.platform_config.runtime.session_replay_user_turns = 1
                 llm = PromptTooLongThenCompactThenFinalLLMClient()
                 test_app.state.runtime.llm_client_factory.cache_client("minimax_m25", llm)
                 test_app.state.runtime.runtime_loop.llm = llm

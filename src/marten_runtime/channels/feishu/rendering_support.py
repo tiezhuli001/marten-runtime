@@ -8,12 +8,38 @@ if TYPE_CHECKING:
 
 
 _NEWLINE_GAP_RE = re.compile(r"\n{3,}")
+_PROTOCOL_SHELL_TOKENS = {
+    "```",
+    "feishu_card",
+    "<minimax:tool_call>",
+    "</invoke>",
+    "</minimax:tool_call>",
+}
 
 
 def default_card_title(event_type: str) -> str:
     if event_type == "error":
         return "处理失败"
     return "处理结果"
+
+
+def strip_protocol_shell_residue(text: str, *, protocol_context: bool = False) -> str:
+    if not protocol_context:
+        return str(text or "").rstrip()
+    normalized = str(text or "").rstrip()
+    while normalized:
+        lines = normalized.splitlines()
+        if not lines:
+            break
+        last_line = lines[-1].strip()
+        if last_line not in _PROTOCOL_SHELL_TOKENS:
+            break
+        if last_line == "```":
+            fence_count = sum(1 for line in lines if line.strip().startswith("```"))
+            if fence_count % 2 == 0:
+                break
+        normalized = "\n".join(lines[:-1]).rstrip()
+    return normalized
 
 
 def derive_plain_title(text: str, *, event_type: str) -> str:
@@ -32,9 +58,13 @@ def derive_plain_title(text: str, *, event_type: str) -> str:
     first = cleaned_lines[0].rstrip("：:。!！")
     if first.startswith("当前上下文使用详情"):
         return "当前上下文使用详情"
+    if first.startswith("当前有 ") and "可见会话" in first:
+        return "会话列表"
     if first.startswith("已切换到新会话"):
         return "已切换到新会话"
     if first.startswith("已切换到会话"):
+        return first
+    if first.startswith("当前已在会话"):
         return first
     if first.startswith("已受理，子 agent"):
         return "子任务已受理"

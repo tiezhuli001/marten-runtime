@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from marten_runtime.subagents.policy import (
-    latest_user_message_text,
-    resolve_requested_subagent_tool_profile,
-)
+from marten_runtime.subagents.tool_profiles import normalize_tool_profile_name
 
 
 def run_spawn_subagent_tool(
@@ -24,12 +21,29 @@ def run_spawn_subagent_tool(
         raise ValueError("tool_context.session_id is required")
     if not run_id:
         raise ValueError("tool_context.run_id is required")
-    latest_user_message = latest_user_message_text(session_store, session_id) if session_store is not None else None
-    requested_tool_profile = resolve_requested_subagent_tool_profile(
-        task=task,
-        latest_user_message=latest_user_message,
-        requested_tool_profile=str(payload.get("tool_profile") or "").strip() or None,
-    )
+    del session_store
+    raw_tool_profile = str(payload.get("tool_profile") or "").strip()
+    if not raw_tool_profile or raw_tool_profile.lower() == "default":
+        requested_tool_profile = "standard"
+    else:
+        normalized_tool_profile = normalize_tool_profile_name(raw_tool_profile)
+        requested_tool_profile = normalized_tool_profile
+    requested_agent_id = str(payload.get("agent_id") or "").strip()
+    if requested_agent_id.lower() == "default":
+        requested_agent_id = ""
+    context_mode = str(payload.get("context_mode") or "").strip()
+    if not context_mode or context_mode.lower() == "minimal":
+        context_mode = "brief_only"
+    channel_id = str((tool_context or {}).get("channel_id") or "").strip()
+    conversation_id = str((tool_context or {}).get("conversation_id") or "").strip()
+    source_transport = str((tool_context or {}).get("source_transport") or "").strip()
+    origin_delivery_target = None
+    if (
+        channel_id == "feishu"
+        and conversation_id
+        and source_transport == "feishu_websocket"
+    ):
+        origin_delivery_target = conversation_id
 
     result = subagent_service.spawn(
         task=task,
@@ -38,11 +52,12 @@ def run_spawn_subagent_tool(
         parent_run_id=run_id,
         parent_agent_id=agent_id,
         app_id=app_id,
-        agent_id=str(payload.get("agent_id") or agent_id).strip() or agent_id,
+        agent_id=requested_agent_id or agent_id,
         requested_tool_profile=requested_tool_profile,
         parent_allowed_tools=list((tool_context or {}).get("allowed_tools") or []),
-        origin_channel_id=str((tool_context or {}).get("channel_id") or "").strip() or None,
-        context_mode=str(payload.get("context_mode") or "brief_only").strip() or "brief_only",
+        origin_channel_id=channel_id or None,
+        origin_delivery_target=origin_delivery_target,
+        context_mode=context_mode,
         notify_on_finish=bool(payload.get("notify_on_finish", True)),
     )
     return {"ok": True, **result}

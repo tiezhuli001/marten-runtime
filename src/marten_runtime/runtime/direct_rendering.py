@@ -20,10 +20,15 @@ from marten_runtime.tools.builtins.time_tool import (
     resolve_timezone,
 )
 from marten_runtime.tools.builtins.runtime_tool import render_runtime_context_status_text
-from marten_runtime.runtime.query_hardening import is_explicit_multi_step_tool_request
 
 if TYPE_CHECKING:
-    from marten_runtime.runtime.llm_client import ToolExchange
+    from marten_runtime.runtime.llm_client import ToolExchange, ToolFollowupFragment
+
+
+def _llm_requested_terminal_render(tool_payload: dict | None) -> bool:
+    if not isinstance(tool_payload, dict):
+        return False
+    return bool(tool_payload.get("finalize_response") is True)
 
 
 def maybe_render_tool_followup_text(
@@ -34,11 +39,14 @@ def maybe_render_tool_followup_text(
     tool_history: list["ToolExchange"] | None = None,
     message: str = "",
 ) -> str:
-    history_text = render_direct_tool_history_text(tool_history or [])
-    if history_text:
-        return history_text
+    del message
+    tool_round_trip_count = len(tool_history or [])
+    if tool_name == "time":
+        if not _llm_requested_terminal_render(tool_payload):
+            return ""
+        return render_direct_tool_text(tool_name, tool_result, tool_payload=tool_payload)
     if tool_name == "runtime":
-        if is_explicit_multi_step_tool_request(message):
+        if tool_round_trip_count > 1:
             return ""
         return render_direct_tool_text(tool_name, tool_result, tool_payload=tool_payload)
     if tool_name == "automation":
@@ -46,12 +54,16 @@ def maybe_render_tool_followup_text(
     if tool_name == "mcp":
         if str((tool_payload or {}).get("action") or "").strip() == "list":
             return ""
+        if not _llm_requested_terminal_render(tool_payload):
+            return ""
         return render_direct_tool_text(tool_name, tool_result, tool_payload=tool_payload)
     if tool_name == "session":
-        if is_explicit_multi_step_tool_request(message):
+        if not _llm_requested_terminal_render(tool_payload):
             return ""
         return render_direct_tool_text(tool_name, tool_result, tool_payload=tool_payload)
     if tool_name == "spawn_subagent":
+        if not _llm_requested_terminal_render(tool_payload):
+            return ""
         return render_direct_tool_text(tool_name, tool_result, tool_payload=tool_payload)
     return ""
 
@@ -117,6 +129,17 @@ def render_direct_session_text(
         session = tool_result.get("session")
         if not isinstance(session, dict):
             return ""
+        if (
+            action == "show"
+            and not str((tool_payload or {}).get("session_id") or "").strip()
+            and bool(session.get("is_current"))
+        ):
+            current_summary = _render_current_session_summary(session)
+            if current_summary:
+                return current_summary
+        if isinstance(tool_result.get("transition"), dict):
+            session = dict(session)
+            session["transition"] = dict(tool_result["transition"])
         return _render_session_record_text(action, session)
     if action != "list":
         return ""
@@ -127,31 +150,71 @@ def render_direct_session_text(
     heading = f"当前有 {count} 个可见会话。"
     if not items:
         return heading
+    current_session = tool_result.get("current_session")
+    if not isinstance(current_session, dict):
+        current_session = next(
+            (
+                item
+                for item in items
+                if isinstance(item, dict) and bool(item.get("is_current"))
+            ),
+            None,
+        )
     lines = [heading]
+    current_summary = _render_current_session_summary(current_session)
+    if current_summary:
+        lines.extend(["", current_summary])
+    lines.extend(
+        [
+            "",
+            "| 序号 | 标题 | 状态 | 消息数 | 创建时间 | session_id |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+    )
     for index, item in enumerate(items[:5], start=1):
         if not isinstance(item, dict):
             continue
         title = _sanitize_session_catalog_text(
             str(item.get("session_title") or item.get("session_preview") or item.get("session_id") or "").strip()
         )
-        preview = _sanitize_session_catalog_text(str(item.get("session_preview") or "").strip())
+        if item.get("is_current"):
+            title = f"当前 · {title or str(item.get('session_id') or '').strip()}"
         session_id = str(item.get("session_id") or "").strip()
         state = str(item.get("state") or "").strip() or "unknown"
         message_count = int(item.get("message_count") or 0)
         created_at = _format_catalog_timestamp(str(item.get("created_at") or "").strip())
-        lines.append(f"{index}. 标题：{title or session_id or '未命名会话'}")
-        if preview and preview != title:
-            lines.append(f"详情：{preview}")
-        lines.append(f"状态：{state}")
-        lines.append(f"消息数：{message_count}")
-        if created_at:
-            lines.append(f"创建时间：{created_at}")
-        if session_id:
-            lines.append(f"session_id：{session_id}")
-        lines.append("")
+        lines.append(
+            "| {index} | {title} | {state} | {message_count} | {created_at} | {session_id} |".format(
+                index=index,
+                title=_session_table_cell(title or session_id or "未命名会话"),
+                state=_session_table_cell(state),
+                message_count=message_count,
+                created_at=_session_table_cell(created_at or "-"),
+                session_id=_session_table_cell(session_id or "-"),
+            )
+        )
     if count > 5:
+        lines.append("")
         lines.append(f"其余 {count - 5} 个会话请用 session.show 查看。")
     return "\n".join(line for line in lines if line is not None).strip()
+
+
+def _session_table_cell(value: str) -> str:
+    return value.replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _render_current_session_summary(session: dict[str, object] | None) -> str:
+    if not isinstance(session, dict):
+        return ""
+    session_id = str(session.get("session_id") or "").strip() or "-"
+    title = _sanitize_session_catalog_text(
+        str(session.get("session_title") or session.get("session_preview") or session_id).strip()
+    )
+    state = str(session.get("state") or "").strip() or "unknown"
+    message_count = int(session.get("message_count") or 0)
+    return (
+        f"当前会话：{title or session_id}（{state}，{message_count} 条，session_id：{session_id}）"
+    )
 
 
 def _render_session_record_text(action: str, session: dict[str, object]) -> str:
@@ -163,10 +226,21 @@ def _render_session_record_text(action: str, session: dict[str, object]) -> str:
     state = str(session.get("state") or "").strip() or "unknown"
     message_count = int(session.get("message_count") or 0)
     created_at = _format_catalog_timestamp(str(session.get("created_at") or "").strip())
+    transition = session.get("transition") if isinstance(session.get("transition"), dict) else None
     if action == "new":
         heading = "已切换到新会话"
     elif action == "resume":
-        heading = f"已切换到会话 `{session_id}`" if session_id else "已切换到已有会话"
+        same_session_noop = False
+        if transition is not None:
+            same_session_noop = (
+                str(transition.get("mode") or "").strip() == "noop_same_session"
+                or transition.get("binding_changed") is False
+            )
+        heading = (
+            f"当前已在会话 `{session_id}`"
+            if same_session_noop and session_id
+            else (f"已切换到会话 `{session_id}`" if session_id else "已切换到已有会话")
+        )
     else:
         heading = f"会话详情 `{session_id}`" if session_id else "会话详情"
     lines = [heading]
@@ -228,34 +302,49 @@ def _canonical_mcp_server_id(server_id: str) -> str:
     return server_id.strip().lower().replace("-", "_")
 
 
-def render_direct_tool_history_text(history: list["ToolExchange"]) -> str:
-    if len(history) != 3:
+def render_recovery_fragment(fragment: "ToolFollowupFragment" | None) -> str:
+    if fragment is None:
         return ""
-    first, second, third = history
-    if [first.tool_name, second.tool_name, third.tool_name] != ["time", "runtime", "mcp"]:
+    if getattr(fragment, "safe_for_fallback", True) is not True:
         return ""
-    if not _is_successful_tool_result(first.tool_result):
+    return _normalize_direct_rendered_text(getattr(fragment, "text", ""))
+
+
+def render_recovery_fragments_text(fragments: list["ToolFollowupFragment"]) -> str:
+    parts = [part for part in (render_recovery_fragment(item) for item in fragments) if part]
+    if not parts:
         return ""
-    if not _is_successful_tool_result(second.tool_result):
-        return ""
-    if not _is_successful_tool_result(third.tool_result):
-        return ""
-    if str(second.tool_result.get("action") or second.tool_payload.get("action") or "").strip() != "context_status":
-        return ""
-    if str(third.tool_result.get("action") or third.tool_payload.get("action") or "").strip() != "list":
-        return ""
-    time_text = render_direct_tool_text("time", first.tool_result, tool_payload=first.tool_payload)
-    runtime_text = render_runtime_context_status_text(second.tool_result)
-    mcp_text = render_direct_tool_text("mcp", third.tool_result, tool_payload=third.tool_payload)
-    round_trip_text = "本次请求共发生 3 次模型请求和 3 次工具调用，属于多次模型/工具往返。"
-    parts = [item for item in [time_text, runtime_text, mcp_text, round_trip_text] if item]
     return "\n\n".join(parts)
 
 
-def _is_successful_tool_result(tool_result: object) -> bool:
-    if not isinstance(tool_result, dict):
+def is_partial_fragment_aggregation(
+    fragments: list["ToolFollowupFragment"],
+    text: str,
+) -> bool:
+    parts = [part for part in (render_recovery_fragment(item) for item in fragments) if part]
+    if len(parts) < 2:
         return False
-    return tool_result.get("ok") is not False and tool_result.get("is_error") is not True
+    normalized_text = _normalize_direct_rendered_text(text)
+    if not normalized_text:
+        return False
+    full_text = _normalize_direct_rendered_text("\n\n".join(parts))
+    if normalized_text == full_text:
+        return False
+    full_mask = (1 << len(parts)) - 1
+    for mask in range(1, full_mask):
+        selected = [
+            parts[index]
+            for index in range(len(parts))
+            if mask & (1 << index)
+        ]
+        candidate = _normalize_direct_rendered_text("\n\n".join(selected))
+        if candidate == normalized_text:
+            return True
+    return False
+
+
+def _normalize_direct_rendered_text(text: str) -> str:
+    return "\n".join(line.strip() for line in str(text).strip().splitlines() if line.strip())
 
 
 def _sanitize_session_catalog_text(value: str) -> str:

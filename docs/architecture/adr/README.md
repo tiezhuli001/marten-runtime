@@ -16,7 +16,8 @@ Start here when you need the durable architecture baseline:
 1. [0001-thin-harness-boundary.md](./0001-thin-harness-boundary.md)
 2. [0002-progressive-disclosure-default-surface.md](./0002-progressive-disclosure-default-surface.md)
 3. [0003-self-improve-runtime-learning-not-architecture-memory.md](./0003-self-improve-runtime-learning-not-architecture-memory.md)
-4. [../../ARCHITECTURE_CHANGELOG.md](../../ARCHITECTURE_CHANGELOG.md)
+4. [0004-llm-first-tool-routing-boundary.md](./0004-llm-first-tool-routing-boundary.md)
+5. [../../ARCHITECTURE_CHANGELOG.md](../../ARCHITECTURE_CHANGELOG.md)
 
 ## Conventions
 

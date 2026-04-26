@@ -28,10 +28,22 @@ class ContextGovernanceRegressionTests(unittest.TestCase):
             system_prompt="You are marten-runtime.",
             session_messages=history,
             tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1"),
-            replay_limit=4,
+            replay_user_turns=4,
         )
 
         replay_texts = [item.content for item in context.conversation_messages]
+        self.assertEqual(
+            replay_texts,
+            [
+                "请始终用中文回复，不要修改 README。",
+                "收到。",
+                "先排查多 agent routing。",
+                "下一步：补 gateway 测试并打通 requested_agent_id。",
+                "最近决策：先补 gateway 测试，再改入站模型。",
+                "注意风险：不要把项目做成 orchestration 平台。",
+                "我会保持 harness-thin。",
+            ],
+        )
         self.assertNotIn(noisy_result, replay_texts)
         self.assertIn("不要修改 README", "\n".join(context.working_context.get("user_constraints", [])))
         self.assertIn("bootstrap_handlers", "\n".join(context.working_context.get("recent_results", [])))

@@ -1,5 +1,6 @@
 [runtime]
 mode = "rewrite-first"
+session_replay_user_turns = 8
 
 [server]
 host = "0.0.0.0"

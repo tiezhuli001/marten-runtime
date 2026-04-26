@@ -10,6 +10,8 @@ if TYPE_CHECKING:
 from marten_runtime.runtime.usage_models import NormalizedUsage, PreflightEstimate
 from marten_runtime.session.compaction_trigger import CompactionSettings
 
+RECENT_TOOL_OUTCOME_SUMMARY_LIMIT = 3
+
 
 def run_runtime_tool(
     payload: dict,
@@ -40,6 +42,18 @@ def _build_context_status(
     tool_context = tool_context or {}
     current_request = tool_context.get("current_request")
     compact_settings = tool_context.get("compact_settings")
+    compacted_context = tool_context.get("compacted_context")
+    replay_user_turns = _resolve_positive_int(
+        tool_context.get("session_replay_user_turns"),
+        default=8,
+    )
+    using_compacted_context = compacted_context is not None
+    checkpoint_trigger_kind = (
+        str(compacted_context.trigger_kind).strip()
+        if compacted_context is not None and compacted_context.trigger_kind
+        else None
+    )
+    pressure_checkpoint_active = _is_context_pressure_checkpoint(checkpoint_trigger_kind)
     request_estimate = _estimate_usage(current_request)
     resolved_settings = compact_settings if isinstance(compact_settings, CompactionSettings) else CompactionSettings()
     effective_window = resolved_settings.effective_window
@@ -82,14 +96,14 @@ def _build_context_status(
             compaction_status = "reactive-used"
         elif diagnostics.used_compacted_context and diagnostics.decision == "proactive":
             compaction_status = "proactive-used"
-        elif diagnostics.used_compacted_context:
+        elif diagnostics.used_compacted_context and pressure_checkpoint_active:
             compaction_status = "checkpoint-available"
         elif request_estimate.input_tokens_estimate >= diagnostics.proactive_threshold_tokens > 0:
             compaction_status = "advisory"
         elif request_estimate.input_tokens_estimate >= diagnostics.advisory_threshold_tokens > 0:
             compaction_status = "advisory"
-    checkpoint_state = "available" if latest_checkpoint_available else "none"
-    if checkpoint_state == "available" and compaction_status == "none":
+    checkpoint_state = "available" if latest_checkpoint_available or using_compacted_context else "none"
+    if checkpoint_state == "available" and compaction_status == "none" and pressure_checkpoint_active:
         compaction_status = "checkpoint-available"
     last_actual_usage = _normalize_usage(tool_context.get("latest_actual_usage"))
     previous_run = _find_latest_session_run_with_actual_usage(
@@ -134,6 +148,10 @@ def _build_context_status(
         ),
         "last_completed_run": last_completed_run,
         "usage_percent": usage_percent,
+        "replay_user_turns": replay_user_turns,
+        "recent_tool_outcome_summary_limit": RECENT_TOOL_OUTCOME_SUMMARY_LIMIT,
+        "using_compacted_context": using_compacted_context,
+        "checkpoint_trigger_kind": checkpoint_trigger_kind,
         "compaction_status": compaction_status,
         "latest_checkpoint": checkpoint_state,
         "summary": _build_summary(
@@ -142,6 +160,8 @@ def _build_context_status(
             estimated_usage=request_estimate.input_tokens_estimate,
             usage_percent=usage_percent,
             compaction_status=compaction_status,
+            using_compacted_context=using_compacted_context,
+            checkpoint_trigger_kind=checkpoint_trigger_kind,
             latest_checkpoint=checkpoint_state,
             estimator_kind=request_estimate.estimator_kind,
             degraded=request_estimate.degraded,
@@ -154,6 +174,14 @@ def _estimate_usage(current_request: Any) -> PreflightEstimate:
     if isinstance(current_request, LLMRequest):
         return estimate_request_usage(current_request)
     return PreflightEstimate(input_tokens_estimate=0, estimator_kind="rough", degraded=True)
+
+
+def _resolve_positive_int(value: Any, *, default: int) -> int:
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError):
+        return default
+    return resolved if resolved > 0 else default
 
 
 def _normalize_usage(value: Any) -> NormalizedUsage | None:
@@ -195,22 +223,18 @@ def _build_summary(
     estimated_usage: int,
     usage_percent: int,
     compaction_status: str,
+    using_compacted_context: bool,
+    checkpoint_trigger_kind: str | None,
     latest_checkpoint: str,
     estimator_kind: str,
     degraded: bool,
     current_run: dict[str, Any],
 ) -> str:
-    checkpoint_text = "，已有压缩检查点" if latest_checkpoint == "available" else ""
-    if compaction_status == "proactive-used":
-        status_text = "本轮已主动压缩"
-    elif compaction_status == "reactive-used":
-        status_text = "本轮已触发重试压缩"
-    elif compaction_status == "checkpoint-available":
-        status_text = "已有可复用压缩检查点"
-    elif compaction_status == "advisory":
-        status_text = "上下文接近压缩建议线"
-    else:
-        status_text = "上下文状态稳定"
+    status_text = _render_compaction_status(
+        compaction_status,
+        using_compacted_context=using_compacted_context,
+        checkpoint_trigger_kind=checkpoint_trigger_kind,
+    )
     estimate_text = (
         f"当前 rough fallback 估算占用 {estimated_usage}/{effective_window} tokens（{usage_percent}%）"
         if degraded
@@ -242,7 +266,7 @@ def _build_summary(
             f"本轮首发请求约 {initial_tokens} tokens，本轮峰值输入上下文约 {peak_tokens} tokens。"
         )
     return (
-        f"{estimate_text}，原始窗口 {context_window}，{status_text}{checkpoint_text}。{run_pressure_text}"
+        f"{estimate_text}，原始窗口 {context_window}，{status_text}。{run_pressure_text}"
     )
 
 
@@ -279,6 +303,12 @@ def annotate_runtime_context_status_peak(
         estimated_usage=int(result.get("estimated_usage") or 0),
         usage_percent=int(result.get("usage_percent") or 0),
         compaction_status=str(result.get("compaction_status") or "none"),
+        using_compacted_context=bool(result.get("using_compacted_context", False)),
+        checkpoint_trigger_kind=(
+            str(result.get("checkpoint_trigger_kind")).strip()
+            if result.get("checkpoint_trigger_kind") is not None
+            else None
+        ),
         latest_checkpoint=str(result.get("latest_checkpoint") or "none"),
         estimator_kind=str(result.get("estimate_source") or "rough"),
         degraded=bool((result.get("next_request_estimate") or {}).get("degraded", False)),
@@ -295,6 +325,7 @@ def render_runtime_context_status_text(result: dict[str, Any]) -> str:
     effective_window = int(
         next_request.get("effective_window_tokens") or result.get("effective_window") or 0
     )
+    context_window = int(next_request.get("context_window_tokens") or result.get("context_window") or 0)
     raw_usage_percent = result.get("usage_percent")
     usage_percent = (
         int(raw_usage_percent)
@@ -307,22 +338,61 @@ def render_runtime_context_status_text(result: dict[str, Any]) -> str:
         if degraded
         else f"{estimated_usage} tokens（约 {usage_percent}% / {effective_window}）"
     )
+    using_compacted_context = bool(result.get("using_compacted_context", False))
+    checkpoint_trigger_kind = (
+        str(result.get("checkpoint_trigger_kind")).strip()
+        if result.get("checkpoint_trigger_kind") is not None
+        else None
+    )
     lines = [
         "当前上下文使用详情",
         f"- 当前会话下一次请求预计带入 {estimate_label}。",
-        "- 这个数字按当前会话历史重放估算；切换会话后会按目标会话重新计算。",
-        f"- 压缩状态：{_render_compaction_status(str(result.get('compaction_status') or 'none'))}。",
+        f"- 有效窗口：{effective_window} tokens（原始窗口 {context_window}）。",
+        (
+            f"- 压缩状态："
+            f"{_render_compaction_status(str(result.get('compaction_status') or 'none'), using_compacted_context=using_compacted_context, checkpoint_trigger_kind=checkpoint_trigger_kind)}。"
+        ),
     ]
     return "\n".join(lines)
 
 
-def _render_compaction_status(status: str) -> str:
+def _render_compaction_status(
+    status: str,
+    *,
+    using_compacted_context: bool = False,
+    checkpoint_trigger_kind: str | None = None,
+) -> str:
     if status == "proactive-used":
         return "本轮已主动压缩"
     if status == "reactive-used":
         return "本轮已触发重试压缩"
     if status == "checkpoint-available":
-        return "已有可复用压缩检查点"
+        if not _is_context_pressure_checkpoint(checkpoint_trigger_kind):
+            return "稳定"
+        return _render_checkpoint_reuse_status(
+            using_compacted_context=using_compacted_context,
+            checkpoint_trigger_kind=checkpoint_trigger_kind,
+        )
     if status == "advisory":
         return "已接近压缩建议线"
     return "稳定"
+
+
+def _render_checkpoint_reuse_status(
+    *,
+    using_compacted_context: bool,
+    checkpoint_trigger_kind: str | None,
+) -> str:
+    if isinstance(checkpoint_trigger_kind, str) and checkpoint_trigger_kind.startswith(
+        "context_pressure"
+    ):
+        if using_compacted_context:
+            return "当前请求正在复用上下文压缩检查点"
+        return "已有可复用上下文压缩检查点"
+    return "稳定"
+
+
+def _is_context_pressure_checkpoint(checkpoint_trigger_kind: str | None) -> bool:
+    return isinstance(checkpoint_trigger_kind, str) and checkpoint_trigger_kind.startswith(
+        "context_pressure"
+    )

@@ -10,6 +10,8 @@ from marten_runtime.gateway.ingress import ingest_message
 from marten_runtime.gateway.models import InboundEnvelope
 from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
+from marten_runtime.session.models import SessionMessage
+from marten_runtime.session.store import SessionStore
 from tests.http_app_support import build_test_app
 
 
@@ -106,6 +108,150 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(run_payload["attempted_providers"], ["test-demo"])
         self.assertEqual(run_payload["provider_ref"], "test-demo")
         self.assertEqual(run_payload["final_provider_ref"], "test-demo")
+        self.assertEqual(run_payload["finalization"]["assessment"], "accepted")
+        self.assertEqual(run_payload["finalization"]["request_kind"], "interactive")
+        self.assertEqual(run_payload["finalization"]["required_evidence_count"], 0)
+        self.assertFalse(run_payload["finalization"]["retry_triggered"])
+
+    def test_http_messages_endpoint_isolates_same_conversation_by_user(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        scripted = ScriptedLLMClient(
+            [
+                LLMReply(final_text="alice answer"),
+                LLMReply(final_text="bob answer"),
+            ]
+        )
+        runtime.runtime_loop.llm = scripted
+        runtime.llm_client_factory.cache_client("openai_gpt5", scripted)
+        runtime.llm_client_factory.cache_client("minimax_m25", scripted)
+        runtime.llm_client_factory.cache_client("kimi_k2", scripted)
+
+        with TestClient(app) as client:
+            alice = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "alice",
+                    "conversation_id": "shared-conv",
+                    "message_id": "msg-shared-alice",
+                    "body": "alice secret",
+                },
+            )
+            bob = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "bob",
+                    "conversation_id": "shared-conv",
+                    "message_id": "msg-shared-bob",
+                    "body": "bob asks",
+                },
+            )
+
+        self.assertEqual(alice.status_code, 200)
+        self.assertEqual(bob.status_code, 200)
+        self.assertEqual(len(scripted.requests), 2)
+        bob_history = [
+            item.content for item in scripted.requests[1].conversation_messages
+        ]
+        self.assertNotIn("alice secret", bob_history)
+        self.assertNotIn("alice answer", bob_history)
+        alice_session = runtime.session_store.get(alice.json()["session_id"])
+        bob_session = runtime.session_store.get(bob.json()["session_id"])
+        self.assertNotEqual(alice_session.session_id, bob_session.session_id)
+        self.assertEqual(alice_session.user_id, "alice")
+        self.assertEqual(bob_session.user_id, "bob")
+
+    def test_http_messages_endpoint_keeps_single_tool_direct_render_finalization_state(
+        self,
+    ) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        scripted = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="time",
+                    tool_payload={"timezone": "UTC", "finalize_response": True},
+                )
+            ]
+        )
+        runtime.runtime_loop.llm = scripted
+        runtime.llm_client_factory.cache_client("openai_gpt5", scripted)
+        runtime.llm_client_factory.cache_client("minimax_m25", scripted)
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "conv-http-direct-render",
+                    "message_id": "msg-http-direct-render-1",
+                    "body": "告诉我 UTC 时间",
+                },
+            )
+            run_id = response.json()["events"][-1]["run_id"]
+            run_diag = client.get(f"/diagnostics/run/{run_id}").json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("现在是UTC", response.json()["events"][-1]["payload"]["text"])
+        self.assertEqual(run_diag["llm_request_count"], 1)
+        self.assertEqual(run_diag["finalization"]["assessment"], "accepted")
+        self.assertEqual(run_diag["finalization"]["request_kind"], "interactive")
+        self.assertEqual(run_diag["finalization"]["required_evidence_count"], 1)
+
+    def test_http_messages_endpoint_passes_current_user_message_in_sqlite_history_to_runtime(
+        self,
+    ) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        captured_session_messages: list[SessionMessage] = []
+
+        def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
+            captured_session_messages.extend(kwargs.get("session_messages") or [])
+            return [
+                OutboundEvent(
+                    session_id=session_id,
+                    run_id="run_history_current_turn",
+                    event_id="evt_history_current_turn_progress",
+                    event_type="progress",
+                    sequence=1,
+                    trace_id=trace_id or "trace_missing",
+                    payload={"text": "running"},
+                    created_at=datetime.now(timezone.utc),
+                ),
+                OutboundEvent(
+                    session_id=session_id,
+                    run_id="run_history_current_turn",
+                    event_id="evt_history_current_turn_final",
+                    event_type="final",
+                    sequence=2,
+                    trace_id=trace_id or "trace_missing",
+                    payload={"text": "ok"},
+                    created_at=datetime.now(timezone.utc),
+                ),
+            ]
+
+        runtime.runtime_loop.run = fake_run  # type: ignore[method-assign]
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "conv-history-current-turn",
+                    "message_id": "msg-history-current-turn",
+                    "body": "当前这轮用户消息",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [item.content for item in captured_session_messages if item.role == "user"],
+            ["当前这轮用户消息"],
+        )
 
     def test_feishu_session_history_preserves_ingress_and_enqueue_timestamps_for_queued_turns(self) -> None:
         app = build_test_app()
@@ -532,8 +678,11 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(old_followup.status_code, 200)
         self.assertEqual(current_followup.status_code, 200)
         self.assertNotEqual(current_session_id, old_session_id)
+        self.assertEqual(resumed.json()["session_id"], current_session_id)
+        self.assertEqual(resumed.json()["active_session_id"], old_session_id)
         self.assertNotEqual(old_followup.json()["session_id"], old_session_id)
         self.assertEqual(current_followup.json()["session_id"], old_session_id)
+        self.assertEqual(current_followup.json()["active_session_id"], old_session_id)
         self.assertEqual(old_followup.json()["events"][-1]["payload"]["text"], "from old")
         self.assertEqual(current_followup.json()["events"][-1]["payload"]["text"], "from current")
         self.assertEqual(resumed_session.status_code, 200)
@@ -543,6 +692,63 @@ class GatewayTests(unittest.TestCase):
         self.assertIn("from current", resumed_history)
         self.assertNotIn("from old", resumed_history)
         self.assertIn("from old", old_new_history)
+
+    def test_http_session_switch_restores_source_timestamps_with_memory_store(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+        runtime.session_store = SessionStore()
+        source = runtime.session_store.create(
+            session_id="sess_memory_switch",
+            conversation_id="conv-memory-switch",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+        )
+        runtime.session_store.set_catalog_metadata(
+            source.session_id,
+            user_id="demo",
+            agent_id="main",
+            session_title="memory switch",
+            session_preview="memory switch preview",
+        )
+        previous_user = SessionMessage.user(
+            "历史任务",
+            created_at=datetime(2026, 4, 21, 9, 0, tzinfo=timezone.utc),
+        )
+        previous_assistant = SessionMessage.assistant(
+            "历史结果",
+            created_at=datetime(2026, 4, 21, 9, 1, tzinfo=timezone.utc),
+        )
+        runtime.session_store.append_message(source.session_id, previous_user)
+        runtime.session_store.append_message(source.session_id, previous_assistant)
+        switch_llm = ScriptedLLMClient(
+            [LLMReply(tool_name="session", tool_payload={"action": "new"})]
+        )
+        runtime.runtime_loop.llm = switch_llm
+        runtime.llm_client_factory.cache_client("openai_gpt5", switch_llm)
+        runtime.llm_client_factory.cache_client("minimax_m25", switch_llm)
+        runtime.llm_client_factory.cache_client("kimi_k2", switch_llm)
+
+        with TestClient(app) as client:
+            switched = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": source.conversation_id,
+                    "message_id": "msg-memory-switch-1",
+                    "body": "切换到新会话",
+                },
+            )
+
+        self.assertEqual(switched.status_code, 200)
+        reloaded_source = runtime.session_store.get(source.session_id)
+        self.assertNotIn(
+            "切换到新会话",
+            [item.content for item in reloaded_source.history if item.role == "user"],
+        )
+        self.assertEqual(reloaded_source.updated_at, previous_assistant.created_at)
+        self.assertEqual(reloaded_source.last_event_at, previous_assistant.created_at)
 
     def test_feishu_messages_endpoint_strips_feishu_card_protocol_before_persisting_history(self) -> None:
         app = build_test_app()
@@ -598,7 +804,10 @@ class GatewayTests(unittest.TestCase):
         self.assertIsNotNone(session)
         assert session is not None
         self.assertEqual(session.history[-1].role, "assistant")
-        self.assertEqual(session.history[-1].content, "该仓库最近一次提交是 main。")
+        self.assertEqual(
+            session.history[-1].content,
+            "该仓库最近一次提交是 main。\n\n1 条结果\n\n- main",
+        )
         self.assertNotIn("```feishu_card", session.history[-1].content)
 
     def test_feishu_messages_endpoint_strips_feishu_card_protocol_from_channel_payload_text(self) -> None:
@@ -653,10 +862,250 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         final_event = payload["events"][-1]
-        self.assertEqual(final_event["payload"]["text"], "该仓库最近一次提交是 main。")
+        self.assertEqual(
+            final_event["payload"]["text"],
+            "该仓库最近一次提交是 main。\n\n1 条结果\n\n- main",
+        )
         self.assertNotIn("```feishu_card", final_event["payload"]["text"])
         self.assertIn("card", final_event["payload"])
         self.assertEqual(final_event["payload"]["card"]["header"]["title"]["content"], "处理结果")
+
+    def test_feishu_messages_endpoint_strips_trailing_followup_offer_from_payload_and_history(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+
+        def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
+            return [
+                OutboundEvent(
+                    session_id=session_id,
+                    run_id="run_feishu_followup_strip",
+                    event_id="evt_feishu_followup_strip_progress",
+                    event_type="progress",
+                    sequence=1,
+                    trace_id=trace_id or "trace_missing",
+                    payload={"text": "running"},
+                    created_at=datetime.now(timezone.utc),
+                ),
+                OutboundEvent(
+                    session_id=session_id,
+                    run_id="run_feishu_followup_strip",
+                    event_id="evt_feishu_followup_strip_final",
+                    event_type="final",
+                    sequence=2,
+                    trace_id=trace_id or "trace_missing",
+                    payload={
+                        "text": (
+                            "最近一次提交时间是：`2026-04-17T09:55:00Z`\n\n"
+                            "如果你需要，我也可以继续帮你换算成北京时间。"
+                        )
+                    },
+                    created_at=datetime.now(timezone.utc),
+                ),
+            ]
+
+        runtime.runtime_loop.run = fake_run  # type: ignore[method-assign]
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "feishu",
+                    "user_id": "demo",
+                    "conversation_id": "conv-feishu-followup-strip",
+                    "message_id": "msg-feishu-followup-strip-1",
+                    "body": "hello",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        final_event = payload["events"][-1]
+        self.assertEqual(final_event["payload"]["text"], "最近一次提交时间是：`2026-04-17T09:55:00Z`")
+        self.assertIn("card", final_event["payload"])
+        session = app.state.runtime.session_store.get(payload["session_id"])
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.history[-1].content, "最近一次提交时间是：`2026-04-17T09:55:00Z`")
+
+    def test_feishu_terminal_durable_text_stays_aligned_across_response_event_and_history(self) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+
+        def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
+            return [
+                OutboundEvent(
+                    session_id=session_id,
+                    run_id="run_feishu_terminal_visible_text",
+                    event_id="evt_feishu_terminal_visible_text_progress",
+                    event_type="progress",
+                    sequence=1,
+                    trace_id=trace_id or "trace_missing",
+                    payload={"text": "running"},
+                    created_at=datetime.now(timezone.utc),
+                ),
+                OutboundEvent(
+                    session_id=session_id,
+                    run_id="run_feishu_terminal_visible_text",
+                    event_id="evt_feishu_terminal_visible_text_final",
+                    event_type="final",
+                    sequence=2,
+                    trace_id=trace_id or "trace_missing",
+                    payload={
+                        "text": (
+                            "该仓库最近一次提交是 main。\n\n"
+                            "```feishu_card\n"
+                            '{"title":"处理结果","summary":"1 条结果","sections":[{"items":["main"]}]}\n'
+                            "```"
+                        )
+                    },
+                    created_at=datetime.now(timezone.utc),
+                ),
+            ]
+
+        runtime.runtime_loop.run = fake_run  # type: ignore[method-assign]
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "feishu",
+                    "user_id": "demo",
+                    "conversation_id": "conv-feishu-visible-text-align",
+                    "message_id": "msg-feishu-visible-text-align-1",
+                    "body": "hello",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        final_event = payload["events"][-1]
+        expected_durable_text = "该仓库最近一次提交是 main。\n\n1 条结果\n\n- main"
+        self.assertEqual(payload["result"], expected_durable_text)
+        self.assertEqual(payload["final_text"], expected_durable_text)
+        self.assertEqual(payload["text"], expected_durable_text)
+        self.assertEqual(final_event["payload"]["text"], expected_durable_text)
+        session = app.state.runtime.session_store.get(payload["session_id"])
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.history[-1].content, expected_durable_text)
+        self.assertEqual(
+            final_event["payload"]["card"]["header"]["title"]["content"],
+            "处理结果",
+        )
+
+    def test_feishu_messages_endpoint_keeps_plain_xml_like_trailing_line_in_response_payload_and_history(
+        self,
+    ) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+
+        def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
+            return [
+                OutboundEvent(
+                    session_id=session_id,
+                    run_id="run_feishu_plain_xml_tail",
+                    event_id="evt_feishu_plain_xml_tail_progress",
+                    event_type="progress",
+                    sequence=1,
+                    trace_id=trace_id or "trace_missing",
+                    payload={"text": "running"},
+                    created_at=datetime.now(timezone.utc),
+                ),
+                OutboundEvent(
+                    session_id=session_id,
+                    run_id="run_feishu_plain_xml_tail",
+                    event_id="evt_feishu_plain_xml_tail_final",
+                    event_type="final",
+                    sequence=2,
+                    trace_id=trace_id or "trace_missing",
+                    payload={"text": "XML 示例：\n</invoke>"},
+                    created_at=datetime.now(timezone.utc),
+                ),
+            ]
+
+        runtime.runtime_loop.run = fake_run  # type: ignore[method-assign]
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "feishu",
+                    "user_id": "demo",
+                    "conversation_id": "conv-feishu-plain-xml-tail",
+                    "message_id": "msg-feishu-plain-xml-tail-1",
+                    "body": "hello",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        final_event = payload["events"][-1]
+        expected_visible_text = "XML 示例：\n</invoke>"
+        self.assertEqual(payload["result"], expected_visible_text)
+        self.assertEqual(payload["final_text"], expected_visible_text)
+        self.assertEqual(payload["text"], expected_visible_text)
+        self.assertEqual(final_event["payload"]["text"], expected_visible_text)
+        session = app.state.runtime.session_store.get(payload["session_id"])
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.history[-1].content, expected_visible_text)
+
+    def test_feishu_error_terminal_durable_text_stays_aligned_across_response_event_and_history(
+        self,
+    ) -> None:
+        app = build_test_app()
+        runtime = app.state.runtime
+
+        def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
+            return [
+                OutboundEvent(
+                    session_id=session_id,
+                    run_id="run_feishu_error_visible_text",
+                    event_id="evt_feishu_error_visible_text_error",
+                    event_type="error",
+                    sequence=1,
+                    trace_id=trace_id or "trace_missing",
+                    payload={
+                        "code": "provider_error",
+                        "text": (
+                            "处理失败。\n\n"
+                            "```feishu_card\n"
+                            '{"title":"失败详情","summary":"1 条错误","sections":[{"items":["provider_error"]}]}\n'
+                            "```"
+                        ),
+                    },
+                    created_at=datetime.now(timezone.utc),
+                ),
+            ]
+
+        runtime.runtime_loop.run = fake_run  # type: ignore[method-assign]
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "feishu",
+                    "user_id": "demo",
+                    "conversation_id": "conv-feishu-error-visible-text",
+                    "message_id": "msg-feishu-error-visible-text-1",
+                    "body": "hello",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        final_event = payload["events"][-1]
+        expected_durable_text = "处理失败。\n\n1 条错误\n\n- provider_error"
+        self.assertEqual(payload["result"], expected_durable_text)
+        self.assertEqual(payload["final_text"], expected_durable_text)
+        self.assertEqual(payload["text"], expected_durable_text)
+        self.assertEqual(final_event["payload"]["text"], expected_durable_text)
+        self.assertEqual(payload["error_code"], "provider_error")
+        self.assertEqual(final_event["payload"]["card"]["header"]["title"]["content"], "失败详情")
+        session = app.state.runtime.session_store.get(payload["session_id"])
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.history[-1].content, expected_durable_text)
 
     def test_feishu_messages_endpoint_strips_malformed_feishu_card_block_before_persisting_history(self) -> None:
         app = build_test_app()

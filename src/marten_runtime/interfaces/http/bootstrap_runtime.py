@@ -67,6 +67,7 @@ from marten_runtime.self_improve.recorder import SelfImproveRecorder
 from marten_runtime.self_improve.review_dispatcher import SelfImproveReviewDispatcher
 from marten_runtime.self_improve.service import SelfImproveService, make_default_judge
 from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
+from marten_runtime.session.compaction_worker import SessionCompactionWorker
 from marten_runtime.session.store import SessionStore
 from marten_runtime.skills.service import SkillService
 from marten_runtime.subagents.service import SubagentService
@@ -122,6 +123,15 @@ class CachedLLMClientFactory:
         self._cache[resolved_name] = client
         return client
 
+    def create_isolated(self, profile_name: str | None) -> object:
+        resolved_name, profile = resolve_model_profile(self.models_config, profile_name)
+        return build_llm_client(
+            profile_name=resolved_name,
+            profile=profile,
+            providers_config=self.providers_config,
+            env=self.env,
+        )
+
 
 @dataclass
 class HTTPRuntimeState:
@@ -161,6 +171,8 @@ class HTTPRuntimeState:
     llm_client_factory: CachedLLMClientFactory
     langfuse_observer: LangfuseObserver
     trace_index: TraceIndex = field(default_factory=dict)
+    latest_session_transition: dict[str, object] | None = None
+    compaction_worker: SessionCompactionWorker | None = None
 
 
 def default_repo_root() -> Path:
@@ -217,6 +229,7 @@ def build_http_runtime(
     automation_store, self_improve_store, session_store = build_stateful_stores(
         resolved_repo_root
     )
+    session_store.reset_running_compaction_jobs()
     memory_service = ThinMemoryService(resolved_repo_root / "data" / "memory")
     default_profile_name, default_profile = resolve_model_profile(
         models_config, default_agent.model_profile
@@ -321,6 +334,12 @@ def build_http_runtime(
         llm_client_factory=llm_client_factory,
         langfuse_observer=langfuse_observer,
     )
+    state.compaction_worker = SessionCompactionWorker(
+        session_store=session_store,
+        llm_client_factory=llm_client_factory,
+        profile_name=default_profile_name,
+    )
+    state.compaction_worker.start()
     register_family_tools(state, capability_declarations)
     from marten_runtime.interfaces.http.bootstrap_handlers import (
         _process_inbound_envelope,
@@ -334,6 +353,7 @@ def build_http_runtime(
         delivery_client=feishu_delivery,
         lane_manager=state.lane_manager,
         run_history=state.run_history,
+        after_runtime_delivery=lambda body: state.subagent_service.release_deferred_background_starts(),
     )
     return state
 

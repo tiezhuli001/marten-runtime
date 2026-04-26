@@ -61,6 +61,11 @@ def create_app(
             yield
         finally:
             try:
+                if getattr(runtime, "compaction_worker", None) is not None:
+                    runtime.compaction_worker.stop()
+            except Exception as exc:
+                logger.warning("compaction_worker.stop failed: %s", exc, exc_info=True)
+            try:
                 runtime.subagent_service.shutdown()
             except Exception as exc:
                 logger.warning("subagent_service.shutdown failed: %s", exc, exc_info=True)
@@ -139,6 +144,7 @@ def create_app(
         try:
             response = _process_inbound_envelope(runtime, envelope)
             _bind_queue_observation_to_response(runtime, response, lease)
+            runtime.subagent_service.release_deferred_background_starts()
             return response
         finally:
             runtime.lane_manager.release(
@@ -153,7 +159,9 @@ def create_app(
             dispatch = build_manual_automation_dispatch(runtime, automation_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="AUTOMATION_NOT_FOUND") from exc
-        return _process_automation_dispatch(runtime, dispatch)
+        response = _process_automation_dispatch(runtime, dispatch)
+        runtime.subagent_service.release_deferred_background_starts()
+        return response
 
     @app.get("/automations")
     def list_automations() -> dict[str, object]:

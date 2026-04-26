@@ -5,7 +5,7 @@ import math
 import os
 import re
 from collections.abc import Callable, Mapping
-from typing import Protocol
+from typing import Literal, Protocol
 
 import httpx
 
@@ -22,6 +22,25 @@ from marten_runtime.runtime.tool_episode_summary_prompt import (
     extract_tool_episode_summary_block,
 )
 from marten_runtime.tools.registry import ToolSnapshot
+
+
+class FinalizationEvidenceItem(BaseModel):
+    ordinal: int
+    tool_name: str
+    tool_action: str | None = None
+    payload_summary: str | None = None
+    result_summary: str
+    required_for_user_request: bool = True
+    evidence_source: Literal["tool_result", "loop_meta"] = "tool_result"
+
+
+class FinalizationEvidenceLedger(BaseModel):
+    user_message: str
+    tool_call_count: int
+    model_request_count: int | None = None
+    requires_result_coverage: bool = False
+    requires_round_trip_report: bool = False
+    items: list[FinalizationEvidenceItem] = Field(default_factory=list)
 
 
 class LLMRequest(BaseModel):
@@ -58,6 +77,8 @@ class LLMRequest(BaseModel):
     requested_tool_name: str | None = None
     requested_tool_payload: dict = Field(default_factory=dict)
     request_kind: str = "conversation"
+    finalization_evidence_ledger: FinalizationEvidenceLedger | None = None
+    invalid_final_text: str | None = None
     summary_input_text: str | None = None
     timeout_seconds_override: float | None = None
     cooperative_stop_event: object | None = None
@@ -72,10 +93,23 @@ class LLMReply(BaseModel):
     usage: object | None = None
 
 
+class ToolFollowupFragment(BaseModel):
+    text: str
+    source: Literal["tool_result", "loop_meta"]
+    tool_name: str | None = None
+    safe_for_fallback: bool = True
+
+
+class ToolFollowupRender(BaseModel):
+    terminal_text: str | None = None
+    recovery_fragment: ToolFollowupFragment | None = None
+
+
 class ToolExchange(BaseModel):
     tool_name: str
     tool_payload: dict = Field(default_factory=dict)
     tool_result: dict = Field(default_factory=dict)
+    recovery_fragment: ToolFollowupFragment | None = None
 
 
 class ConversationMessage(BaseModel):

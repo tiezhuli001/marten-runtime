@@ -5,6 +5,8 @@ from unittest.mock import patch
 from marten_runtime.channels.feishu.delivery import FeishuDeliveryClient, FeishuDeliveryPayload
 from marten_runtime.channels.feishu.rendering import (
     FeishuCardProtocol,
+    normalize_feishu_durable_text,
+    normalize_feishu_visible_text,
     parse_feishu_card_protocol,
     render_final_reply_card,
 )
@@ -178,6 +180,87 @@ class FeishuRenderingTests(unittest.TestCase):
         self.assertEqual(protocol.title, "工具状态")
         self.assertEqual(protocol.summary, "共 3 项")
 
+    def test_normalize_feishu_visible_text_strips_trailing_fence_residue_after_protocol_parse(self) -> None:
+        text = (
+            "处理完成。\n\n"
+            "```feishu_card\n"
+            '{"title":"结果","summary":"1 条","sections":[{"items":["ok"]}]}\n'
+            "```\n```"
+        )
+
+        self.assertEqual(normalize_feishu_visible_text(text), "处理完成。")
+
+    def test_normalize_feishu_visible_text_strips_trailing_invoke_residue_after_protocol_parse(self) -> None:
+        text = (
+            "处理完成。\n\n"
+            "<invoke name=\"feishu_card\">\n"
+            "<parameter name=\"title\">结果</parameter>\n"
+            "<parameter name=\"summary\">1 条</parameter>\n"
+            "<parameter name=\"sections\">[{\"items\": [\"ok\"]}]</parameter>\n"
+            "</invoke>\n"
+            "</minimax:tool_call>"
+        )
+
+        self.assertEqual(normalize_feishu_visible_text(text), "处理完成。")
+
+    def test_normalize_feishu_visible_text_keeps_plain_xml_like_trailing_line_without_protocol_context(
+        self,
+    ) -> None:
+        text = "XML 示例：\n</invoke>"
+        self.assertEqual(normalize_feishu_visible_text(text), text)
+
+    def test_normalize_feishu_durable_text_preserves_protocol_summary_and_sections(self) -> None:
+        text = (
+            "处理完成。\n\n"
+            "```feishu_card\n"
+            '{"title":"结果","summary":"共 2 项","sections":[{"title":"详情","items":["builtin 正常","mcp 正常"]}]}\n'
+            "```"
+        )
+
+        self.assertEqual(
+            normalize_feishu_durable_text(text),
+            "处理完成。\n\n共 2 项\n\n详情\n- builtin 正常\n- mcp 正常",
+        )
+
+    def test_normalize_feishu_durable_text_preserves_provider_invoke_detail(self) -> None:
+        text = (
+            "已完成检查。\n\n"
+            "<invoke name=\"feishu_card\">\n"
+            "<parameter name=\"title\">检查结果</parameter>\n"
+            "<parameter name=\"summary\">共 2 项</parameter>\n"
+            "<parameter name=\"sections\">[{\"title\": \"详情\", \"items\": [\"builtin 正常\", \"mcp 正常\"]}]</parameter>\n"
+            "</invoke>\n"
+            "</minimax:tool_call>"
+        )
+
+        self.assertEqual(
+            normalize_feishu_durable_text(text),
+            "已完成检查。\n\n共 2 项\n\n详情\n- builtin 正常\n- mcp 正常",
+        )
+
+    def test_normalize_feishu_durable_text_keeps_plain_non_protocol_text(self) -> None:
+        text = "最近一次提交时间是：`2026-04-17T09:55:00Z`"
+        self.assertEqual(normalize_feishu_durable_text(text), text)
+
+    def test_parse_feishu_card_protocol_strips_trailing_followup_offer_from_visible_text(self) -> None:
+        visible, protocol = parse_feishu_card_protocol(
+            "最近一次提交时间是：`2026-04-17T09:55:00Z`\n\n"
+            "如果你需要，我也可以继续帮你换算成北京时间。"
+        )
+
+        self.assertEqual(visible, "最近一次提交时间是：`2026-04-17T09:55:00Z`")
+        self.assertIsNone(protocol)
+
+    def test_render_final_reply_card_strips_trailing_followup_offer(self) -> None:
+        card = render_final_reply_card(
+            "最近一次提交时间是：`2026-04-17T09:55:00Z`\n\n"
+            "如果你需要，我也可以继续帮你换算成北京时间。"
+        )
+
+        elements = card["body"]["elements"]
+        self.assertEqual(elements[0]["content"], "最近一次提交时间是：`2026-04-17T09:55:00Z`")
+        self.assertEqual(card["header"]["title"]["content"], "仓库最近提交")
+
     def test_parse_feishu_card_protocol_accepts_inline_trailing_protocol_json(self) -> None:
         visible, protocol = parse_feishu_card_protocol(
             "当前共有 **3 个定时任务**，都是 GitHub 热门仓库推送：\n\n"
@@ -348,8 +431,8 @@ class FeishuRenderingTests(unittest.TestCase):
         card = render_final_reply_card(
             "当前上下文使用详情\n"
             "- 当前会话下一次请求预计带入 3673 tokens（约 2% / 184000）。\n"
-            "- 这个数字按当前会话历史重放估算；切换会话后会按目标会话重新计算。\n"
-            "- 压缩状态：已有可复用压缩检查点。"
+            "- 有效窗口：184000 tokens（原始窗口 200000）。\n"
+            "- 压缩状态：稳定。"
         )
 
         self.assertEqual(card["header"]["title"]["content"], "当前上下文使用详情")
@@ -361,7 +444,7 @@ class FeishuRenderingTests(unittest.TestCase):
         card = render_final_reply_card(
             "当前上下文使用详情\n"
             "- 当前会话下一次请求预计带入 3838 tokens（约 2% / 184000）。\n"
-            "- 这个数字按当前会话历史重放估算；切换会话后会按目标会话重新计算。\n"
+            "- 有效窗口：184000 tokens（原始窗口 200000）。\n"
             "- 压缩状态：稳定。"
         )
 
@@ -430,7 +513,7 @@ class FeishuRenderingTests(unittest.TestCase):
         card = render_final_reply_card(
             "当前上下文使用详情\n"
             "- 当前会话下一次请求预计带入 3838 tokens（约 2% / 184000）。\n"
-            "- 这个数字按当前会话历史重放估算；切换会话后会按目标会话重新计算。\n"
+            "- 有效窗口：184000 tokens（原始窗口 200000）。\n"
             "- 压缩状态：稳定。",
             usage_summary={
                 "input_tokens": 3198,
@@ -450,7 +533,7 @@ class FeishuRenderingTests(unittest.TestCase):
             "现在是北京时间 2026年4月20日 10:20\n\n"
             "当前上下文使用详情\n"
             "- 当前会话下一次请求预计带入 5707 tokens（约 3% / 184000）。\n"
-            "- 这个数字按当前会话历史重放估算；切换会话后会按目标会话重新计算。\n"
+            "- 有效窗口：184000 tokens（原始窗口 200000）。\n"
             "- 压缩状态：稳定。\n\n"
             "当前可用 MCP 服务共 2 个。\n"
             "1. github（38 个工具，状态 discovered）\n"
@@ -468,8 +551,55 @@ class FeishuRenderingTests(unittest.TestCase):
             elements[4]["content"],
             "1. github（38 个工具，状态 discovered）\n2. github-trending（1 个工具，状态 configured）",
         )
-        self.assertEqual(elements[5]["tag"], "hr")
-        self.assertIn("本次请求共发生 3 次模型请求和 3 次工具调用", elements[6]["content"])
+
+    def test_render_final_reply_card_derives_session_catalog_title_from_markdown_table(self) -> None:
+        card = render_final_reply_card(
+            "当前有 2 个可见会话。\n\n"
+            "| 序号 | 标题 | 状态 | 消息数 | 创建时间 | session_id |\n"
+            "| --- | --- | --- | --- | --- | --- |\n"
+            "| 1 | 上下文窗口大小 | running | 24 | 2026-04-20 13:52:43 | sess_46500a92 |\n"
+            "| 2 | 切换到 sess_dcce8f9c 会话 | running | 2 | 2026-04-21 01:52:31 | sess_f8793b28 |"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "会话列表")
+        elements = card["body"]["elements"]
+        self.assertIn("| 序号 | 标题 | 状态 | 消息数 | 创建时间 | session_id |", elements[0]["content"])
+
+    def test_render_final_reply_card_keeps_multisection_order_when_list_section_contains_continuation_lines(
+        self,
+    ) -> None:
+        card = render_final_reply_card(
+            "已按你要求的顺序完成 3 次工具调用，链路如下。\n\n"
+            "1. 先调用 `time`\n"
+            "- 时区：`Asia/Shanghai`\n"
+            "- 当前时间：`2026-04-21T19:34:28.355765+08:00`\n\n"
+            "2. 再调用 `runtime` 查看 `context_status`\n"
+            "- 模型配置：`openai_gpt5`\n"
+            "- 上下文窗口：`200000`\n"
+            "- 有效窗口：`184000`\n\n"
+            "3. 最后调用 `mcp` 列出 github server 可用工具\n"
+            "- 发现了两个相关 server：\n"
+            "  - `github`\n"
+            "  - 状态：`discovered`\n"
+            "  - 工具数：`38`\n"
+            "  - 可用工具包括：\n"
+            "    `add_comment_to_pending_review`, `add_issue_comment`\n"
+            "  - `github_trending`\n"
+            "  - 状态：`configured`\n"
+            "  - 工具数：`1`\n"
+            "  - 工具：`trending_repositories`\n\n"
+            "中文总结\n"
+            "- 这次链路是严格串行执行的。\n"
+            "- 当前上下文状态稳定。"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "已按你要求的顺序完成 3 次工具调用")
+        elements = [element.get("content", "") for element in card["body"]["elements"]]
+        self.assertEqual(elements[0], "**📌 链路如下**")
+        self.assertIn("1. 先调用 `time`", elements[2])
+        self.assertIn("2. 再调用 `runtime` 查看 `context_status`", elements[4])
+        self.assertIn("3. 最后调用 `mcp` 列出 github server 可用工具", elements[6])
+        self.assertEqual(elements[7], "**🗂️ 中文总结**")
 
     def test_render_final_reply_card_uses_session_switch_title_and_appends_footer(self) -> None:
         card = render_final_reply_card(

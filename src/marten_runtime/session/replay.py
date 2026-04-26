@@ -7,34 +7,58 @@ def replay_session_messages(
     messages: list[SessionMessage],
     *,
     current_message: str | None = None,
-    limit: int = 6,
+    user_turns: int = 8,
+    message_count: int | None = None,
 ) -> list[SessionMessage]:
     replayable = [message for message in messages if message.role in {"user", "assistant"}]
     if replayable and current_message is not None:
         last = replayable[-1]
         if last.role == "user" and last.content == current_message:
             replayable = replayable[:-1]
-    if limit <= 0:
+    if isinstance(message_count, int):
+        if message_count <= 0:
+            return []
+        window = replayable[-message_count:]
+    else:
+        if user_turns <= 0:
+            return []
+        window = _recent_user_turn_window(replayable, user_turns)
+    if not window:
         return []
-    replay = _trim_noisy_tail(replayable, limit)
-    if len(replay) == limit and replay and replay[0].role == "assistant":
-        start_index = len(replayable) - len(replay)
-        if start_index > 0 and replayable[start_index - 1].role == "user":
-            replay = [replayable[start_index - 1], *replay[:-1]]
-    return replay
+    return _trim_noisy_tail(window, len(window))
+
+
+def _recent_user_turn_window(
+    messages: list[SessionMessage],
+    user_turns: int,
+) -> list[SessionMessage]:
+    if user_turns <= 0:
+        return []
+    selected_start: int | None = None
+    turns = 0
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].role != "user":
+            continue
+        turns += 1
+        selected_start = index
+        if turns >= user_turns:
+            break
+    if selected_start is None:
+        return []
+    return messages[selected_start:]
 
 
 def _trim_noisy_tail(messages: list[SessionMessage], limit: int) -> list[SessionMessage]:
     replay: list[SessionMessage] = []
-    skip_previous_user = False
+    skip_orphaned_user = False
     for message in reversed(messages):
-        if skip_previous_user and message.role == "user":
-            skip_previous_user = False
+        if skip_orphaned_user and message.role == "user":
+            skip_orphaned_user = False
             continue
         if message.role == "assistant" and _is_noisy_assistant_message(message.content):
-            skip_previous_user = True
+            skip_orphaned_user = not replay
             continue
-        skip_previous_user = False
+        skip_orphaned_user = False
         replay.append(message)
         if len(replay) >= limit:
             break
@@ -43,9 +67,14 @@ def _trim_noisy_tail(messages: list[SessionMessage], limit: int) -> list[Session
 
 def _is_noisy_assistant_message(content: str) -> bool:
     normalized = content.strip()
-    return (
-        len(normalized) > 240
-        or normalized.count("步骤;") >= 8
-        or normalized.count("\n") >= 8
-        or normalized.count("```") >= 2
-    )
+    if not normalized:
+        return False
+    if "工具执行日志" in normalized or "tool execution log" in normalized.lower():
+        return True
+    if normalized.count("步骤;") >= 8 and (
+        "工具执行" in normalized
+        or "结论:" in normalized
+        or "结论：" in normalized
+    ):
+        return True
+    return False

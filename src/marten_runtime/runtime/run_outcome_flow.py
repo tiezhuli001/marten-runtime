@@ -256,6 +256,8 @@ def _should_skip_post_turn_summary(latest: ToolExchange) -> bool:
         return True
     if latest.tool_name == "session" and action in {"list", "show", "new", "resume"}:
         return True
+    if latest.tool_name == "mcp" and action in {"list", "detail"}:
+        return True
     return False
 
 

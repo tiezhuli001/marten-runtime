@@ -52,7 +52,7 @@ class FlushFailingObserver(CountingObserver):
 class LangfuseBootstrapTests(unittest.TestCase):
     def test_build_http_runtime_attaches_noop_observer_without_langfuse_config(self) -> None:
         runtime = build_http_runtime(
-            env={"MINIMAX_API_KEY": "test-key"},
+            env={"MINIMAX_API_KEY": "test-key", "OPENAI_API_KEY": "test-key"},
             load_env_file=False,
         )
 
@@ -72,6 +72,7 @@ class LangfuseBootstrapTests(unittest.TestCase):
             runtime = build_http_runtime(
                 env={
                     "MINIMAX_API_KEY": "test-key",
+                    "OPENAI_API_KEY": "test-key",
                     "LANGFUSE_PUBLIC_KEY": "pk-test",
                     "LANGFUSE_SECRET_KEY": "sk-test",
                     "LANGFUSE_BASE_URL": "https://langfuse.example",
@@ -85,7 +86,7 @@ class LangfuseBootstrapTests(unittest.TestCase):
 
     def test_create_app_lifespan_flushes_and_shuts_down_langfuse_observer_once(self) -> None:
         app = create_app(
-            env={"MINIMAX_API_KEY": "test-key"},
+            env={"MINIMAX_API_KEY": "test-key", "OPENAI_API_KEY": "test-key"},
             load_env_file=False,
         )
         observer = CountingObserver(enabled=True, configured=True)
@@ -99,7 +100,7 @@ class LangfuseBootstrapTests(unittest.TestCase):
 
     def test_create_app_lifespan_continues_shutdown_when_langfuse_flush_raises(self) -> None:
         app = create_app(
-            env={"MINIMAX_API_KEY": "test-key"},
+            env={"MINIMAX_API_KEY": "test-key", "OPENAI_API_KEY": "test-key"},
             load_env_file=False,
         )
         observer = FlushFailingObserver(enabled=True, configured=True)

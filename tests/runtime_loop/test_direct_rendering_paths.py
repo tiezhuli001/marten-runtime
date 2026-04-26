@@ -9,8 +9,12 @@ from marten_runtime.agents.specs import AgentSpec
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.runtime.loop import RuntimeLoop
+from marten_runtime.runtime.usage_models import NormalizedUsage
+from marten_runtime.session.store import SessionStore
 from marten_runtime.self_improve.models import LessonCandidate, SystemLesson
 from marten_runtime.tools.builtins.automation_tool import run_automation_tool
+from marten_runtime.tools.builtins.runtime_tool import run_runtime_tool
+from marten_runtime.tools.builtins.session_tool import run_session_tool
 from marten_runtime.tools.builtins.self_improve_tool import (
     run_delete_lesson_candidate_tool,
     run_list_lesson_candidates_tool,
@@ -130,11 +134,16 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         self.assertEqual(events[0].run_id, events[1].run_id)
         self.assertEqual(events[1].payload["text"], "hello")
         self.assertEqual(llm.requests[0].available_tools, [])
+        self.assertIsNone(llm.requests[0].finalization_evidence_ledger)
 
         run = history.get(events[0].run_id)
         self.assertEqual(run.trace_id, "trace_plain")
         self.assertEqual(run.status, "succeeded")
         self.assertEqual(run.delivery_status, "final")
+        self.assertEqual(run.finalization.assessment, "accepted")
+        self.assertEqual(run.finalization.request_kind, "interactive")
+        self.assertEqual(run.finalization.required_evidence_count, 0)
+        self.assertFalse(run.finalization.retry_triggered)
         self.assertGreater(run.timings.llm_first_ms, 0)
         self.assertEqual(run.timings.tool_ms, 0)
         self.assertEqual(run.timings.llm_second_ms, 0)
@@ -181,6 +190,115 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         self.assertEqual(llm.requests[0].working_context["active_goal"], "current turn")
         run = history.get(history.list_runs()[0].run_id)
         self.assertEqual(run.context_snapshot_id, llm.requests[0].context_snapshot_id)
+
+    def test_runtime_rebinds_same_turn_followup_request_and_runtime_tool_after_session_resume(
+        self,
+    ) -> None:
+        store = SessionStore()
+        source = store.create(
+            session_id="sess_source",
+            conversation_id="conv-current",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+        )
+        target = store.create(
+            session_id="sess_target",
+            conversation_id="conv-target",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+        )
+        store.append_message(source.session_id, SessionMessage.user("source user"))
+        store.append_message(source.session_id, SessionMessage.assistant("source assistant"))
+        store.append_message(target.session_id, SessionMessage.user("target user"))
+        store.append_message(target.session_id, SessionMessage.assistant("target assistant"))
+
+        history = InMemoryRunHistory()
+        source_previous_run = history.start(
+            session_id=source.session_id,
+            trace_id="trace_source_previous",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        history.set_actual_usage(
+            source_previous_run.run_id,
+            NormalizedUsage(input_tokens=30, output_tokens=10, total_tokens=40),
+            stage="llm_first",
+        )
+        history.finish(source_previous_run.run_id, "final")
+        target_previous_run = history.start(
+            session_id=target.session_id,
+            trace_id="trace_target_previous",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        history.set_actual_usage(
+            target_previous_run.run_id,
+            NormalizedUsage(input_tokens=80, output_tokens=20, total_tokens=100),
+            stage="llm_first",
+        )
+        history.finish(target_previous_run.run_id, "final")
+
+        tools = ToolRegistry()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="session",
+                    tool_payload={"action": "resume", "session_id": target.session_id},
+                ),
+                LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
+                LLMReply(final_text="已切换并查看完成"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        tools.register(
+            "session",
+            lambda payload, *, tool_context=None, session_store=store: run_session_tool(
+                payload,
+                session_store=session_store,
+                tool_context=tool_context,
+            ),
+        )
+        tools.register(
+            "runtime",
+            lambda payload, *, tool_context=None, runtime_loop=runtime, run_history=history: run_runtime_tool(
+                payload,
+                tool_context=tool_context,
+                runtime_loop=runtime_loop,
+                run_history=run_history,
+            ),
+        )
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["session", "runtime"],
+        )
+
+        events = runtime.run(
+            session_id=source.session_id,
+            message=f"恢复到 {target.session_id} 后告诉我当前上下文窗口",
+            trace_id="trace_rebind_resume",
+            agent=agent,
+            channel_id="http",
+            conversation_id="conv-current",
+            session_messages=store.get(source.session_id).history,
+            session_store=store,
+        )
+
+        self.assertEqual(events[-1].event_type, "final")
+        self.assertEqual(llm.requests[1].session_id, target.session_id)
+        self.assertEqual(
+            [item.content for item in llm.requests[1].conversation_messages],
+            ["target user", "target assistant"],
+        )
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.tool_calls[1]["tool_name"], "runtime")
+        self.assertEqual(
+            run.tool_calls[1]["tool_result"]["last_completed_run"]["run_id"],
+            target_previous_run.run_id,
+        )
 
     def test_runtime_passes_skill_heads_and_activated_bodies_into_llm_request(
         self,
@@ -338,7 +456,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         self.assertEqual(len(run.tool_outcome_summaries), 1)
         self.assertTrue(run.tool_outcome_summaries[0].volatile)
 
-    def test_runtime_routes_spawn_subagent_result_back_through_followup_llm(
+    def test_runtime_direct_renders_spawn_subagent_acceptance_without_followup_llm(
         self,
     ) -> None:
         tools = ToolRegistry()
@@ -363,9 +481,9 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
                         "label": "child-task",
                         "tool_profile": "standard",
                         "notify_on_finish": True,
+                        "finalize_response": True,
                     },
                 ),
-                LLMReply(final_text="子代理已受理，正在后台执行。"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -384,9 +502,12 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         )
 
         run = history.get(events[-1].run_id)
-        self.assertEqual(events[-1].payload["text"], "子代理已受理，正在后台执行。")
-        self.assertEqual(len(llm.requests), 2)
-        self.assertEqual(run.llm_request_count, 2)
+        self.assertEqual(events[-1].payload["text"], "已受理，子 agent 正在后台执行，完成后会通知你结果。")
+        self.assertEqual(len(llm.requests), 1)
+        self.assertEqual(run.llm_request_count, 1)
+        self.assertEqual(run.finalization.assessment, "accepted")
+        self.assertEqual(run.finalization.request_kind, "interactive")
+        self.assertEqual(run.finalization.required_evidence_count, 1)
         self.assertEqual(run.tool_calls[0]["tool_name"], "spawn_subagent")
 
     def test_runtime_can_load_skill_body_via_skill_tool(self) -> None:

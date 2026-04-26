@@ -344,9 +344,59 @@ class FeishuDeliveryTests(unittest.TestCase):
                 "cumulative_input_tokens": 4510,
                 "cumulative_output_tokens": 143,
                 "cumulative_tokens": 4653,
+                "llm_request_count": 0,
                 "estimated_only": False,
             },
         )
+        self.assertEqual(payload.text, "done")
+        self.assertIsNone(payload.card)
+
+    def test_build_delivery_payload_preserves_precomputed_card_with_durable_text(self) -> None:
+        history = InMemoryRunHistory()
+        run = history.start(
+            session_id="sess_card_payload",
+            trace_id="trace_card_payload",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+
+        service = FeishuWebsocketService(
+            receipt_store=InMemoryReceiptStore(),
+            runtime_handler=lambda envelope: {"status": "accepted", "events": []},
+            delivery_client=FakeDeliveryClient(),
+            run_history=history,
+        )
+        event = FeishuInboundEvent(
+            event_id="evt_card_payload",
+            message_id="msg_card_payload",
+            chat_id="chat_card_payload",
+            user_id="user_card_payload",
+            text="hello",
+        )
+        envelope = to_inbound_envelope(event)
+
+        payload = service._build_delivery_payload(
+            event=event,
+            envelope=envelope,
+            event_payload={
+                "event_type": "final",
+                "event_id": "evt_final_card_payload",
+                "run_id": run.run_id,
+                "trace_id": run.trace_id,
+                "sequence": 1,
+                "payload": {
+                    "text": "持久化详情\n\n- builtin 正常\n- mcp 正常",
+                    "card": {
+                        "schema": "2.0",
+                        "header": {"title": {"content": "检查结果"}},
+                        "body": {"elements": [{"tag": "markdown", "content": "紧凑展示"}]},
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(payload.text, "持久化详情\n\n- builtin 正常\n- mcp 正常")
+        self.assertEqual(payload.card["header"]["title"]["content"], "检查结果")
 
     def test_build_delivery_payload_falls_back_to_preflight_usage_summary(self) -> None:
         history = InMemoryRunHistory()
@@ -492,6 +542,44 @@ class FeishuDeliveryTests(unittest.TestCase):
         self.assertEqual(error_card["header"]["template"], "red")
         self.assertEqual(error_card["body"]["elements"][0]["content"], "failed")
         self.assertEqual(sessions.active_count(), 0)
+
+    def test_final_delivery_prefers_precomputed_card_over_text_rerender(self) -> None:
+        transport = RecordingDeliveryTransport()
+        client = FeishuDeliveryClient(
+            env={
+                "FEISHU_APP_ID": "app-id",
+                "FEISHU_APP_SECRET": "app-secret",
+            },
+            transport=transport.post,
+            session_store=InMemoryFeishuDeliverySessionStore(),
+            enable_message_update=False,
+        )
+
+        with patch(
+            "marten_runtime.channels.feishu.delivery.feishu_rendering.render_final_reply_card",
+            side_effect=AssertionError("should not rerender when card is precomputed"),
+        ):
+            result = client.deliver(
+                FeishuDeliveryPayload(
+                    chat_id="chat_precomputed_card",
+                    event_type="final",
+                    event_id="evt_precomputed_card",
+                    run_id="run_precomputed_card",
+                    trace_id="trace_precomputed_card",
+                    sequence=1,
+                    text="持久化详情\n\n- builtin 正常\n- mcp 正常",
+                    card={
+                        "schema": "2.0",
+                        "header": {"title": {"content": "检查结果"}, "template": "indigo"},
+                        "body": {"elements": [{"tag": "markdown", "content": "紧凑展示"}]},
+                    },
+                )
+            )
+
+        self.assertTrue(result["ok"])
+        card = json.loads(transport.sent[0][2]["content"])
+        self.assertEqual(card["header"]["title"]["content"], "检查结果")
+        self.assertEqual(card["body"]["elements"][0]["content"], "紧凑展示")
 
     def test_hidden_progress_does_not_hit_transport_or_dead_letter(self) -> None:
         transport = FlakyDeliveryTransport({"progress": 3, "final": 4})
