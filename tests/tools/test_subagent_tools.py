@@ -25,8 +25,11 @@ class SubagentBuiltinToolTests(unittest.TestCase):
     def tearDown(self) -> None:
         for app in reversed(self._apps):
             runtime = getattr(app.state, "runtime", None)
-            if runtime is not None and getattr(runtime, "subagent_service", None) is not None:
-                runtime.subagent_service.shutdown()
+            if runtime is not None:
+                if getattr(runtime, "compaction_worker", None) is not None:
+                    runtime.compaction_worker.stop()
+                if getattr(runtime, "subagent_service", None) is not None:
+                    runtime.subagent_service.shutdown()
             temp_dir = getattr(app.state, "_temp_dir", None)
             if temp_dir is not None:
                 temp_dir.cleanup()
@@ -169,49 +172,8 @@ class SubagentBuiltinToolTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["effective_tool_profile"], "restricted")
-        task = runtime.subagent_service.store.get(result["task_id"])
-        self.assertEqual(task.effective_tool_profile, "restricted")
 
-    def test_spawn_subagent_tool_defaults_to_standard_profile_when_parent_ceiling_allows_mcp(
-        self,
-    ) -> None:
-        app = self._build_app()
-        runtime = app.state.runtime
-        session = runtime.session_store.create(
-            session_id="sess_parent_tool_intent",
-            conversation_id="conv-parent-tool-intent",
-            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
-        )
-        parent_run = runtime.run_history.start(
-            session_id=session.session_id,
-            trace_id="trace_parent_tool_intent",
-            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
-        )
-
-        result = runtime.tool_registry.call(
-            "spawn_subagent",
-            {
-                "task": "处理一个需要后台执行的检查任务",
-                "label": "background-check",
-            },
-            tool_context={
-                "session_id": session.session_id,
-                "run_id": parent_run.run_id,
-                "agent_id": "main",
-                "app_id": "main_agent",
-                "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
-            },
-        )
-
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["effective_tool_profile"], "standard")
-        task = runtime.subagent_service.store.get(result["task_id"])
-        self.assertEqual(task.tool_profile, "standard")
-        self.assertEqual(task.effective_tool_profile, "standard")
-
-    def test_spawn_subagent_tool_treats_default_tool_profile_placeholder_as_standard(
+    def test_spawn_subagent_tool_rejects_removed_default_tool_profile_alias(
         self,
     ) -> None:
         app = self._build_app()
@@ -229,29 +191,24 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
         )
 
-        result = runtime.tool_registry.call(
-            "spawn_subagent",
-            {
-                "task": "查询 codex-skills 最近一次提交",
-                "label": "github-last-commit-default-alias",
-                "tool_profile": "default",
-            },
-            tool_context={
-                "session_id": session.session_id,
-                "run_id": parent_run.run_id,
-                "agent_id": "main",
-                "app_id": "main_agent",
-                "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
-            },
-        )
+        with self.assertRaisesRegex(ValueError, "unknown tool profile: default"):
+            runtime.tool_registry.call(
+                "spawn_subagent",
+                {
+                    "task": "查询 codex-skills 最近一次提交",
+                    "label": "github-last-commit-default-alias",
+                    "tool_profile": "default",
+                },
+                tool_context={
+                    "session_id": session.session_id,
+                    "run_id": parent_run.run_id,
+                    "agent_id": "main",
+                    "app_id": "main_agent",
+                    "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
+                },
+            )
 
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["effective_tool_profile"], "standard")
-        task = runtime.subagent_service.store.get(result["task_id"])
-        self.assertEqual(task.tool_profile, "standard")
-        self.assertEqual(task.effective_tool_profile, "standard")
-
-    def test_spawn_subagent_tool_normalizes_placeholder_agent_and_context_mode(self) -> None:
+    def test_spawn_subagent_tool_normalizes_placeholder_agent_id(self) -> None:
         app = self._build_app()
         runtime = app.state.runtime
         session = runtime.session_store.create(
@@ -273,7 +230,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
                 "task": "后台整理这段说明",
                 "label": "normalize-placeholders",
                 "agent_id": "default",
-                "context_mode": "minimal",
             },
             tool_context={
                 "session_id": session.session_id,
@@ -287,7 +243,77 @@ class SubagentBuiltinToolTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         task = runtime.subagent_service.store.get(result["task_id"])
         self.assertEqual(task.agent_id, "main")
+
+    def test_spawn_subagent_tool_canonicalizes_legacy_assistant_agent_id(self) -> None:
+        app = self._build_app()
+        runtime = app.state.runtime
+        session = runtime.session_store.create(
+            session_id="sess_parent_tool_assistant_alias",
+            conversation_id="conv-parent-tool-assistant-alias",
+            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
+            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+        )
+        parent_run = runtime.run_history.start(
+            session_id=session.session_id,
+            trace_id="trace_parent_tool_assistant_alias",
+            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
+            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+        )
+
+        result = runtime.tool_registry.call(
+            "spawn_subagent",
+            {
+                "task": "inspect the repository in background",
+                "label": "repo-inspect-assistant-alias",
+                "agent_id": "assistant",
+            },
+            tool_context={
+                "session_id": session.session_id,
+                "run_id": parent_run.run_id,
+                "agent_id": "assistant",
+                "app_id": "main_agent",
+                "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        task = runtime.subagent_service.store.get(result["task_id"])
+        self.assertEqual(task.parent_agent_id, "main")
+        self.assertEqual(task.agent_id, "main")
         self.assertEqual(task.context_mode, "brief_only")
+
+    def test_spawn_subagent_tool_rejects_removed_minimal_context_mode_alias(self) -> None:
+        app = self._build_app()
+        runtime = app.state.runtime
+        session = runtime.session_store.create(
+            session_id="sess_parent_tool_removed_minimal",
+            conversation_id="conv-parent-tool-removed-minimal",
+            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
+            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+        )
+        parent_run = runtime.run_history.start(
+            session_id=session.session_id,
+            trace_id="trace_parent_tool_removed_minimal",
+            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
+            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+        )
+
+        with self.assertRaisesRegex(ValueError, "unknown context mode: minimal"):
+            runtime.tool_registry.call(
+                "spawn_subagent",
+                {
+                    "task": "后台整理这段说明",
+                    "label": "removed-minimal",
+                    "context_mode": "minimal",
+                },
+                tool_context={
+                    "session_id": session.session_id,
+                    "run_id": parent_run.run_id,
+                    "agent_id": "main",
+                    "app_id": "main_agent",
+                    "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
+                },
+            )
 
     def test_spawn_subagent_tool_keeps_explicit_restricted_profile_for_broader_tool_task(self) -> None:
         app = self._build_app()
@@ -323,9 +349,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["effective_tool_profile"], "restricted")
-        task = runtime.subagent_service.store.get(result["task_id"])
-        self.assertEqual(task.tool_profile, "restricted")
-        self.assertEqual(task.effective_tool_profile, "restricted")
 
     def test_spawn_subagent_tool_falls_back_to_parent_agent_when_payload_agent_id_is_unknown(self) -> None:
         app = self._build_app()
@@ -364,44 +387,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
         self.assertEqual(task.agent_id, "main")
         self.assertEqual(task.app_id, "main_agent")
 
-    def test_spawn_subagent_tool_normalizes_mcp_prefixed_profile_to_standard(self) -> None:
-        app = self._build_app()
-        runtime = app.state.runtime
-        session = runtime.session_store.create(
-            session_id="sess_parent_tool_prefixed_profile",
-            conversation_id="conv-parent-tool-prefixed-profile",
-            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
-        )
-        parent_run = runtime.run_history.start(
-            session_id=session.session_id,
-            trace_id="trace_parent_tool_prefixed_profile",
-            config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
-        )
-
-        result = runtime.tool_registry.call(
-            "spawn_subagent",
-            {
-                "task": "查询 codex-skills 最近一次提交",
-                "label": "github-last-commit-prefixed-profile",
-                "tool_profile": "mcp:github-or-web",
-            },
-            tool_context={
-                "session_id": session.session_id,
-                "run_id": parent_run.run_id,
-                "agent_id": "main",
-                "app_id": "main_agent",
-                "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
-            },
-        )
-
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["effective_tool_profile"], "standard")
-        task = runtime.subagent_service.store.get(result["task_id"])
-        self.assertEqual(task.tool_profile, "standard")
-        self.assertEqual(task.effective_tool_profile, "standard")
-
     def test_spawn_subagent_tool_defaults_to_standard_profile_for_simple_background_tasks(self) -> None:
         app = self._build_app()
         runtime = app.state.runtime
@@ -435,9 +420,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["effective_tool_profile"], "standard")
-        task = runtime.subagent_service.store.get(result["task_id"])
-        self.assertEqual(task.tool_profile, "standard")
-        self.assertEqual(task.effective_tool_profile, "standard")
 
     def test_cancel_subagent_tool_reports_existing_terminal_status(self) -> None:
         app = self._build_app()

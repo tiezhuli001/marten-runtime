@@ -2,6 +2,8 @@ import hashlib
 import json
 
 from pydantic import BaseModel, Field
+
+from marten_runtime.agents.ids import canonicalize_runtime_agent_id
 from marten_runtime.automation.skill_ids import canonicalize_automation_skill_id
 
 
@@ -29,6 +31,7 @@ class AutomationJob(BaseModel):
     schedule_value: str = Field(default="", exclude=True)
 
     def model_post_init(self, __context: object) -> None:
+        self.agent_id = canonicalize_runtime_agent_id(self.agent_id, default="main") or "main"
         self.skill_id = canonicalize_automation_skill_id(self.skill_id)
         if not self.name:
             self.name = self.automation_id

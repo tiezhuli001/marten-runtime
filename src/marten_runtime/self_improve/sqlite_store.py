@@ -6,6 +6,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from marten_runtime.apps.runtime_defaults import DEFAULT_AGENT_ID
 from marten_runtime.self_improve.models import (
     FailureEvent,
     LessonCandidate,
@@ -693,6 +694,22 @@ class SQLiteSelfImproveStore:
                 )
                 """
             )
+            for table in (
+                "runtime_failure_events",
+                "runtime_recovery_events",
+                "lesson_candidates",
+                "system_lessons",
+                "review_triggers",
+                "skill_candidates",
+            ):
+                conn.execute(
+                    f"""
+                    UPDATE {table}
+                    SET agent_id = ?
+                    WHERE LOWER(TRIM(COALESCE(agent_id, ''))) = 'assistant'
+                    """,
+                    (DEFAULT_AGENT_ID,),
+                )
 
     def _row_to_failure(self, row: tuple[object, ...]) -> FailureEvent:
         return FailureEvent(

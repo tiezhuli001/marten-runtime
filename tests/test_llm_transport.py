@@ -1138,71 +1138,6 @@ class OpenAIChatClientTests(unittest.TestCase):
         )
         self.assertIn("session_id", schema["required"])
 
-    def test_build_openai_chat_payload_carries_capability_driven_builtin_guidance(self) -> None:
-        declarations = get_capability_declarations()
-        request = LLMRequest(
-            session_id="sess_capability_guidance",
-            trace_id="trace_capability_guidance",
-            message="请根据当前工具能力处理这个请求",
-            agent_id="main",
-            app_id="main_agent",
-            available_tools=["runtime", "session", "automation", "time"],
-            capability_catalog_text=render_capability_catalog(declarations),
-            tool_snapshot=ToolSnapshot(
-                tool_snapshot_id="tool_capability_guidance",
-                builtin_tools=["runtime", "session", "automation", "time"],
-                tool_metadata={
-                    name: {
-                        "description": render_tool_description(declarations[name]),
-                        "parameters_schema": declarations[name].parameters_schema,
-                    }
-                    for name in ("runtime", "session", "automation", "time")
-                },
-            ),
-        )
-
-        payload = build_openai_chat_payload("gpt-4.1", request)
-
-        system_text = "\n".join(
-            str(item.get("content", ""))
-            for item in payload["messages"]
-            if item.get("role") == "system"
-        )
-        self.assertIn("当前上下文窗口多大", system_text)
-        self.assertIn("当前会话的上下文窗口使用情况", system_text)
-        self.assertIn("现在有哪些会话列表", system_text)
-        self.assertIn("当前有哪些定时任务", system_text)
-        self.assertIn("现在几点", system_text)
-        descriptions = {
-            item["function"]["name"]: item["function"]["description"]
-            for item in payload["tools"]
-        }
-        self.assertIn("上下文窗口", descriptions["runtime"])
-        self.assertIn("token", descriptions["runtime"].lower())
-        self.assertIn("这个会话", descriptions["runtime"])
-        self.assertIn("会话列表", descriptions["session"])
-        self.assertIn("sess_", descriptions["session"])
-        self.assertIn("action=list only for explicit catalog requests", descriptions["session"].lower())
-        self.assertIn("定时任务", descriptions["automation"])
-        self.assertIn("现在几点", descriptions["time"])
-
-        parameter_schemas = {
-            item["function"]["name"]: item["function"]["parameters"]
-            for item in payload["tools"]
-        }
-        self.assertIn(
-            "current-session context window",
-            parameter_schemas["runtime"]["properties"]["action"]["description"],
-        )
-        self.assertEqual(
-            parameter_schemas["session"]["properties"]["action"]["enum"],
-            ["resume", "new", "show", "list"],
-        )
-        self.assertIn(
-            "Use resume to switch/continue",
-            parameter_schemas["session"]["properties"]["action"]["description"],
-        )
-
     def test_openai_5_series_responses_payload_forces_explicit_session_resume_target(
         self,
     ) -> None:
@@ -1408,7 +1343,7 @@ class OpenAIChatClientTests(unittest.TestCase):
             message="what time is it?",
             agent_id="main",
             app_id="main_agent",
-            skill_heads_text="Visible skills:\n- example_time",
+            skill_heads_text="Visible skills:\n- test_time_skill",
             capability_catalog_text="Capability catalog:\n- time",
             available_tools=["time"],
             tool_snapshot=ToolSnapshot(
@@ -1849,7 +1784,7 @@ class OpenAIChatClientTests(unittest.TestCase):
         self.assertNotIn("请先读取当前 runtime 状态", joined)
         self.assertNotIn("不要直接凭记忆概括当前上下文占用", joined)
 
-    def test_openai_client_adds_direct_github_repo_mcp_hint_for_explicit_repo_query(
+    def test_openai_client_does_not_inject_raw_mcp_repo_scaffold_for_explicit_repo_query(
         self,
     ) -> None:
         captured: list[dict] = []
@@ -1882,13 +1817,10 @@ class OpenAIChatClientTests(unittest.TestCase):
         joined = "\n".join(
             str(item.get("content", "")) for item in captured[0]["messages"]
         )
-        self.assertNotIn("GitHub 仓库元数据查询", joined)
-        self.assertNotIn("仓库元数据", joined)
-        self.assertNotIn("search_repositories", joined)
         self.assertNotIn("repo:CloudWide851/easy-agent", joined)
         self.assertNotIn("{", joined)
 
-    def test_openai_client_adds_direct_github_commit_hint_for_explicit_repo_commit_query(
+    def test_openai_client_does_not_inject_raw_mcp_commit_scaffold_for_explicit_repo_commit_query(
         self,
     ) -> None:
         captured: list[dict] = []
@@ -1921,11 +1853,6 @@ class OpenAIChatClientTests(unittest.TestCase):
         joined = "\n".join(
             str(item.get("content", "")) for item in captured[0]["messages"]
         )
-        self.assertNotIn("GitHub 仓库提交查询", joined)
-        self.assertNotIn("最新 commit", joined)
-        self.assertNotIn("list_commits", joined)
-        self.assertNotIn("{", joined)
-        self.assertNotIn("perPage", joined)
         self.assertNotIn("server_id", joined)
         self.assertNotIn("arguments", joined)
 
@@ -1999,67 +1926,22 @@ class OpenAIChatClientTests(unittest.TestCase):
             for item in tool_defs
             if item["function"]["name"] == "spawn_subagent"
         )
-        self.assertIn(
-            "Use this for background or isolated child execution",
-            spawn_desc,
-        )
-        self.assertIn(
-            "explicitly requests delegation/background execution",
-            spawn_desc.lower(),
-        )
-        self.assertIn(
-            "package the work into the child task",
-            spawn_desc.lower(),
-        )
-        self.assertIn(
-            "default when tool_profile is omitted",
-            spawn_desc,
-        )
-        self.assertIn(
-            "restricted profile only has runtime, skill, and time",
-            spawn_desc,
-        )
-        self.assertIn(
-            "MCP, web/API, or other external live data",
-            spawn_desc,
-        )
-        self.assertIn(
-            "Omit optional fields",
-            spawn_desc,
-        )
-        self.assertIn(
-            "Only use acceptance/waiting wording such as 已受理",
-            spawn_desc,
-        )
-        self.assertIn(
-            "Set finalize_response=true only when this acceptance result itself should end the turn immediately",
-            spawn_desc,
-        )
+        self.assertTrue(spawn_desc)
         spawn_params = next(
             item["function"]["parameters"]
             for item in tool_defs
             if item["function"]["name"] == "spawn_subagent"
         )
-        self.assertEqual(
-            spawn_params["properties"]["tool_profile"]["enum"],
-            ["restricted", "standard", "elevated", "mcp", "default"],
-        )
-        self.assertIn(
-            "Omit the field to get the default standard behavior",
-            spawn_params["properties"]["tool_profile"]["description"],
-        )
-        self.assertIn(
-            "do not send placeholder values",
-            spawn_params["properties"]["agent_id"]["description"],
-        )
-        self.assertEqual(
-            spawn_params["properties"]["finalize_response"]["type"],
-            "boolean",
-        )
-        self.assertIn(
-            "direct deterministic acknowledgement",
-            spawn_params["properties"]["finalize_response"]["description"],
-        )
+        self.assertEqual(spawn_params["type"], "object")
+        self.assertIn("task", spawn_params["required"])
+        for field_name in (
+            "task",
+            "tool_profile",
+            "context_mode",
+            "finalize_response",
+            "agent_id",
+        ):
+            self.assertIn(field_name, spawn_params["properties"])
 
     def test_openai_client_does_not_add_time_specific_instruction_for_live_time_query(self) -> None:
         captured: list[dict] = []

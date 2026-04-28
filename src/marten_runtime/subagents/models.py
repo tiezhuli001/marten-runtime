@@ -5,6 +5,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from marten_runtime.agents.ids import canonicalize_runtime_agent_id
+
 
 SUBAGENT_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "timed_out"}
 
@@ -34,3 +36,9 @@ class SubagentTask(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+    def model_post_init(self, __context: object) -> None:
+        self.parent_agent_id = (
+            canonicalize_runtime_agent_id(self.parent_agent_id, default="main") or "main"
+        )
+        self.agent_id = canonicalize_runtime_agent_id(self.agent_id, default="main") or "main"

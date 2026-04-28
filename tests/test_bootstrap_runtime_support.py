@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from marten_runtime.automation.store import AutomationStore
+from marten_runtime.automation.sqlite_store import SQLiteAutomationStore
 from marten_runtime.interfaces.http.bootstrap_runtime_support import (
     ensure_self_improve_automation,
     has_feishu_credentials,
@@ -11,17 +11,18 @@ from marten_runtime.interfaces.http.bootstrap_runtime_support import (
 
 class BootstrapRuntimeSupportTests(unittest.TestCase):
     def test_ensure_self_improve_automation_is_present_and_idempotent(self) -> None:
-        store = AutomationStore()
+        with TemporaryDirectory() as tmpdir:
+            store = SQLiteAutomationStore(Path(tmpdir) / "automations.sqlite3")
 
-        ensure_self_improve_automation(store)
-        first = store.get("self_improve_internal")
-        ensure_self_improve_automation(store)
-        second = store.get("self_improve_internal")
+            ensure_self_improve_automation(store)
+            first = store.get("self_improve_internal")
+            ensure_self_improve_automation(store)
+            second = store.get("self_improve_internal")
 
-        self.assertEqual(first.automation_id, "self_improve_internal")
-        self.assertTrue(first.internal)
-        self.assertEqual(second.semantic_fingerprint, first.semantic_fingerprint)
-        self.assertEqual(len(store.list_all()), 1)
+            self.assertEqual(first.automation_id, "self_improve_internal")
+            self.assertTrue(first.internal)
+            self.assertEqual(second.semantic_fingerprint, first.semantic_fingerprint)
+            self.assertEqual(len(store.list_all()), 1)
 
     def test_has_feishu_credentials_requires_both_app_id_and_secret(self) -> None:
         self.assertFalse(has_feishu_credentials({}))

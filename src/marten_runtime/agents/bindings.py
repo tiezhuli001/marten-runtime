@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from marten_runtime.agents.ids import canonicalize_runtime_agent_id
 from marten_runtime.gateway.models import InboundEnvelope
 
 
@@ -12,6 +13,9 @@ class AgentBinding(BaseModel):
     user_id: str | None = None
     mention_required: bool = False
     default: bool = False
+
+    def model_post_init(self, __context: object) -> None:
+        self.agent_id = canonicalize_runtime_agent_id(self.agent_id, default="main") or "main"
 
     def matches(self, envelope: InboundEnvelope) -> bool:
         if self.channel_id and self.channel_id != envelope.channel_id:

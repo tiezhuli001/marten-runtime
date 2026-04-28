@@ -6,7 +6,7 @@ from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.session.compacted_context import CompactedContext
 from marten_runtime.session.models import SessionMessage
-from marten_runtime.session.store import SessionStore
+from tests.support.session_store_fixtures import temporary_sqlite_session_store
 from marten_runtime.tools.registry import ToolRegistry
 
 
@@ -36,10 +36,13 @@ class _SubagentFakeLangfuseClient:
 
 
 class SubagentRuntimeLoopIntegrationTests(unittest.TestCase):
+    def _session_store(self):
+        return self.enterContext(temporary_sqlite_session_store())
+
     def _build_service_with_runtime(self):
         from marten_runtime.subagents.service import SubagentService
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -74,7 +77,7 @@ class SubagentRuntimeLoopIntegrationTests(unittest.TestCase):
     def _build_service_with_mcp_child(self):
         from marten_runtime.subagents.service import SubagentService
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         parent = session_store.create(
             session_id="sess_parent_mcp",
             conversation_id="conv-parent-mcp",

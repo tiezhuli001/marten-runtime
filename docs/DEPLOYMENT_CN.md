@@ -137,6 +137,8 @@ curl -sS http://127.0.0.1:8000/messages \
 - JSON 里有 `session_id`
 - 最后一个 event 里有 `run_id`
 
+如果要把这次请求路由到非默认 agent，就在同一个 JSON payload 里补 `requested_agent_id`。
+
 如果还想再确认一步，可以打开：
 
 ```bash
@@ -513,9 +515,9 @@ curl -sS http://127.0.0.1:8000/diagnostics/runtime
 当前部署层面的真实情况是：
 
 - runtime 主链已经适合进入部署准备
-- durable session persistence 仍然明确 pending
-- 同进程内的 conversation continuity 已可用
-- 跨重启 durable session continuity 还不是当前基线
+- durable SQLite session persistence 已经进入基线
+- 跨重启 session continuity 通过 bounded restore、session binding 持久化和 persisted compaction jobs 生效
+- 会话切换继续保持显式控制面：`session.new` / `session.resume`，source session compaction 可以在后台完成
 
 这意味着当前最简单的部署形态是：
 

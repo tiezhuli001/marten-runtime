@@ -2,7 +2,7 @@
 
 <div align="center">
 
-面向自托管场景的 simplified openclaw-style agent runtime harness，聚焦 `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel` 主链。
+面向自托管场景的 simplified openclaw-style agent runtime harness，聚焦 `channel -> binding -> runtime loop -> builtin tool / MCP / skill -> delivery / diagnostics` 主链。
 
 [English](./README.md) · [文档索引](./docs/README.md) · [部署指南](./docs/DEPLOYMENT_CN.md) · [架构演进](./docs/ARCHITECTURE_EVOLUTION_CN.md) · [架构时间线](./docs/ARCHITECTURE_CHANGELOG.md) · [ADR 索引](./docs/architecture/adr/README.md) · [配置面说明](./docs/CONFIG_SURFACES.md)
 
@@ -30,7 +30,7 @@
 
 当前唯一优先的链路是：
 
-`channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel`
+`channel -> binding -> runtime loop -> builtin tool / MCP / skill -> delivery / diagnostics`
 
 如果一个改动不能直接增强这条链路，它就不应该排到高优先级。
 
@@ -49,12 +49,11 @@
 ```mermaid
 flowchart LR
     A["HTTP / Feishu 消息"] --> B["Gateway + Binding"]
-    B --> C["Agent Router"]
-    C --> D["Runtime Context Assembly"]
-    D --> E["LLM"]
-    E -->|"tool call"| F["MCP / Builtin Tool"]
-    F --> E
-    E --> G["Channel Delivery"]
+    B --> C["Runtime Context Assembly"]
+    C --> D["Runtime Loop / LLM"]
+    D -->|"tool call"| E["Builtin Tool / MCP / Skill"]
+    E --> D
+    D --> F["Delivery + Diagnostics"]
 ```
 
 ## Current Scope
@@ -64,15 +63,15 @@ flowchart LR
 - 多主 agent 私有配置加载与稳定路由优先级
 - HTTP 入站 `requested_agent_id` 已能真实命中选中的 agent
 - selected agent 身份已真实下沉到 LLM request
+- selected agent 的 app manifest / bootstrap 已能在运行时切换
+- selected agent 的 model profile 已能通过 `config/agents.toml` 切换
 - runtime context assembly 已具备受治理 replay、working context 压缩和长对话回归测试
+- durable SQLite session persistence 已进入 baseline，并支持跨重启有界 restore
+- `session.new` / `session.resume` 已成为显式会话切换控制面
+- thin file-backed memory 已作为受限 continuity slice 接入
 - skills first-class runtime integration
 - provider retry/backoff resilience
-
-当前仍然明确 deferred：
-
-- 薄 per-agent model-profile 动态切换
-- per-agent app manifest / bootstrap prompt 切换
-- durable session persistence
+- profile-level provider failover 已由 `provider_ref` 和 `fallback_profiles` 驱动
 
 同样明确暂不做：
 
@@ -86,7 +85,7 @@ flowchart LR
 
 - 一个通过聊天注册的 GitHub 热门仓库日报路径
 - 该路径要求已经配置 GitHub MCP，且 MCP 至少提供 `search_repositories` 这类 repo discovery 能力
-- 业务逻辑仍放在 skill 中，平台只补一层很薄的 automation bridge
+- 业务逻辑仍放在 skill 中，runtime 只保留收敛的 builtin tool / store 边界
 - 自动任务查询能力保持收敛：模型侧只暴露 `automation` family tool；operator 侧保留 `GET /automations`
 - 自动任务增删改停恢复同样保持收敛，只通过 builtin tools 完成，不额外引入本地 automation MCP
 - 这不代表仓库正在扩成通用 proactive jobs / workflow 平台
@@ -95,11 +94,18 @@ flowchart LR
 
 最近一轮 MVP 收敛更新：
 
+- 默认 runtime app 已切到 `main_agent`，prompt 姿态同步收敛到 execution-first 主代理
+- selected-agent app/profile 切换已进入真实 runtime 路径
+- session persistence 已标准化到 SQLite，并补齐 `session.new` / `session.resume`
+- provider 配置已拆分为 `config/providers.toml` 与 `config/models.toml`，failover 由 `provider_ref` / `fallback_profiles` 驱动
+- 运行时已移除 legacy routable `assistant` alias，runtime agent id 统一 canonical 到 `main`
 - GitHub 热榜已收敛到 repo-local MCP sidecar：`github_trending.trending_repositories`
 - 已从 active 代码、测试、automation 数据中移除 legacy `github_hot_repos_digest` skill 面
 - 历史 `github_hot_repos_digest` automation 记录已不再属于当前受支持的运行时输入；当前受支持 automation 数据均已 canonical 到 `github_trending_digest`
 - GitHub 热榜 Feishu 卡片现在会明确说明“按 GitHub Trending 页面顺序”，且不会重复展示抓取时间
 - 自动任务 `automation` family tool 统一承载 `register/list/detail/update/delete/pause/resume`
+- 自动任务 CRUD 与展示已直接回到 runtime-owned store 边界
+- self-improve 管理面也已回到 direct store-backed runtime ownership
 - 保持 `LLM + agent + skill + MCP first`，没有为 GitHub 热榜增加 runtime 业务特判
 - 增加会话级 conversation lanes，同一 `channel_id + conversation_id` 的 HTTP `/messages` 和 Feishu interactive turn 会按 FIFO 串行处理
 - 增强 provider resilience，对 `429`、`502`、`503`、`504` 做 retryable 归一化，并输出稳定的 provider-specific error code
@@ -167,6 +173,7 @@ cp mcps.example.json mcps.json
 
 - `.env`：只放 secrets 和机器本地 override
 - `mcps.json`：放实时 MCP server 定义和可选工具提示
+- `config/agents.toml`：放 runtime agent registry、app 绑定、tool surface 和 model profile 选择
 - `config/*.example.toml`：公开提交的模板默认值
 - `config/*.toml`：对应模板的本地覆盖文件
 - `apps/<app_id>/*.md`：放 bootstrap 和 agent 行为资产
@@ -176,6 +183,7 @@ cp mcps.example.json mcps.json
 - 在 `.env` 设置 provider secret；当前最短路径包括 `OPENAI_API_KEY`、`MINIMAX_API_KEY`、`KIMI_API_KEY`
 - 在 `config/providers.toml` 放 provider 连接元数据
 - 在 `config/models.toml` 放 profile 和模型选择
+- 在 `config/agents.toml` 放 agent 对应的 app / profile / tool 选择
 - 如果你想切换 live profile，更新 `default_profile` 或 `profiles.openai_gpt5` / `profiles.minimax_m25` / `profiles.kimi_k2`
 - 如果要启用 Langfuse 外部 tracing，在 `.env` 里补齐 `LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`
 - 只有需要本地覆盖时才把 `config/*.example.toml` 复制成 `config/*.toml`

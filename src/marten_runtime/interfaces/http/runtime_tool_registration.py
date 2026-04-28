@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from marten_runtime.data_access.adapter import DomainDataAdapter
 from marten_runtime.runtime.capabilities import get_parameters_schema, render_tool_description
 from marten_runtime.session.transition import SessionTransitionResult
 from marten_runtime.tools.builtins.automation_tool import run_automation_tool
@@ -38,12 +37,6 @@ def register_family_tools(
     state: HTTPRuntimeState,
     capability_declarations: Mapping[str, object],
 ) -> None:
-    def adapter_factory(runtime_state: HTTPRuntimeState) -> DomainDataAdapter:
-        return DomainDataAdapter(
-            self_improve_store=runtime_state.self_improve_store,
-            automation_store=runtime_state.automation_store,
-        )
-
     state.tool_registry.register(
         "skill",
         lambda payload, runtime_state=state: run_skill_tool(
@@ -66,11 +59,7 @@ def register_family_tools(
     )
     state.tool_registry.register(
         "automation",
-        lambda payload, runtime_state=state: run_automation_tool(
-            payload,
-            runtime_state.automation_store,
-            adapter_factory(runtime_state),
-        ),
+        lambda payload, runtime_state=state: run_automation_tool(payload, runtime_state.automation_store),
         description=render_tool_description(capability_declarations["automation"]),
         parameters_schema=get_parameters_schema(capability_declarations["automation"]),
     )
@@ -92,7 +81,6 @@ def register_family_tools(
         "self_improve",
         lambda payload, runtime_state=state: run_self_improve_tool(
             payload,
-            adapter_factory(runtime_state),
             runtime_state.self_improve_store,
             repo_root=runtime_state.repo_root,
         ),

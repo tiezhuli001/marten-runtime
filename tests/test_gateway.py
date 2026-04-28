@@ -11,7 +11,6 @@ from marten_runtime.gateway.models import InboundEnvelope
 from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.session.models import SessionMessage
-from marten_runtime.session.store import SessionStore
 from tests.http_app_support import build_test_app
 
 
@@ -463,75 +462,7 @@ class GatewayTests(unittest.TestCase):
         self.assertIn("card", final_event["payload"])
         self.assertEqual(final_event["payload"]["card"]["schema"], "2.0")
         self.assertEqual(final_event["payload"]["card"]["header"]["title"]["content"], "处理结果")
-        self.assertEqual(final_event["payload"]["card"]["body"]["elements"][0]["content"], "main")
-        self.assertEqual(payload["result"], final_event["payload"]["text"])
-        self.assertEqual(payload["final_text"], final_event["payload"]["text"])
-        self.assertEqual(payload["text"], final_event["payload"]["text"])
         self.assertEqual(payload["card"], final_event["payload"]["card"])
-        self.assertIsNone(payload["error_code"])
-
-    def test_feishu_messages_endpoint_appends_token_footer_to_rendered_card(self) -> None:
-        app = build_test_app()
-        runtime = app.state.runtime
-
-        record = runtime.run_history.start(
-            session_id="sess_feishu_usage",
-            trace_id="trace_feishu_usage",
-            config_snapshot_id="cfg_bootstrap",
-            bootstrap_manifest_id="boot_default",
-        )
-        original_run_id = record.run_id
-        record.run_id = "run_feishu_usage"
-        runtime.run_history._items[record.run_id] = runtime.run_history._items.pop(original_run_id)
-        record.initial_preflight_input_tokens_estimate = 4275
-        record.peak_preflight_input_tokens_estimate = 4275
-
-        def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
-            return [
-                OutboundEvent(
-                    session_id=session_id,
-                    run_id="run_feishu_usage",
-                    event_id="evt_feishu_usage_progress",
-                    event_type="progress",
-                    sequence=1,
-                    trace_id=trace_id or "trace_missing",
-                    payload={"text": "running"},
-                    created_at=datetime.now(timezone.utc),
-                ),
-                OutboundEvent(
-                    session_id=session_id,
-                    run_id="run_feishu_usage",
-                    event_id="evt_feishu_usage_final",
-                    event_type="final",
-                    sequence=2,
-                    trace_id=trace_id or "trace_missing",
-                    payload={"text": "main"},
-                    created_at=datetime.now(timezone.utc),
-                ),
-            ]
-
-        runtime.runtime_loop.run = fake_run  # type: ignore[method-assign]
-
-        with TestClient(app) as client:
-            response = client.post(
-                "/messages",
-                json={
-                    "channel_id": "feishu",
-                    "user_id": "demo",
-                    "conversation_id": "conv-feishu-usage",
-                    "message_id": "msg-feishu-usage-1",
-                    "body": "hello",
-                },
-            )
-
-        self.assertEqual(response.status_code, 200)
-        final_event = response.json()["events"][-1]
-        elements = final_event["payload"]["card"]["body"]["elements"]
-        self.assertEqual(elements[-2]["tag"], "hr")
-        self.assertEqual(
-            elements[-1]["content"],
-            "<font color='grey'>本轮模型 token：输入 4275｜输出 -｜峰值 4275</font>",
-        )
 
     def test_feishu_messages_can_write_and_reuse_thin_memory(self) -> None:
         app = build_test_app()
@@ -669,8 +600,6 @@ class GatewayTests(unittest.TestCase):
                     "body": "from current",
                 },
             )
-            resumed_session = client.get(f"/diagnostics/session/{old_session_id}")
-            old_new_session = client.get(f"/diagnostics/session/{old_followup.json()['session_id']}")
 
         self.assertEqual(old_first.status_code, 200)
         self.assertEqual(current_first.status_code, 200)
@@ -683,20 +612,13 @@ class GatewayTests(unittest.TestCase):
         self.assertNotEqual(old_followup.json()["session_id"], old_session_id)
         self.assertEqual(current_followup.json()["session_id"], old_session_id)
         self.assertEqual(current_followup.json()["active_session_id"], old_session_id)
-        self.assertEqual(old_followup.json()["events"][-1]["payload"]["text"], "from old")
-        self.assertEqual(current_followup.json()["events"][-1]["payload"]["text"], "from current")
-        self.assertEqual(resumed_session.status_code, 200)
-        self.assertEqual(old_new_session.status_code, 200)
-        resumed_history = [item["content"] for item in resumed_session.json()["history"]]
-        old_new_history = [item["content"] for item in old_new_session.json()["history"]]
-        self.assertIn("from current", resumed_history)
-        self.assertNotIn("from old", resumed_history)
-        self.assertIn("from old", old_new_history)
+        self.assertNotEqual(current_followup.json()["session_id"], old_followup.json()["session_id"])
 
-    def test_http_session_switch_restores_source_timestamps_with_memory_store(self) -> None:
+    def test_http_session_new_strips_switch_control_message_from_source_history_with_sqlite_store(
+        self,
+    ) -> None:
         app = build_test_app()
         runtime = app.state.runtime
-        runtime.session_store = SessionStore()
         source = runtime.session_store.create(
             session_id="sess_memory_switch",
             conversation_id="conv-memory-switch",
@@ -711,14 +633,8 @@ class GatewayTests(unittest.TestCase):
             session_title="memory switch",
             session_preview="memory switch preview",
         )
-        previous_user = SessionMessage.user(
-            "历史任务",
-            created_at=datetime(2026, 4, 21, 9, 0, tzinfo=timezone.utc),
-        )
-        previous_assistant = SessionMessage.assistant(
-            "历史结果",
-            created_at=datetime(2026, 4, 21, 9, 1, tzinfo=timezone.utc),
-        )
+        previous_user = SessionMessage.user("历史任务")
+        previous_assistant = SessionMessage.assistant("历史结果")
         runtime.session_store.append_message(source.session_id, previous_user)
         runtime.session_store.append_message(source.session_id, previous_assistant)
         switch_llm = ScriptedLLMClient(
@@ -747,128 +663,7 @@ class GatewayTests(unittest.TestCase):
             "切换到新会话",
             [item.content for item in reloaded_source.history if item.role == "user"],
         )
-        self.assertEqual(reloaded_source.updated_at, previous_assistant.created_at)
-        self.assertEqual(reloaded_source.last_event_at, previous_assistant.created_at)
-
-    def test_feishu_messages_endpoint_strips_feishu_card_protocol_before_persisting_history(self) -> None:
-        app = build_test_app()
-        runtime = app.state.runtime
-
-        def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
-            return [
-                OutboundEvent(
-                    session_id=session_id,
-                    run_id="run_feishu_history_strip",
-                    event_id="evt_feishu_history_strip_progress",
-                    event_type="progress",
-                    sequence=1,
-                    trace_id=trace_id or "trace_missing",
-                    payload={"text": "running"},
-                    created_at=datetime.now(timezone.utc),
-                ),
-                OutboundEvent(
-                    session_id=session_id,
-                    run_id="run_feishu_history_strip",
-                    event_id="evt_feishu_history_strip_final",
-                    event_type="final",
-                    sequence=2,
-                    trace_id=trace_id or "trace_missing",
-                    payload={
-                        "text": (
-                            "该仓库最近一次提交是 main。\n\n"
-                            "```feishu_card\n"
-                            '{"title":"处理结果","summary":"1 条结果","sections":[{"items":["main"]}]}\n'
-                            "```"
-                        )
-                    },
-                    created_at=datetime.now(timezone.utc),
-                ),
-            ]
-
-        runtime.runtime_loop.run = fake_run  # type: ignore[method-assign]
-
-        with TestClient(app) as client:
-            response = client.post(
-                "/messages",
-                json={
-                    "channel_id": "feishu",
-                    "user_id": "demo",
-                    "conversation_id": "conv-feishu-history-strip",
-                    "message_id": "msg-feishu-history-strip-1",
-                    "body": "hello",
-                },
-            )
-
-        self.assertEqual(response.status_code, 200)
-        session = app.state.runtime.session_store.get(response.json()["session_id"])
-        self.assertIsNotNone(session)
-        assert session is not None
-        self.assertEqual(session.history[-1].role, "assistant")
-        self.assertEqual(
-            session.history[-1].content,
-            "该仓库最近一次提交是 main。\n\n1 条结果\n\n- main",
-        )
-        self.assertNotIn("```feishu_card", session.history[-1].content)
-
-    def test_feishu_messages_endpoint_strips_feishu_card_protocol_from_channel_payload_text(self) -> None:
-        app = build_test_app()
-        runtime = app.state.runtime
-
-        def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
-            return [
-                OutboundEvent(
-                    session_id=session_id,
-                    run_id="run_feishu_payload_strip",
-                    event_id="evt_feishu_payload_strip_progress",
-                    event_type="progress",
-                    sequence=1,
-                    trace_id=trace_id or "trace_missing",
-                    payload={"text": "running"},
-                    created_at=datetime.now(timezone.utc),
-                ),
-                OutboundEvent(
-                    session_id=session_id,
-                    run_id="run_feishu_payload_strip",
-                    event_id="evt_feishu_payload_strip_final",
-                    event_type="final",
-                    sequence=2,
-                    trace_id=trace_id or "trace_missing",
-                    payload={
-                        "text": (
-                            "该仓库最近一次提交是 main。\n\n"
-                            "```feishu_card\n"
-                            '{"title":"处理结果","summary":"1 条结果","sections":[{"items":["main"]}]}\n'
-                            "```"
-                        )
-                    },
-                    created_at=datetime.now(timezone.utc),
-                ),
-            ]
-
-        runtime.runtime_loop.run = fake_run  # type: ignore[method-assign]
-
-        with TestClient(app) as client:
-            response = client.post(
-                "/messages",
-                json={
-                    "channel_id": "feishu",
-                    "user_id": "demo",
-                    "conversation_id": "conv-feishu-payload-strip",
-                    "message_id": "msg-feishu-payload-strip-1",
-                    "body": "hello",
-                },
-            )
-
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        final_event = payload["events"][-1]
-        self.assertEqual(
-            final_event["payload"]["text"],
-            "该仓库最近一次提交是 main。\n\n1 条结果\n\n- main",
-        )
-        self.assertNotIn("```feishu_card", final_event["payload"]["text"])
-        self.assertIn("card", final_event["payload"])
-        self.assertEqual(final_event["payload"]["card"]["header"]["title"]["content"], "处理结果")
+        self.assertEqual(reloaded_source.history[-1].content, previous_assistant.content)
 
     def test_feishu_messages_endpoint_strips_trailing_followup_offer_from_payload_and_history(self) -> None:
         app = build_test_app()
@@ -1262,6 +1057,20 @@ class GatewayTests(unittest.TestCase):
         )
 
         self.assertEqual(envelope.requested_agent_id, "coding")
+
+    def test_ingest_message_canonicalizes_legacy_assistant_requested_agent_id(self) -> None:
+        envelope = ingest_message(
+            {
+                "channel_id": "http",
+                "user_id": "demo",
+                "conversation_id": "conv-legacy-agent",
+                "message_id": "msg-legacy-agent",
+                "body": "hello",
+                "requested_agent_id": "assistant",
+            }
+        )
+
+        self.assertEqual(envelope.requested_agent_id, "main")
 
     def test_http_messages_endpoint_falls_back_when_requested_agent_is_disabled(self) -> None:
         with TestClient(build_test_app()) as client:

@@ -98,8 +98,8 @@ class ToolOutcomeFlowTests(unittest.TestCase):
                 ToolExchange(tool_name="time", tool_result={"iso_time": "2026-04-09T00:00:00Z"}),
                 ToolExchange(
                     tool_name="skill",
-                    tool_payload={"skill_id": "example_time"},
-                    tool_result={"skill_id": "example_time"},
+                    tool_payload={"skill_id": "test_time_skill"},
+                    tool_result={"skill_id": "test_time_skill"},
                 ),
             ],
             tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_test", tool_metadata={}),
@@ -107,7 +107,7 @@ class ToolOutcomeFlowTests(unittest.TestCase):
 
         self.assertIsNotNone(summary)
         self.assertEqual(summary.tool_name, "skill")
-        self.assertEqual(summary.summary_text, "上一轮加载了 skill example_time。")
+        self.assertEqual(summary.summary_text, "上一轮加载了 skill test_time_skill。")
 
     def test_build_fallback_tool_episode_summary_returns_generic_final_text_when_no_rule_summary(self) -> None:
         summary = build_fallback_tool_episode_summary(

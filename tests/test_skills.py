@@ -178,11 +178,11 @@ class SkillTests(unittest.TestCase):
             system = base / "system"
             write_skill(
                 system,
-                "example_time",
+                "test_time_skill",
                 """
                 ---
-                skill_id: example_time
-                name: Example Time
+                skill_id: test_time_skill
+                name: Test Time Skill
                 description: visible skill
                 enabled: true
                 always_on: true
@@ -220,10 +220,10 @@ class SkillTests(unittest.TestCase):
             )
             heads = build_skill_heads(visible)
             snapshot = SkillSnapshot.from_skills("skill_snapshot_1", visible)
-            self.assertEqual([item.meta.skill_id for item in visible], ["example_time"])
+            self.assertEqual([item.meta.skill_id for item in visible], ["test_time_skill"])
             self.assertEqual(render_always_on_skills(visible), "")
             self.assertEqual(heads, [])
-            self.assertEqual(snapshot.always_on_ids, ["example_time"])
+            self.assertEqual(snapshot.always_on_ids, ["test_time_skill"])
 
     def test_skill_service_builds_startup_snapshot_and_loads_always_on_body_explicitly(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -231,11 +231,11 @@ class SkillTests(unittest.TestCase):
             system = base / "skills"
             write_skill(
                 system,
-                "example_time",
+                "test_time_skill",
                 """
                 ---
-                skill_id: example_time
-                name: Example Time
+                skill_id: test_time_skill
+                name: Test Time Skill
                 description: visible skill
                 enabled: true
                 always_on: true
@@ -270,14 +270,14 @@ class SkillTests(unittest.TestCase):
             ):
                 runtime = service.build_runtime(agent_id="main", channel_id="http", env={}, config={})
 
-            self.assertEqual(runtime.snapshot.always_on_ids, ["example_time"])
+            self.assertEqual(runtime.snapshot.always_on_ids, ["test_time_skill"])
             self.assertEqual([head.skill_id for head in runtime.snapshot.heads], ["repo_helper"])
             self.assertEqual(runtime.always_on_text, "Always on body")
             self.assertIsNone(runtime.visible_skills[0].body)
             self.assertIsNone(runtime.visible_skills[1].body)
             self.assertEqual(load_all.call_count, 1)
             self.assertEqual(load_skill.call_count, 1)
-            self.assertEqual(load_skill.call_args.args[0], "example_time")
+            self.assertEqual(load_skill.call_args.args[0], "test_time_skill")
 
     def test_skill_service_runtime_prefers_compact_skill_heads_under_default_budget(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -549,30 +549,31 @@ class SkillTests(unittest.TestCase):
 
             self.assertEqual(activated, [])
 
-    def test_self_improve_management_skill_content_allows_candidate_delete_only(self) -> None:
+    def test_self_improve_management_skill_content_keeps_delete_guardrails(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         skill_path = repo_root / "skills/self_improve_management/SKILL.md"
 
         self.assertTrue(skill_path.exists())
         body = skill_path.read_text(encoding="utf-8")
 
-        self.assertIn("action=list_candidates", body)
-        self.assertIn("action=candidate_detail", body)
+        self.assertIn("normal user-facing inspection and cleanup turns", body)
         self.assertIn("action=delete_candidate", body)
         self.assertIn("must not delete active lessons", body)
+        self.assertIn("Do not mention table names, SQL, or database internals", body)
 
-    def test_self_improve_skill_content_stays_narrow_and_does_not_allow_agents_rewrite(self) -> None:
+    def test_self_improve_skill_content_keeps_internal_scope_and_repo_guardrails(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         skill_path = repo_root / "skills/self_improve/SKILL.md"
 
         self.assertTrue(skill_path.exists())
         body = skill_path.read_text(encoding="utf-8")
 
-        self.assertIn("action=list_evidence", body)
-        self.assertIn("action=save_candidate", body)
-        self.assertIn("list_system_lessons", body)
+        self.assertIn("internal self-improve turns only", body)
         self.assertIn("repeated failures and later recoveries", body)
+        self.assertIn("Ignore one-off incidents", body)
+        self.assertIn("Keep rules short, stable, and implementation-agnostic", body)
         self.assertIn("Do not edit AGENTS.md", body)
+        self.assertIn("Do not rewrite bootstrap files", body)
 
     def test_self_improve_review_skill_stays_classification_only(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -654,6 +655,42 @@ class SkillTests(unittest.TestCase):
         self.assertIn("Avoid Markdown tables", feishu_runtime.always_on_text or "")
         self.assertNotIn("feishu_channel_formatting", http_runtime.snapshot.always_on_ids)
         self.assertEqual(http_runtime.always_on_text, None)
+
+    def test_repo_visible_skill_surface_contains_only_product_skills(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        service = SkillService([str(repo_root / "skills")])
+
+        http_runtime = service.build_runtime(
+            agent_id="main",
+            channel_id="http",
+            env={},
+            config={},
+        )
+        feishu_runtime = service.build_runtime(
+            agent_id="main",
+            channel_id="feishu",
+            env={},
+            config={},
+        )
+
+        self.assertEqual(
+            [item.skill_id for item in http_runtime.snapshot.heads],
+            [
+                "automation_management",
+                "self_improve",
+                "self_improve_management",
+                "self_improve_review",
+            ],
+        )
+        self.assertEqual(
+            [item.skill_id for item in feishu_runtime.snapshot.heads],
+            [
+                "automation_management",
+                "self_improve",
+                "self_improve_management",
+                "self_improve_review",
+            ],
+        )
 
 
 if __name__ == "__main__":

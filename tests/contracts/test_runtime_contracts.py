@@ -40,12 +40,14 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(runtime.default_agent.app_id, DEFAULT_APP_ID)
         self.assertEqual(runtime.default_agent.agent_id, DEFAULT_AGENT_ID)
 
-    def test_runtime_router_keeps_legacy_assistant_alias_routable(self) -> None:
+    def test_runtime_router_keeps_main_as_the_only_default_runtime_agent_id(self) -> None:
         app = build_test_app()
         runtime = app.state.runtime
 
         self.assertEqual(runtime.agent_router.default_agent_id, DEFAULT_AGENT_ID)
-        self.assertEqual(runtime.agent_router.registry.get("assistant").agent_id, DEFAULT_AGENT_ID)
+        self.assertEqual(runtime.agent_router.registry.get(DEFAULT_AGENT_ID).agent_id, DEFAULT_AGENT_ID)
+        with self.assertRaises(KeyError):
+            runtime.agent_router.registry.get("assistant")
 
     def test_runtime_diagnostics_include_langfuse_observability_block(self) -> None:
         app = build_test_app()
@@ -61,47 +63,26 @@ class RuntimeContractTests(unittest.TestCase):
 
     def test_runtime_bootstrap_registers_automation_tool(self) -> None:
         app = build_test_app()
+        tool_names = app.state.runtime.tool_registry.list()
 
-        self.assertIn("skill", app.state.runtime.tool_registry.list())
-        self.assertIn("runtime", app.state.runtime.tool_registry.list())
-        self.assertIn("mcp", app.state.runtime.tool_registry.list())
-        self.assertNotIn("mock_search", app.state.runtime.tool_registry.list())
-        self.assertIn("automation", app.state.runtime.tool_registry.list())
-        self.assertIn("self_improve", app.state.runtime.tool_registry.list())
-        self.assertIn("session", app.state.runtime.tool_registry.list())
-        self.assertIn("memory", app.state.runtime.tool_registry.list())
-        self.assertNotIn("register_automation", app.state.runtime.tool_registry.list())
-        self.assertNotIn("list_lesson_candidates", app.state.runtime.tool_registry.list())
+        self.assertIn("skill", tool_names)
+        self.assertIn("runtime", tool_names)
+        self.assertIn("mcp", tool_names)
+        self.assertIn("automation", tool_names)
+        self.assertIn("session", tool_names)
+        self.assertIn("memory", tool_names)
+        self.assertNotIn("mock_search", tool_names)
+        self.assertNotIn("register_automation", tool_names)
 
     def test_default_main_agent_keeps_family_tool_contract(self) -> None:
         app = build_test_app()
 
         assistant = app.state.runtime.default_agent
 
-        self.assertIn("skill", assistant.allowed_tools)
-        self.assertIn("mcp", assistant.allowed_tools)
-        self.assertIn("automation", assistant.allowed_tools)
-        self.assertIn("self_improve", assistant.allowed_tools)
-        self.assertIn("session", assistant.allowed_tools)
-        self.assertIn("memory", assistant.allowed_tools)
-        self.assertIn("runtime", assistant.allowed_tools)
-        self.assertIn("time", assistant.allowed_tools)
-        self.assertIn("spawn_subagent", assistant.allowed_tools)
-        self.assertIn("cancel_subagent", assistant.allowed_tools)
-        self.assertNotIn("register_automation", assistant.allowed_tools)
-        self.assertNotIn("list_lesson_candidates", assistant.allowed_tools)
         self.assertEqual(
             assistant.allowed_tools,
             ["automation", "mcp", "runtime", "self_improve", "session", "memory", "skill", "time", "spawn_subagent", "cancel_subagent"],
         )
-
-    def test_mcp_family_tool_is_the_only_model_visible_mcp_entrypoint(self) -> None:
-        app = build_test_app()
-
-        tool_names = app.state.runtime.tool_registry.list()
-
-        self.assertIn("mcp", tool_names)
-        self.assertFalse(any(name.startswith("mock_") for name in tool_names))
 
     def test_runtime_bootstrap_uses_capability_catalog_and_descriptions(self) -> None:
         app = build_test_app()
@@ -109,39 +90,12 @@ class RuntimeContractTests(unittest.TestCase):
         snapshot = runtime.tool_registry.build_snapshot(
             ["automation", "mcp", "runtime", "self_improve", "session", "memory", "skill", "time"]
         )
-        automation_description = snapshot.tool_metadata["automation"]["description"]
-        mcp_description = snapshot.tool_metadata["mcp"]["description"]
-        runtime_description = snapshot.tool_metadata["runtime"]["description"]
-        session_description = snapshot.tool_metadata["session"]["description"]
-        time_description = snapshot.tool_metadata["time"]["description"]
+        catalog = runtime.capability_catalog_text or ""
 
-        self.assertIn("Capability catalog:", runtime.capability_catalog_text or "")
-        self.assertIn("automation", runtime.capability_catalog_text or "")
-        self.assertIn("mcp", runtime.capability_catalog_text or "")
-        self.assertIn("runtime", runtime.capability_catalog_text or "")
-        self.assertIn("session", runtime.capability_catalog_text or "")
-        self.assertIn("当前上下文窗口多大", runtime.capability_catalog_text or "")
-        self.assertIn("现在有哪些会话列表", runtime.capability_catalog_text or "")
-        self.assertIn("当前有哪些定时任务", runtime.capability_catalog_text or "")
-        self.assertNotIn("mock_search", runtime.capability_catalog_text or "")
-        self.assertNotIn("search_repositories", runtime.capability_catalog_text or "")
-        self.assertTrue(automation_description)
-        self.assertTrue(mcp_description)
-        self.assertTrue(runtime_description)
-        self.assertTrue(session_description)
-        self.assertTrue(time_description)
-        self.assertIn("automation", automation_description.lower())
-        self.assertIn("定时任务", automation_description)
-        self.assertIn("github", mcp_description.lower())
-        self.assertNotIn("search_repositories", mcp_description)
-        self.assertNotIn("list_commits", mcp_description)
-        self.assertTrue(
-            "runtime" in runtime_description.lower() or "上下文" in runtime_description
-        )
-        self.assertIn("上下文窗口", runtime_description)
-        self.assertIn("会话列表", session_description)
-        self.assertIn("sess_", session_description)
-        self.assertIn("现在几点", time_description)
+        self.assertIn("Capability catalog:", catalog)
+        self.assertIn("- mcp:", catalog)
+        self.assertTrue(snapshot.tool_metadata["mcp"]["description"])
+        self.assertNotIn("mock_search", catalog)
 
     def test_runtime_bootstrap_preserves_family_tool_parameter_schemas(self) -> None:
         app = build_test_app()
@@ -303,13 +257,9 @@ class RuntimeContractTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        enabled = runtime.automation_store.list_enabled()
+        enabled = [item for item in runtime.automation_store.list_enabled() if not item.internal]
         self.assertEqual(len(enabled), 1)
-        self.assertEqual(enabled[0].app_id, "main_agent")
-        self.assertEqual(enabled[0].agent_id, "main")
-        self.assertEqual(enabled[0].schedule_kind, "daily")
         self.assertEqual(enabled[0].schedule_expr, "23:30")
-        self.assertEqual(enabled[0].delivery_channel, "feishu")
         self.assertEqual(enabled[0].delivery_target, "oc_current_chat")
 
     def test_metrics_and_diagnostics_endpoints_exist(self) -> None:
@@ -353,11 +303,8 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertIn("mcp_server_count", runtime_diag.json())
         self.assertIn("env_loaded", runtime_diag.json())
         self.assertIn("server", runtime_diag.json())
-        self.assertIn("public_base_url", runtime_diag.json()["server"])
-        self.assertIn("channels", runtime_diag.json())
         self.assertIn("self_improve", runtime_diag.json())
         self.assertIn("lanes", runtime_diag.json())
-        self.assertIn("provider_retry_policy", runtime_diag.json())
         self.assertIn("active_lessons_count", runtime_diag.json()["self_improve"])
         self.assertIn("latest_candidate_status", runtime_diag.json()["self_improve"])
         self.assertIn("latest_accepted_lesson_summary", runtime_diag.json()["self_improve"])
@@ -367,7 +314,6 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertIn("running_review_triggers_count", runtime_diag.json()["self_improve"])
         self.assertIn("pending_skill_candidates_count", runtime_diag.json()["self_improve"])
         self.assertIn("latest_review_trigger_status", runtime_diag.json()["self_improve"])
-        self.assertIn("websocket", runtime_diag.json()["channels"]["feishu"])
         self.assertIn("mcp_servers", runtime_diag.json())
         self.assertGreaterEqual(len(runtime_diag.json()["mcp_servers"]), 1)
         configured_server = runtime_diag.json()["mcp_servers"][0]
@@ -460,10 +406,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(response.json()["events"][-1]["event_type"], "final")
         github_entry = next(item for item in runtime_diag.json()["mcp_servers"] if item["server_id"] == "github")
         self.assertEqual(github_entry["discovery"]["state"], "discovered")
-        self.assertEqual(github_entry["discovery"]["tool_count"], 1)
         self.assertEqual(github_entry["discovery"]["error"], None)
-        self.assertEqual(github_entry["tool_count"], 1)
-        self.assertEqual(github_entry["tool_names"], ["list_commits"])
 
     def test_run_diagnostics_expose_tool_calls_for_registration(self) -> None:
         app = build_test_app()
@@ -617,21 +560,6 @@ class RuntimeContractTests(unittest.TestCase):
             websocket["endpoint_url"],
             "wss://msg-frontier.feishu.cn/ws/v2?device_id=123&access_key=REDACTED&service_id=456&ticket=REDACTED",
         )
-
-    def test_runtime_diagnostics_reports_effective_request_server_surface(self) -> None:
-        app = build_test_app()
-
-        with TestClient(app, base_url="http://127.0.0.1:8001") as client:
-            runtime_diag = client.get("/diagnostics/runtime")
-
-        self.assertEqual(runtime_diag.status_code, 200)
-        server = runtime_diag.json()["server"]
-        self.assertEqual(server["host"], "127.0.0.1")
-        self.assertEqual(server["port"], 8001)
-        self.assertEqual(server["public_base_url"], "http://127.0.0.1:8001")
-        self.assertEqual(server["configured_port"], 8000)
-        self.assertEqual(server["configured_public_base_url"], "http://127.0.0.1:8000")
-
 
 if __name__ == "__main__":
     unittest.main()

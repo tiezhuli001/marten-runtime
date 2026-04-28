@@ -1,21 +1,39 @@
 import unittest
-from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Thread
+from types import SimpleNamespace
 
 from marten_runtime.self_improve.models import ReviewTrigger, SkillCandidate
 from marten_runtime.self_improve.review_dispatcher import SelfImproveReviewDispatcher
 from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
 from marten_runtime.subagents.models import SubagentTask
-from marten_runtime.subagents.store import InMemorySubagentStore
+from tests.support.feishu_builders import FakeDeliveryClient
+
+
+class _FakeSubagentStore:
+    def __init__(self) -> None:
+        self._items: dict[str, SubagentTask] = {}
+
+    def create(self, **kwargs) -> SubagentTask:  # noqa: ANN003
+        task = SubagentTask(**kwargs)
+        self._items[task.task_id] = task
+        return task
+
+    def get(self, task_id: str) -> SubagentTask:
+        return self._items[task_id]
+
+    def mark_running(self, task_id: str) -> SubagentTask:
+        task = self._items[task_id]
+        task.status = "running"
+        return task
 
 
 class _FakeSubagentService:
     def __init__(self, *, queue_state: str = "queued") -> None:
         self.calls: list[dict] = []
         self.queue_state = queue_state
-        self.store = InMemorySubagentStore()
+        self.store = _FakeSubagentStore()
 
     def spawn(self, **kwargs):  # noqa: ANN003
         self.calls.append(kwargs)
@@ -43,15 +61,6 @@ class _FakeSubagentService:
             "status": "accepted",
             "queue_state": self.queue_state,
         }
-
-
-class _FakeDeliveryClient:
-    def __init__(self) -> None:
-        self.payloads: list[object] = []
-
-    def deliver(self, payload):  # noqa: ANN001
-        self.payloads.append(payload)
-        return {"ok": True, "message_id": f"om_{len(self.payloads)}"}
 
 
 class _FailingDeliveryClient:
@@ -322,7 +331,7 @@ class SelfImproveReviewDispatcherTests(unittest.TestCase):
             subagent_service.session_store = SimpleNamespace(
                 get=lambda session_id: SimpleNamespace(conversation_id="oc_test_chat")
             )
-            delivery = _FakeDeliveryClient()
+            delivery = FakeDeliveryClient()
             dispatcher = SelfImproveReviewDispatcher(
                 store=store,
                 subagent_service=subagent_service,
@@ -395,7 +404,7 @@ class SelfImproveReviewDispatcherTests(unittest.TestCase):
             subagent_service.session_store = SimpleNamespace(
                 get=lambda session_id: SimpleNamespace(conversation_id="oc_test_chat")
             )
-            delivery = _FakeDeliveryClient()
+            delivery = FakeDeliveryClient()
             dispatcher = SelfImproveReviewDispatcher(
                 store=store,
                 subagent_service=subagent_service,

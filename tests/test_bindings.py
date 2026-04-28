@@ -59,6 +59,27 @@ class BindingTests(unittest.TestCase):
             self.assertTrue(rules[0].mention_required)
             self.assertTrue(rules[1].default)
 
+    def test_loader_canonicalizes_legacy_assistant_binding_agent_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bindings.toml"
+            path.write_text(
+                textwrap.dedent(
+                    """
+                    [[bindings]]
+                    agent_id = "assistant"
+                    channel_id = "http"
+                    default = true
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            rules = load_agent_bindings(str(path))
+
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0].agent_id, "main")
+
     def test_registry_prefers_exact_conversation_binding_over_user_and_channel_default(self) -> None:
         registry = AgentBindingRegistry(
             load_agent_bindings_from_payload(

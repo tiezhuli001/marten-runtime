@@ -95,6 +95,55 @@ class SQLiteSessionStoreTests(unittest.TestCase):
         self.assertEqual(reloaded.agent_id, "coding")
         self.assertEqual(reloaded.active_agent_id, "coding")
 
+    def test_legacy_assistant_agent_id_is_canonicalized_before_first_get(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            created_at = datetime(2026, 4, 24, 9, 0, tzinfo=timezone.utc).isoformat()
+            with sqlite3.connect(path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE sessions (
+                        session_id TEXT PRIMARY KEY,
+                        conversation_id TEXT NOT NULL,
+                        state TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        agent_id TEXT NOT NULL DEFAULT '',
+                        active_agent_id TEXT NOT NULL DEFAULT 'main'
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, conversation_id, state, created_at, updated_at, agent_id, active_agent_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "sess_legacy_main",
+                        "conv-legacy-main",
+                        "created",
+                        created_at,
+                        created_at,
+                        "assistant",
+                        "assistant",
+                    ),
+                )
+
+            reloaded = SQLiteSessionStore(path).get("sess_legacy_main")
+            with sqlite3.connect(path) as conn:
+                row = conn.execute(
+                    "SELECT agent_id, active_agent_id FROM sessions WHERE session_id = ?",
+                    ("sess_legacy_main",),
+                ).fetchone()
+
+        self.assertEqual(reloaded.agent_id, "main")
+        self.assertEqual(reloaded.active_agent_id, "main")
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(str(row[0]), "main")
+        self.assertEqual(str(row[1]), "main")
+
     def test_round_trip_preserves_message_order(self) -> None:
         with TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "sessions.sqlite3"

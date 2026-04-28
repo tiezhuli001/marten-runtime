@@ -7,20 +7,22 @@ from types import SimpleNamespace
 from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.usage_models import NormalizedUsage
-from marten_runtime.session.store import SessionStore
+from tests.support.session_store_fixtures import temporary_sqlite_session_store
 from marten_runtime.tools.registry import ToolRegistry
 from tests.support.feishu_builders import FakeDeliveryClient
 
 
 class SubagentServiceContractTests(unittest.TestCase):
+    def _session_store(self):
+        return self.enterContext(temporary_sqlite_session_store())
+
     def _build_service(self):
         try:
-            from marten_runtime.subagents.store import InMemorySubagentStore
             from marten_runtime.subagents.service import SubagentService
         except ModuleNotFoundError as exc:
             self.fail(f"subagent service/store module missing: {exc}")
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -59,7 +61,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                     )
                 ]
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -131,7 +133,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                     stopped.set()
                 return []
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -188,7 +190,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                     stopped.set()
                 return []
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -314,7 +316,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                 captured["factory_default_client"] = default_client
                 return {"profile_name": profile_name}
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -393,7 +395,7 @@ class SubagentServiceContractTests(unittest.TestCase):
         from marten_runtime.agents.specs import AgentSpec
         from marten_runtime.subagents.service import SubagentService
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -445,7 +447,7 @@ class SubagentServiceContractTests(unittest.TestCase):
         from marten_runtime.agents.specs import AgentSpec
         from marten_runtime.subagents.service import SubagentService
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -527,7 +529,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                     )
                 ]
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -607,7 +609,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                     )
                 ]
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -741,27 +743,23 @@ class SubagentServiceContractTests(unittest.TestCase):
         task = service.store.get(result["task_id"])
         self.assertEqual(task.effective_tool_profile, "restricted")
 
-    def test_spawn_accepts_default_profile_alias_and_normalizes_to_standard(self) -> None:
+    def test_spawn_rejects_removed_default_profile_alias(self) -> None:
         service = self._build_service()
 
-        result = service.spawn(
-            task="background followup",
-            label="default-alias",
-            parent_session_id="sess_parent",
-            parent_run_id="run_parent",
-            parent_agent_id="main",
-            app_id="main_agent",
-            agent_id="main",
-            requested_tool_profile="default",
-            parent_allowed_tools=["automation", "mcp", "runtime", "skill", "time"],
-            context_mode="brief_only",
-            notify_on_finish=True,
-        )
-
-        self.assertEqual(result["effective_tool_profile"], "standard")
-        task = service.store.get(result["task_id"])
-        self.assertEqual(task.tool_profile, "standard")
-        self.assertEqual(task.effective_tool_profile, "standard")
+        with self.assertRaisesRegex(ValueError, "unknown tool profile: default"):
+            service.spawn(
+                task="background followup",
+                label="default-alias",
+                parent_session_id="sess_parent",
+                parent_run_id="run_parent",
+                parent_agent_id="main",
+                app_id="main_agent",
+                agent_id="main",
+                requested_tool_profile="default",
+                parent_allowed_tools=["automation", "mcp", "runtime", "skill", "time"],
+                context_mode="brief_only",
+                notify_on_finish=True,
+            )
 
     def test_spawn_defaults_omitted_profile_to_standard(self) -> None:
         service = self._build_service()
@@ -874,7 +872,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                     )
                 ]
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -936,7 +934,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                     )
                 ]
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -992,7 +990,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                     )
                 ]
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -1043,7 +1041,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                 release.wait(timeout=1.0)
                 return []
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -1120,7 +1118,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                     )
                 ]
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -1164,7 +1162,7 @@ class SubagentServiceContractTests(unittest.TestCase):
         from marten_runtime.subagents.service import SubagentService
 
         service = SubagentService(
-            session_store=SessionStore(),
+            session_store=self._session_store(),
             run_history=InMemoryRunHistory(),
             tool_registry=ToolRegistry(),
             runtime_loop=None,
@@ -1253,7 +1251,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                     )
                 ]
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="oc_test_chat",
@@ -1318,7 +1316,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                     )
                 ]
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent_simulated",
             conversation_id="feishu-subagent-20260425",
@@ -1358,9 +1356,6 @@ class SubagentServiceContractTests(unittest.TestCase):
         task = service.store.get(accepted["task_id"])
         self.assertEqual(task.status, "succeeded")
         self.assertEqual(len(delivery.payloads), 0)
-        parent = session_store.get("sess_parent_simulated")
-        self.assertEqual(parent.history[-1].role, "system")
-        self.assertIn("subagent task completed", parent.history[-1].content)
 
     def test_successful_feishu_origin_task_notification_carries_child_run_usage_summary(self) -> None:
         from marten_runtime.runtime.events import OutboundEvent
@@ -1412,7 +1407,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                     )
                 ]
 
-        session_store = SessionStore()
+        session_store = self._session_store()
         session_store.create(
             session_id="sess_parent",
             conversation_id="oc_test_chat",

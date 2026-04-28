@@ -137,6 +137,8 @@ Expected result:
 - the JSON contains `session_id`
 - the final event contains `run_id`
 
+To route one request to a non-default agent, add `requested_agent_id` to the same JSON payload.
+
 If you want one more confirmation step, open:
 
 ```bash
@@ -513,9 +515,9 @@ For the full mapping, use [CONFIG_SURFACES.md](./CONFIG_SURFACES.md).
 Current deployment reality:
 
 - the runtime path is ready for deployment-oriented setup work
-- durable session persistence is still intentionally pending
-- same-process conversation continuity is available
-- cross-restart durable session continuity is not the current baseline
+- durable SQLite session persistence is part of the baseline
+- cross-restart session continuity works through bounded restore, session binding persistence, and persisted compaction jobs
+- session switching stays explicit through `session.new` and `session.resume`, with source-session compaction allowed to finish in the background
 
 This means the simplest current deployment shape is:
 

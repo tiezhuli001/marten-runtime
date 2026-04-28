@@ -12,7 +12,7 @@ from marten_runtime.interfaces.http.bootstrap_runtime import (
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.session.compaction_worker import SessionCompactionWorker
 from marten_runtime.session.models import SessionMessage
-from marten_runtime.session.store import SessionStore
+from tests.support.session_store_fixtures import temporary_sqlite_session_store
 
 
 class _FailingLLM:
@@ -63,8 +63,11 @@ class _NoopSubagentService:
 
 
 class SessionCompactionWorkerTests(unittest.TestCase):
+    def _store(self):
+        return self.enterContext(temporary_sqlite_session_store())
+
     def test_worker_run_once_uses_isolated_client_and_marks_job_succeeded(self) -> None:
-        store = SessionStore()
+        store = self._store()
         session = store.create(
             session_id="sess_source",
             conversation_id="conv-source",
@@ -106,7 +109,7 @@ class SessionCompactionWorkerTests(unittest.TestCase):
         self.assertEqual(factory.isolated_requests, ["minimax_m25"])
 
     def test_worker_run_once_uses_enqueued_snapshot_instead_of_later_messages(self) -> None:
-        store = SessionStore()
+        store = self._store()
         session = store.create(
             session_id="sess_source",
             conversation_id="conv-source",
@@ -148,7 +151,7 @@ class SessionCompactionWorkerTests(unittest.TestCase):
         self.assertEqual(compacted.source_message_range, [0, 3])
 
     def test_worker_run_once_marks_job_failed_when_generation_raises(self) -> None:
-        store = SessionStore()
+        store = self._store()
         session = store.create(
             session_id="sess_source",
             conversation_id="conv-source",
