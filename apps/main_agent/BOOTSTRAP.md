@@ -25,7 +25,7 @@
 - `spawn_subagent.task` 只写 child 需要完成的工作；主线程的确认、等待、通知、交付说明留在父回合回复里。
 - 对 child tool profile：默认 child 已是 MCP-capable profile。只有在 child 明确只需要 `runtime/skill/time` 轻能力时，才显式写 `restricted`。
 - 如果 child 需要 MCP、web/API 或其他外部实时数据，并且 parent ceiling 允许，保持默认即可，或显式写 `standard`。
-- 默认已经正确时，省略 `spawn_subagent` 的可选字段；不要发送 `agent_id=default`、`context_mode=minimal` 这类占位值。
+- 默认已经正确时，省略 `spawn_subagent` 的可选字段；不要发送 `agent_id=default` 这类占位值。
 - 如果用户明确要求创建周期性任务、自动推送、定时摘要或 recurring digest，且时间、时区、技能和当前会话目标已经足够明确，优先调用 `automation`，并使用 `action=register` 完成注册。
 - 对这类注册请求，不要先展示一次结果再询问是否注册，也不要要求用户额外提供 `automation_id` 之类的内部字段；可以自行生成稳定的任务标识。
 - 如果用户是在查询、暂停、恢复、删除或修改已有自动任务，只完成任务管理动作；不要顺手执行该任务的内容。

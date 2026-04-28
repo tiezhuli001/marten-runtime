@@ -1,7 +1,7 @@
 from contextvars import ContextVar, Token
 
 from marten_runtime.automation.store import AutomationStore
-from marten_runtime.data_access.adapter import DomainDataAdapter
+from marten_runtime.automation.skill_ids import canonicalize_automation_skill_id
 from marten_runtime.tools.builtins.automation_tool_support import (
     REGISTRATION_REQUIRED_FIELDS,
     build_list_filters,
@@ -28,51 +28,50 @@ def pop_registration_context(token: Token) -> None:
     _REGISTRATION_CONTEXT.reset(token)
 
 
-def run_delete_automation_tool(payload: dict, adapter: DomainDataAdapter) -> dict:
+def run_delete_automation_tool(payload: dict, store: AutomationStore) -> dict:
     automation_id = str(payload.get("automation_id", "")).strip()
     if not automation_id:
         raise ValueError("automation_id is required")
     try:
-        deleted = adapter.delete_item("automation", item_id=automation_id)
+        _get_public_automation(store, automation_id)
     except KeyError:
         return {"ok": False, "automation_id": automation_id}
-    return {"ok": bool(deleted["ok"]), "automation_id": automation_id}
+    return {"ok": bool(store.delete(automation_id)), "automation_id": automation_id}
 
 
 def run_get_automation_detail_tool(
     payload: dict,
-    adapter: DomainDataAdapter,
+    store: AutomationStore,
 ) -> dict:
     automation_id = str(payload.get("automation_id", "")).strip()
     if not automation_id:
         raise ValueError("automation_id is required")
-    item = adapter.get_item("automation", item_id=automation_id)
-    return {"ok": True, "automation": item}
+    item = _get_public_automation(store, automation_id)
+    return {"ok": True, "automation": item.model_dump(mode="json")}
 
 
-def run_list_automations_tool(payload: dict, adapter: DomainDataAdapter) -> dict:
+def run_list_automations_tool(payload: dict, store: AutomationStore) -> dict:
     filters = build_list_filters(payload)
-    items = adapter.list_items("automation", filters=filters, limit=100)
-    presented = sort_presented_automations([present_automation(item) for item in items])
+    items = _list_public_automations(store, filters=filters, limit=100)
+    presented = sort_presented_automations(
+        [present_automation(item.model_dump(mode="json")) for item in items]
+    )
     return {"ok": True, "items": presented, "count": len(presented)}
 
 
-def run_pause_automation_tool(payload: dict, adapter: DomainDataAdapter) -> dict:
+def run_pause_automation_tool(payload: dict, store: AutomationStore) -> dict:
     automation_id = str(payload.get("automation_id", "")).strip()
     if not automation_id:
         raise ValueError("automation_id is required")
-    updated = adapter.update_item(
-        "automation",
-        item_id=automation_id,
-        values={"enabled": False},
-    )
-    return {"ok": True, "automation": updated}
+    _get_public_automation(store, automation_id)
+    updated = store.set_enabled(automation_id, False)
+    return {"ok": True, "automation": updated.model_dump(mode="json")}
 
 
 def run_register_automation_tool(
     payload: dict,
     store: AutomationStore,
-    adapter: DomainDataAdapter | None = None,
+    _legacy_store: AutomationStore | None = None,
 ) -> dict:
     normalized = normalize_registration_payload(payload, _REGISTRATION_CONTEXT.get() or {})
     missing = [
@@ -88,14 +87,7 @@ def run_register_automation_tool(
         }
 
     values = build_registration_values(normalized)
-    existing = store.find_equivalent_registration(values)
-    if existing is not None:
-        job = existing
-    elif adapter is not None:
-        created = adapter.create_item("automation", values=values)
-        job = store.get(str(created["automation_id"]))
-    else:
-        job = store.create_from_registration(values)
+    job = store.create_from_registration(values)
     return {
         "ok": True,
         **present_automation(
@@ -111,31 +103,30 @@ def run_register_automation_tool(
         "semantic_fingerprint": job.semantic_fingerprint,
     }
 
-def run_resume_automation_tool(payload: dict, adapter: DomainDataAdapter) -> dict:
+
+def run_resume_automation_tool(payload: dict, store: AutomationStore) -> dict:
     automation_id = str(payload.get("automation_id", "")).strip()
     if not automation_id:
         raise ValueError("automation_id is required")
-    updated = adapter.update_item(
-        "automation",
-        item_id=automation_id,
-        values={"enabled": True},
-    )
-    return {"ok": True, "automation": updated}
+    _get_public_automation(store, automation_id)
+    updated = store.set_enabled(automation_id, True)
+    return {"ok": True, "automation": updated.model_dump(mode="json")}
 
 
-def run_update_automation_tool(payload: dict, adapter: DomainDataAdapter) -> dict:
+def run_update_automation_tool(payload: dict, store: AutomationStore) -> dict:
     automation_id = str(payload.get("automation_id", "")).strip()
     if not automation_id:
         raise ValueError("automation_id is required")
     updates = extract_update_values(payload)
-    item = adapter.update_item("automation", item_id=automation_id, values=updates)
-    return {"ok": True, "automation": item}
+    _get_public_automation(store, automation_id)
+    item = store.update(automation_id, updates)
+    return {"ok": True, "automation": item.model_dump(mode="json")}
 
 
 def run_automation_tool(
     payload: dict,
     store: AutomationStore,
-    adapter: DomainDataAdapter,
+    _legacy_store: AutomationStore | None = None,
 ) -> dict:
     action = str(payload.get("action", "")).strip().lower()
     if not action and not payload:
@@ -144,22 +135,52 @@ def run_automation_tool(
     if action == "list" and "include_disabled" not in request:
         request["include_disabled"] = True
     if action == "register":
-        result = run_register_automation_tool(request, store, adapter)
+        result = run_register_automation_tool(request, store)
     elif action == "list":
-        result = run_list_automations_tool(request, adapter)
+        result = run_list_automations_tool(request, store)
     elif action == "detail":
-        result = run_get_automation_detail_tool(request, adapter)
+        result = run_get_automation_detail_tool(request, store)
     elif action == "update":
-        result = run_update_automation_tool(request, adapter)
+        result = run_update_automation_tool(request, store)
     elif action == "delete":
-        result = run_delete_automation_tool(request, adapter)
+        result = run_delete_automation_tool(request, store)
     elif action == "pause":
-        result = run_pause_automation_tool(request, adapter)
+        result = run_pause_automation_tool(request, store)
     elif action == "resume":
-        result = run_resume_automation_tool(request, adapter)
+        result = run_resume_automation_tool(request, store)
     else:
         raise ValueError("unsupported automation action")
     return {"action": action, **result}
+
+
+def _get_public_automation(store: AutomationStore, automation_id: str):
+    item = store.get(automation_id)
+    if item.internal:
+        raise KeyError(automation_id)
+    return item
+
+
+def _list_public_automations(
+    store: AutomationStore,
+    *,
+    filters: dict[str, object],
+    limit: int,
+) -> list:
+    include_disabled = bool(filters.get("include_disabled", False))
+    items = store.list_public(include_disabled=include_disabled)
+    if "delivery_channel" in filters:
+        expected = str(filters["delivery_channel"])
+        items = [item for item in items if item.delivery_channel == expected]
+    if "delivery_target" in filters:
+        expected = str(filters["delivery_target"])
+        items = [item for item in items if item.delivery_target == expected]
+    if "skill_id" in filters:
+        expected = canonicalize_automation_skill_id(str(filters["skill_id"]))
+        items = [item for item in items if item.skill_id == expected]
+    if "enabled" in filters:
+        expected = bool(filters["enabled"])
+        items = [item for item in items if item.enabled is expected]
+    return items[:limit]
 
 
 def render_automation_tool_text(result: dict) -> str:

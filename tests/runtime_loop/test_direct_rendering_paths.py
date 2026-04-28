@@ -10,7 +10,6 @@ from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.runtime.usage_models import NormalizedUsage
-from marten_runtime.session.store import SessionStore
 from marten_runtime.self_improve.models import LessonCandidate, SystemLesson
 from marten_runtime.tools.builtins.automation_tool import run_automation_tool
 from marten_runtime.tools.builtins.runtime_tool import run_runtime_tool
@@ -27,6 +26,7 @@ from marten_runtime.skills.service import SkillService
 from marten_runtime.skills.snapshot import SkillSnapshot
 from marten_runtime.session.models import SessionMessage
 from tests.support.domain_builders import build_self_improve_adapter
+from tests.support.session_store_fixtures import temporary_sqlite_session_store
 from tests.support.scripted_llm import ConcurrentInterleavingLLMClient, ObservedLLMClient
 
 
@@ -194,111 +194,111 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
     def test_runtime_rebinds_same_turn_followup_request_and_runtime_tool_after_session_resume(
         self,
     ) -> None:
-        store = SessionStore()
-        source = store.create(
-            session_id="sess_source",
-            conversation_id="conv-current",
-            config_snapshot_id="cfg_bootstrap",
-            bootstrap_manifest_id="boot_default",
-            channel_id="http",
-        )
-        target = store.create(
-            session_id="sess_target",
-            conversation_id="conv-target",
-            config_snapshot_id="cfg_bootstrap",
-            bootstrap_manifest_id="boot_default",
-            channel_id="http",
-        )
-        store.append_message(source.session_id, SessionMessage.user("source user"))
-        store.append_message(source.session_id, SessionMessage.assistant("source assistant"))
-        store.append_message(target.session_id, SessionMessage.user("target user"))
-        store.append_message(target.session_id, SessionMessage.assistant("target assistant"))
+        with temporary_sqlite_session_store() as store:
+            source = store.create(
+                session_id="sess_source",
+                conversation_id="conv-current",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="http",
+            )
+            target = store.create(
+                session_id="sess_target",
+                conversation_id="conv-target",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="http",
+            )
+            store.append_message(source.session_id, SessionMessage.user("source user"))
+            store.append_message(source.session_id, SessionMessage.assistant("source assistant"))
+            store.append_message(target.session_id, SessionMessage.user("target user"))
+            store.append_message(target.session_id, SessionMessage.assistant("target assistant"))
 
-        history = InMemoryRunHistory()
-        source_previous_run = history.start(
-            session_id=source.session_id,
-            trace_id="trace_source_previous",
-            config_snapshot_id="cfg_bootstrap",
-            bootstrap_manifest_id="boot_default",
-        )
-        history.set_actual_usage(
-            source_previous_run.run_id,
-            NormalizedUsage(input_tokens=30, output_tokens=10, total_tokens=40),
-            stage="llm_first",
-        )
-        history.finish(source_previous_run.run_id, "final")
-        target_previous_run = history.start(
-            session_id=target.session_id,
-            trace_id="trace_target_previous",
-            config_snapshot_id="cfg_bootstrap",
-            bootstrap_manifest_id="boot_default",
-        )
-        history.set_actual_usage(
-            target_previous_run.run_id,
-            NormalizedUsage(input_tokens=80, output_tokens=20, total_tokens=100),
-            stage="llm_first",
-        )
-        history.finish(target_previous_run.run_id, "final")
+            history = InMemoryRunHistory()
+            source_previous_run = history.start(
+                session_id=source.session_id,
+                trace_id="trace_source_previous",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+            )
+            history.set_actual_usage(
+                source_previous_run.run_id,
+                NormalizedUsage(input_tokens=30, output_tokens=10, total_tokens=40),
+                stage="llm_first",
+            )
+            history.finish(source_previous_run.run_id, "final")
+            target_previous_run = history.start(
+                session_id=target.session_id,
+                trace_id="trace_target_previous",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+            )
+            history.set_actual_usage(
+                target_previous_run.run_id,
+                NormalizedUsage(input_tokens=80, output_tokens=20, total_tokens=100),
+                stage="llm_first",
+            )
+            history.finish(target_previous_run.run_id, "final")
 
-        tools = ToolRegistry()
-        llm = ScriptedLLMClient(
-            [
-                LLMReply(
-                    tool_name="session",
-                    tool_payload={"action": "resume", "session_id": target.session_id},
+            tools = ToolRegistry()
+            llm = ScriptedLLMClient(
+                [
+                    LLMReply(
+                        tool_name="session",
+                        tool_payload={"action": "resume", "session_id": target.session_id},
+                    ),
+                    LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
+                    LLMReply(final_text="已切换并查看完成"),
+                ]
+            )
+            runtime = RuntimeLoop(llm, tools, history)
+            tools.register(
+                "session",
+                lambda payload, *, tool_context=None, session_store=store: run_session_tool(
+                    payload,
+                    session_store=session_store,
+                    tool_context=tool_context,
                 ),
-                LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
-                LLMReply(final_text="已切换并查看完成"),
-            ]
-        )
-        runtime = RuntimeLoop(llm, tools, history)
-        tools.register(
-            "session",
-            lambda payload, *, tool_context=None, session_store=store: run_session_tool(
-                payload,
-                session_store=session_store,
-                tool_context=tool_context,
-            ),
-        )
-        tools.register(
-            "runtime",
-            lambda payload, *, tool_context=None, runtime_loop=runtime, run_history=history: run_runtime_tool(
-                payload,
-                tool_context=tool_context,
-                runtime_loop=runtime_loop,
-                run_history=run_history,
-            ),
-        )
-        agent = AgentSpec(
-            agent_id="main",
-            role="general_assistant",
-            app_id="main_agent",
-            allowed_tools=["session", "runtime"],
-        )
+            )
+            tools.register(
+                "runtime",
+                lambda payload, *, tool_context=None, runtime_loop=runtime, run_history=history: run_runtime_tool(
+                    payload,
+                    tool_context=tool_context,
+                    runtime_loop=runtime_loop,
+                    run_history=run_history,
+                ),
+            )
+            agent = AgentSpec(
+                agent_id="main",
+                role="general_assistant",
+                app_id="main_agent",
+                allowed_tools=["session", "runtime"],
+            )
 
-        events = runtime.run(
-            session_id=source.session_id,
-            message=f"恢复到 {target.session_id} 后告诉我当前上下文窗口",
-            trace_id="trace_rebind_resume",
-            agent=agent,
-            channel_id="http",
-            conversation_id="conv-current",
-            session_messages=store.get(source.session_id).history,
-            session_store=store,
-        )
+            events = runtime.run(
+                session_id=source.session_id,
+                message=f"恢复到 {target.session_id} 后告诉我当前上下文窗口",
+                trace_id="trace_rebind_resume",
+                agent=agent,
+                channel_id="http",
+                conversation_id="conv-current",
+                session_messages=store.get(source.session_id).history,
+                session_store=store,
+            )
 
-        self.assertEqual(events[-1].event_type, "final")
-        self.assertEqual(llm.requests[1].session_id, target.session_id)
-        self.assertEqual(
-            [item.content for item in llm.requests[1].conversation_messages],
-            ["target user", "target assistant"],
-        )
-        run = history.get(events[-1].run_id)
-        self.assertEqual(run.tool_calls[1]["tool_name"], "runtime")
-        self.assertEqual(
-            run.tool_calls[1]["tool_result"]["last_completed_run"]["run_id"],
-            target_previous_run.run_id,
-        )
+            self.assertEqual(events[-1].event_type, "final")
+            self.assertEqual(llm.requests[1].session_id, target.session_id)
+            self.assertEqual(
+                [item.content for item in llm.requests[1].conversation_messages],
+                ["target user", "target assistant"],
+            )
+            run = history.get(events[-1].run_id)
+            self.assertEqual(run.tool_calls[1]["tool_name"], "runtime")
+            self.assertEqual(
+                run.tool_calls[1]["tool_result"]["last_completed_run"]["run_id"],
+                target_previous_run.run_id,
+            )
 
     def test_runtime_passes_skill_heads_and_activated_bodies_into_llm_request(
         self,

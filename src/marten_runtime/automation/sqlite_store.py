@@ -3,13 +3,15 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from marten_runtime.automation.models import AutomationJob
+from marten_runtime.automation.models import (
+    AutomationJob,
+    build_automation_semantic_fingerprint,
+)
 from marten_runtime.automation.store import AutomationStore
 from marten_runtime.sqlite_support import connect_sqlite, prepare_sqlite_path
 
 class SQLiteAutomationStore(AutomationStore):
     def __init__(self, path: str | Path) -> None:
-        super().__init__()
         self.path = prepare_sqlite_path(path)
         self._init_schema()
 
@@ -98,41 +100,6 @@ class SQLiteAutomationStore(AutomationStore):
             )
         return cursor.rowcount > 0
 
-    def record_dispatched_window(
-        self,
-        *,
-        automation_id: str,
-        scheduled_for: str,
-        delivery_target: str,
-        dedupe_key: str,
-    ) -> bool:
-        try:
-            with self._connect() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO automation_dispatch_windows (
-                        automation_id, scheduled_for, delivery_target, dedupe_key
-                    ) VALUES (?, ?, ?, ?)
-                    """,
-                    (automation_id, scheduled_for, delivery_target, dedupe_key),
-                )
-        except sqlite3.IntegrityError:
-            return False
-        return True
-
-    def has_dispatched_window(self, automation_id: str, scheduled_for: str) -> bool:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT 1
-                FROM automation_dispatch_windows
-                WHERE automation_id = ? AND scheduled_for = ?
-                LIMIT 1
-                """,
-                (automation_id, scheduled_for),
-            ).fetchone()
-        return row is not None
-
     def _connect(self) -> sqlite3.Connection:
         return connect_sqlite(self.path)
 
@@ -177,17 +144,26 @@ class SQLiteAutomationStore(AutomationStore):
                     ADD COLUMN internal INTEGER NOT NULL DEFAULT 0
                     """
                 )
-            conn.execute(
+            legacy_rows = conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS automation_dispatch_windows (
-                    automation_id TEXT NOT NULL,
-                    scheduled_for TEXT NOT NULL,
-                    delivery_target TEXT NOT NULL,
-                    dedupe_key TEXT NOT NULL,
-                    PRIMARY KEY (automation_id, scheduled_for)
+                SELECT automation_id, name, app_id, agent_id, prompt_template,
+                       schedule_kind, schedule_expr, timezone, session_target,
+                       delivery_channel, delivery_target, skill_id, enabled, internal, semantic_fingerprint
+                FROM automations
+                WHERE LOWER(TRIM(COALESCE(agent_id, ''))) = 'assistant'
+                """
+            ).fetchall()
+            for row in legacy_rows:
+                job = self._row_to_job(row)
+                job.semantic_fingerprint = build_automation_semantic_fingerprint(job)
+                conn.execute(
+                    """
+                    UPDATE automations
+                    SET agent_id = ?, semantic_fingerprint = ?
+                    WHERE automation_id = ?
+                    """,
+                    (job.agent_id, job.semantic_fingerprint, job.automation_id),
                 )
-                """
-            )
     def _row_to_job(self, row: tuple[object, ...]) -> AutomationJob:
         return AutomationJob(
             automation_id=str(row[0]),

@@ -81,8 +81,9 @@ flowchart LR
   - `channel -> binding -> agent -> runtime context -> LLM -> builtin/MCP/skill -> LLM -> channel`
 - **治理层**
   - same-conversation FIFO lanes
-  - provider retry/backoff normalization
-  - long-thread compaction 与 context-usage accounting
+  - provider retry/backoff normalization + profile-level failover
+  - durable SQLite session persistence 与 bounded replay restore
+  - source-session compaction、replay budgeting，以及 current-turn context-usage accounting
 - **能力面**
   - LLM-first tool selection
   - builtin family tools、MCP servers、file-based skills
@@ -98,7 +99,7 @@ flowchart LR
 当前部署相关的结论也很直接：
 
 - runtime 主链已经完整到可以进入部署阶段
-- durable session persistence 仍然是当前最主要的 deferred durability slice
+- durable session continuity、显式 session switch，以及 replay-bounded restore 已经进入当前 continuity baseline
 - queue-first execution、planner/swarm orchestration、general memory-platform growth 继续留在当前基线之外
 
 ## 架构护栏
@@ -114,6 +115,8 @@ flowchart LR
   - general memory platform
 
 这也是为什么后续很多演进看起来都“刻意收敛”：即使某个能力有价值，只有在它能增强 runtime spine、而不会把系统中心从主链上挪走时，它才会进入基线。
+
+后续 continuity hardening 也遵守同一条规则：SQLite-backed sessions、`session.new` / `session.resume`、单一 replay-turn budget、switch-triggered compaction、background compaction jobs，以及 thin file-backed memory 都是以 bounded runtime continuity seam 的形态进入，而没有把系统推向 worker platform 或通用 memory system。
 
 ## 第 1 阶段：Baseline Runtime Spine
 

@@ -1,13 +1,12 @@
 import unittest
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.session.compacted_context import CompactedContext
 from marten_runtime.session.models import SessionMessage
 from marten_runtime.session.sqlite_store import SQLiteSessionStore
-from marten_runtime.session.store import SessionStore
 from marten_runtime.tools.builtins.session_tool import run_session_tool
+from tests.support.session_store_fixtures import temporary_sqlite_session_store
 
 
 class _FailingLLM:
@@ -15,33 +14,35 @@ class _FailingLLM:
         raise RuntimeError("compact failed")
 
 
-class _QueueingStore(SessionStore):
-    def __init__(self) -> None:
-        super().__init__()
+class _QueueingStore(SQLiteSessionStore):
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
         self.enqueued_jobs: list[dict[str, object]] = []
         self.fail_enqueue = False
 
     def enqueue_compaction_job(self, **payload):  # noqa: ANN003
         if self.fail_enqueue:
             raise RuntimeError("enqueue failed")
-        job = {
-            "job_id": f"job_{len(self.enqueued_jobs) + 1}",
-            "enqueue_status": "queued",
-            **payload,
-        }
+        job = super().enqueue_compaction_job(**payload)
         self.enqueued_jobs.append(job)
         return job
 
 
 class SessionToolTests(unittest.TestCase):
+    def _store(self):
+        return self.enterContext(temporary_sqlite_session_store())
+
+    def _queueing_store(self):
+        return self.enterContext(temporary_sqlite_session_store(store_cls=_QueueingStore))
+
     def test_session_tool_requires_explicit_action(self) -> None:
-        store = SessionStore()
+        store = self._store()
 
         with self.assertRaisesRegex(ValueError, "action is required"):
             run_session_tool({}, session_store=store, tool_context={})
 
     def test_session_tool_lists_and_shows_sessions(self) -> None:
-        store = SessionStore()
+        store = self._store()
         record = store.create(
             session_id="sess_1",
             conversation_id="conv-1",
@@ -76,7 +77,7 @@ class SessionToolTests(unittest.TestCase):
         self.assertEqual(detail["session"]["compact_summary"], "实现 list/show/new/resume。")
 
     def test_session_tool_list_marks_current_session(self) -> None:
-        store = SessionStore()
+        store = self._store()
         current = store.create(
             session_id="sess_current",
             conversation_id="conv-current",
@@ -117,7 +118,7 @@ class SessionToolTests(unittest.TestCase):
         self.assertFalse(listed["items"][1]["is_current"])
 
     def test_session_tool_show_prefers_compacted_summary_text(self) -> None:
-        store = SessionStore()
+        store = self._store()
         record = store.create(
             session_id="sess_summary",
             conversation_id="conv-summary",
@@ -154,7 +155,7 @@ class SessionToolTests(unittest.TestCase):
         )
 
     def test_session_tool_show_exposes_compact_metadata_fields(self) -> None:
-        store = SessionStore()
+        store = self._store()
         record = store.create(
             session_id="sess_summary_meta",
             conversation_id="conv-summary-meta",
@@ -186,7 +187,7 @@ class SessionToolTests(unittest.TestCase):
     def test_session_tool_show_defaults_to_current_session_when_payload_omits_session_id(
         self,
     ) -> None:
-        store = SessionStore()
+        store = self._store()
         record = store.create(
             session_id="sess_current_show",
             conversation_id="conv-current-show",
@@ -213,7 +214,7 @@ class SessionToolTests(unittest.TestCase):
         self.assertEqual(detail["session"]["session_title"], "当前会话")
 
     def test_session_tool_new_rebinds_current_conversation_to_fresh_session(self) -> None:
-        store = SessionStore()
+        store = self._store()
         current = store.create(
             session_id="sess_current",
             conversation_id="conv-1",
@@ -241,7 +242,7 @@ class SessionToolTests(unittest.TestCase):
         self.assertEqual(rebound, result["session"]["session_id"])
 
     def test_session_tool_new_keeps_new_session_visible_to_current_user(self) -> None:
-        store = SessionStore()
+        store = self._store()
         current = store.create(
             session_id="sess_current",
             conversation_id="conv-1",
@@ -287,7 +288,7 @@ class SessionToolTests(unittest.TestCase):
         self.assertEqual(listed["items"][0]["session_id"], new_session_id)
 
     def test_session_tool_new_preserves_current_active_agent_on_new_session(self) -> None:
-        store = SessionStore()
+        store = self._store()
         current = store.create(
             session_id="sess_current",
             conversation_id="conv-1",
@@ -321,7 +322,7 @@ class SessionToolTests(unittest.TestCase):
         self.assertEqual(result["session"]["agent_id"], "coding")
 
     def test_session_tool_new_returns_deferred_compaction_job_metadata(self) -> None:
-        store = _QueueingStore()
+        store = self._queueing_store()
         current = store.create(
             session_id="sess_current",
             conversation_id="conv-1",
@@ -369,7 +370,7 @@ class SessionToolTests(unittest.TestCase):
         self.assertEqual(len(store.enqueued_jobs), 1)
 
     def test_session_tool_resume_returns_enqueue_failure_metadata_without_blocking_switch(self) -> None:
-        store = _QueueingStore()
+        store = self._queueing_store()
         current = store.create(
             session_id="sess_current",
             conversation_id="conv-current",
@@ -432,51 +433,50 @@ class SessionToolTests(unittest.TestCase):
         )
 
     def test_session_tool_new_keeps_new_session_visible_to_current_user_with_sqlite_store(self) -> None:
-        with TemporaryDirectory() as tmpdir:
-            store = SQLiteSessionStore(Path(tmpdir) / "sessions.sqlite3")
-            current = store.create(
-                session_id="sess_current",
-                conversation_id="conv-1",
-                config_snapshot_id="cfg_bootstrap",
-                bootstrap_manifest_id="boot_default",
-                channel_id="http",
-            )
-            store.set_catalog_metadata(
-                current.session_id,
-                user_id="user-a",
-                agent_id="main",
-                session_title="current",
-                session_preview="current preview",
-            )
+        store = self._store()
+        current = store.create(
+            session_id="sess_current",
+            conversation_id="conv-1",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+        )
+        store.set_catalog_metadata(
+            current.session_id,
+            user_id="user-a",
+            agent_id="main",
+            session_title="current",
+            session_preview="current preview",
+        )
 
-            result = run_session_tool(
-                {"action": "new"},
-                session_store=store,
-                tool_context={
-                    "channel_id": "http",
-                    "conversation_id": "conv-1",
-                    "session_id": current.session_id,
-                    "user_id": "user-a",
-                },
-            )
-            new_session_id = result["session"]["session_id"]
-            detail = run_session_tool(
-                {"action": "show", "session_id": new_session_id},
-                session_store=store,
-                tool_context={"user_id": "user-a"},
-            )
-            listed = run_session_tool(
-                {"action": "list"},
-                session_store=store,
-                tool_context={"user_id": "user-a"},
-            )
+        result = run_session_tool(
+            {"action": "new"},
+            session_store=store,
+            tool_context={
+                "channel_id": "http",
+                "conversation_id": "conv-1",
+                "session_id": current.session_id,
+                "user_id": "user-a",
+            },
+        )
+        new_session_id = result["session"]["session_id"]
+        detail = run_session_tool(
+            {"action": "show", "session_id": new_session_id},
+            session_store=store,
+            tool_context={"user_id": "user-a"},
+        )
+        listed = run_session_tool(
+            {"action": "list"},
+            session_store=store,
+            tool_context={"user_id": "user-a"},
+        )
 
         self.assertEqual(result["session"]["user_id"], "user-a")
         self.assertEqual(detail["session"]["session_id"], new_session_id)
         self.assertEqual(listed["items"][0]["session_id"], new_session_id)
 
     def test_session_tool_list_only_returns_sessions_for_current_user(self) -> None:
-        store = SessionStore()
+        store = self._store()
         own = store.create(
             session_id="sess_own",
             conversation_id="conv-own",
@@ -516,7 +516,7 @@ class SessionToolTests(unittest.TestCase):
         self.assertEqual(listed["items"][0]["session_id"], own.session_id)
 
     def test_session_tool_show_rejects_session_from_other_user(self) -> None:
-        store = SessionStore()
+        store = self._store()
         target = store.create(
             session_id="sess_target",
             conversation_id="conv-target",
@@ -540,7 +540,7 @@ class SessionToolTests(unittest.TestCase):
             )
 
     def test_session_tool_without_stable_user_id_only_sees_anonymous_sessions(self) -> None:
-        store = SessionStore()
+        store = self._store()
         anonymous = store.create(
             session_id="sess_anon",
             conversation_id="conv-anon",
@@ -573,7 +573,7 @@ class SessionToolTests(unittest.TestCase):
         self.assertEqual(listed["items"][0]["session_id"], anonymous.session_id)
 
     def test_session_tool_resume_rebinds_current_conversation_to_existing_session(self) -> None:
-        store = SessionStore()
+        store = self._store()
         current = store.create(
             session_id="sess_current",
             conversation_id="conv-current",
@@ -616,7 +616,7 @@ class SessionToolTests(unittest.TestCase):
         )
 
     def test_session_tool_resume_rejects_session_from_other_user(self) -> None:
-        store = SessionStore()
+        store = self._store()
         current = store.create(
             session_id="sess_current",
             conversation_id="conv-current",
@@ -659,7 +659,7 @@ class SessionToolTests(unittest.TestCase):
             )
 
     def test_session_tool_resume_same_session_marks_noop_transition(self) -> None:
-        store = SessionStore()
+        store = self._store()
         current = store.create(
             session_id="sess_current",
             conversation_id="conv-current",
@@ -693,7 +693,7 @@ class SessionToolTests(unittest.TestCase):
         self.assertIsNone(result["transition"]["compaction_job"])
 
     def test_session_tool_resume_keeps_switch_success_when_compaction_is_deferred(self) -> None:
-        store = SessionStore()
+        store = self._store()
         current = store.create(
             session_id="sess_current",
             conversation_id="conv-current",

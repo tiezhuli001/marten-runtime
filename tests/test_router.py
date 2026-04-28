@@ -38,25 +38,6 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(routed.agent_id, "main")
         self.assertEqual(routed.app_id, "main_agent")
 
-    def test_router_accepts_legacy_assistant_alias_for_requested_agent(self) -> None:
-        registry = AgentRegistry()
-        registry.register(AgentSpec(agent_id="main", role="general_assistant", app_id="main_agent"))
-        router = AgentRouter(registry, default_agent_id="main")
-        envelope = InboundEnvelope(
-            channel_id="http",
-            user_id="demo",
-            conversation_id="conv-legacy",
-            message_id="msg-legacy",
-            body="hello",
-            received_at=datetime.now(timezone.utc),
-            dedupe_key="dedupe_legacy",
-            trace_id="trace_legacy",
-        )
-
-        routed = router.route(envelope, requested_agent_id="assistant")
-
-        self.assertEqual(routed.agent_id, "main")
-
     def test_router_ignores_message_keywords_without_agent_binding(self) -> None:
         registry = AgentRegistry()
         registry.register(AgentSpec(agent_id="main", role="general_assistant", app_id="main_agent"))

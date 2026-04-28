@@ -2,7 +2,6 @@ from pathlib import Path
 from shutil import copy2, copytree
 from tempfile import TemporaryDirectory
 
-from marten_runtime.automation.store import AutomationStore
 from marten_runtime.interfaces.http.app import create_app
 from marten_runtime.runtime.llm_client import DemoLLMClient
 from tests.support.event_loop import close_idle_event_loop
@@ -36,7 +35,6 @@ def build_test_app():
     runtime.llm_client_factory.cache_client("openai_gpt5", runtime.runtime_loop.llm)
     runtime.llm_client_factory.cache_client("minimax_m25", runtime.runtime_loop.llm)
     runtime.llm_client_factory.cache_client("kimi_k2", runtime.runtime_loop.llm)
-    runtime.automation_store = AutomationStore()
     runtime.channels_config = runtime.channels_config.model_copy(
         update={
             "feishu": runtime.channels_config.feishu.model_copy(

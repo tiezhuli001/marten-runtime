@@ -263,10 +263,10 @@ class RuntimeMCPGitHubShortcutTests(unittest.TestCase):
             {"github": {"state": "discovered", "tool_count": 2, "error": None}},
         )
 
-        self.assertIn('Use {"action":"call","server_id":"<exact server_id>","tool_name":"<exact tool name>","arguments":{...}}', catalog or "")
-        self.assertIn("do not rename or invent aliases", (catalog or "").lower())
-        self.assertIn("search_repositories", catalog or "")
-        self.assertIn("list_commits", catalog or "")
+        self.assertIn("- github:", catalog or "")
+        self.assertIn("transport=stdio", catalog or "")
+        self.assertIn("source=mcps.json", catalog or "")
+        self.assertIn("tools=[search_repositories, list_commits]", catalog or "")
 
     def test_normalize_mcp_request_infers_server_from_unique_tool_name(self) -> None:
         request = normalize_mcp_request(

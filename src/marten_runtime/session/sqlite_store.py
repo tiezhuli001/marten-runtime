@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from marten_runtime.apps.runtime_defaults import DEFAULT_AGENT_ID
 from marten_runtime.runtime.usage_models import NormalizedUsage
 from marten_runtime.session.compaction_job import SessionCompactionJob
 from marten_runtime.session.compacted_context import CompactedContext
@@ -866,6 +867,15 @@ class SQLiteSessionStore(SessionStore):
               AND TRIM(COALESCE(agent_id, '')) <> 'main'
               AND TRIM(COALESCE(active_agent_id, '')) IN ('', 'main')
             """
+        )
+        conn.execute(
+            """
+            UPDATE sessions
+            SET agent_id = ?, active_agent_id = ?
+            WHERE LOWER(TRIM(COALESCE(agent_id, ''))) = 'assistant'
+               OR LOWER(TRIM(COALESCE(active_agent_id, ''))) = 'assistant'
+            """,
+            (DEFAULT_AGENT_ID, DEFAULT_AGENT_ID),
         )
         conn.execute(
             """

@@ -1,33 +1,37 @@
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from marten_runtime.session.compacted_context import CompactedContext
 from marten_runtime.session.models import SessionMessage
-from marten_runtime.session.store import SessionStore
+from marten_runtime.session.sqlite_store import SQLiteSessionStore
 from marten_runtime.session.transition import execute_session_transition
+from tests.support.session_store_fixtures import temporary_sqlite_session_store
 
 
-class _QueueingStore(SessionStore):
-    def __init__(self) -> None:
-        super().__init__()
+class _QueueingStore(SQLiteSessionStore):
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
         self.enqueued_jobs: list[dict[str, object]] = []
         self.fail_enqueue = False
 
     def enqueue_compaction_job(self, **payload):  # noqa: ANN003
         if self.fail_enqueue:
             raise RuntimeError("enqueue failed")
-        job = {
-            "job_id": f"job_{len(self.enqueued_jobs) + 1}",
-            "enqueue_status": "queued",
-            **payload,
-        }
+        job = super().enqueue_compaction_job(**payload)
         self.enqueued_jobs.append(job)
         return job
 
 
 class SessionTransitionTests(unittest.TestCase):
+    def _store(self):
+        return self.enterContext(temporary_sqlite_session_store())
+
+    def _queueing_store(self):
+        return self.enterContext(temporary_sqlite_session_store(store_cls=_QueueingStore))
+
     def test_session_new_defers_source_compaction_when_history_exceeds_replay_tail(self) -> None:
-        store = _QueueingStore()
+        store = self._queueing_store()
         source = store.create(
             session_id="sess_source",
             conversation_id="conv-current",
@@ -83,7 +87,7 @@ class SessionTransitionTests(unittest.TestCase):
         self.assertEqual(len(store.enqueued_jobs), 1)
 
     def test_session_resume_defers_source_compaction_after_rebinding(self) -> None:
-        store = _QueueingStore()
+        store = self._queueing_store()
         source = store.create(
             session_id="sess_source",
             conversation_id="conv-current",
@@ -123,7 +127,10 @@ class SessionTransitionTests(unittest.TestCase):
         self.assertEqual(result.compaction_reason, "deferred")
         self.assertEqual(result.compaction_job["enqueue_status"], "queued")
         self.assertEqual(result.compaction_job["source_session_id"], source.session_id)
-        self.assertEqual(result.compaction_job["snapshot_message_count"], len(source.history))
+        self.assertEqual(
+            result.compaction_job["snapshot_message_count"],
+            len(store.get(source.session_id).history),
+        )
         self.assertEqual(
             store.resolve_session_for_conversation(
                 channel_id="http",
@@ -143,7 +150,7 @@ class SessionTransitionTests(unittest.TestCase):
         self.assertEqual(len(store.enqueued_jobs), 1)
 
     def test_session_transition_keeps_existing_checkpoint_when_enqueue_fails(self) -> None:
-        store = _QueueingStore()
+        store = self._queueing_store()
         source = store.create(
             session_id="sess_source",
             conversation_id="conv-current",
@@ -197,7 +204,7 @@ class SessionTransitionTests(unittest.TestCase):
         )
 
     def test_session_transition_skips_compaction_when_target_session_is_unchanged(self) -> None:
-        store = SessionStore()
+        store = self._store()
         source = store.create(
             session_id="sess_source",
             conversation_id="conv-current",
@@ -230,7 +237,7 @@ class SessionTransitionTests(unittest.TestCase):
         self.assertIsNone(result.compaction_job)
 
     def test_session_transition_skips_compaction_when_history_fits_replay_tail(self) -> None:
-        store = SessionStore()
+        store = self._store()
         source = store.create(
             session_id="sess_source",
             conversation_id="conv-current",
@@ -259,7 +266,7 @@ class SessionTransitionTests(unittest.TestCase):
         self.assertIsNone(result.compaction_job)
 
     def test_session_transition_skips_compaction_when_existing_checkpoint_is_up_to_date(self) -> None:
-        store = SessionStore()
+        store = self._store()
         source = store.create(
             session_id="sess_source",
             conversation_id="conv-current",

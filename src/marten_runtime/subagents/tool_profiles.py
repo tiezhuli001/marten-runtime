@@ -9,7 +9,6 @@ PROFILE_ALLOWED_TOOL_SELECTORS = {
 FORBIDDEN_CHILD_TOOLS = {"spawn_subagent", "cancel_subagent"}
 PROFILE_ORDER = ["restricted", "standard", "elevated"]
 PROFILE_ALIASES = {
-    "default": "standard",
     "mcp": "standard",
 }
 

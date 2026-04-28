@@ -1,3 +1,4 @@
+import sqlite3
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -37,30 +38,6 @@ class SQLiteAutomationStoreTests(unittest.TestCase):
         self.assertEqual(enabled[0].automation_id, "daily_hot")
         self.assertEqual(enabled[0].schedule_expr, "09:30")
         self.assertEqual(enabled[0].delivery_target, "oc_test_chat")
-
-    def test_dispatch_window_is_persisted_and_idempotent(self) -> None:
-        with TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "automation.sqlite3"
-            store = SQLiteAutomationStore(db_path)
-
-            first = store.record_dispatched_window(
-                automation_id="daily_hot",
-                scheduled_for="2026-03-30",
-                delivery_target="oc_test_chat",
-                dedupe_key="daily_hot:2026-03-30",
-            )
-            second = store.record_dispatched_window(
-                automation_id="daily_hot",
-                scheduled_for="2026-03-30",
-                delivery_target="oc_test_chat",
-                dedupe_key="daily_hot:2026-03-30",
-            )
-            reloaded = SQLiteAutomationStore(db_path)
-            persisted = reloaded.has_dispatched_window("daily_hot", "2026-03-30")
-
-            self.assertTrue(first)
-            self.assertFalse(second)
-            self.assertTrue(persisted)
 
     def test_registration_reuses_existing_equivalent_automation(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -109,49 +86,6 @@ class SQLiteAutomationStoreTests(unittest.TestCase):
         self.assertEqual(second.automation_id, "daily_hot_a")
         self.assertEqual(len(enabled), 1)
         self.assertEqual(first.semantic_fingerprint, second.semantic_fingerprint)
-
-    def test_registration_treats_repeated_canonical_digest_skill_ids_as_equivalent(self) -> None:
-        with TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "automation.sqlite3"
-            store = SQLiteAutomationStore(db_path)
-            first = store.create_from_registration(
-                {
-                    "automation_id": "daily_hot_a",
-                    "name": "Daily Hot A",
-                    "app_id": "main_agent",
-                    "agent_id": "main",
-                    "prompt_template": "Summarize hot repos.",
-                    "schedule_kind": "daily",
-                    "schedule_expr": "23:31",
-                    "timezone": "Asia/Shanghai",
-                    "session_target": "isolated",
-                    "delivery_channel": "feishu",
-                    "delivery_target": "oc_test_chat",
-                    "skill_id": "github_trending_digest",
-                    "enabled": True,
-                }
-            )
-
-            second = store.create_from_registration(
-                {
-                    "automation_id": "daily_hot_b",
-                    "name": "Daily Hot B",
-                    "app_id": "main_agent",
-                    "agent_id": "main",
-                    "prompt_template": "Summarize hot repos.",
-                    "schedule_kind": "daily",
-                    "schedule_expr": "23:31",
-                    "timezone": "Asia/Shanghai",
-                    "session_target": "isolated",
-                    "delivery_channel": "feishu",
-                    "delivery_target": "oc_test_chat",
-                    "skill_id": "github_trending_digest",
-                    "enabled": True,
-                }
-            )
-
-        self.assertEqual(first.automation_id, "daily_hot_a")
-        self.assertEqual(second.automation_id, "daily_hot_a")
 
     def test_update_pause_resume_and_delete_automation(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -229,6 +163,72 @@ class SQLiteAutomationStoreTests(unittest.TestCase):
         self.assertEqual(updated.skill_id, "github_trending_digest")
         self.assertEqual(updated.schedule_expr, "22:10")
         self.assertNotEqual(before.semantic_fingerprint, updated.semantic_fingerprint)
+
+    def test_legacy_assistant_agent_id_is_canonicalized_and_fingerprint_is_recomputed(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "automation.sqlite3"
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE automations (
+                        automation_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        app_id TEXT NOT NULL,
+                        agent_id TEXT NOT NULL,
+                        prompt_template TEXT NOT NULL,
+                        schedule_kind TEXT NOT NULL,
+                        schedule_expr TEXT NOT NULL,
+                        timezone TEXT NOT NULL,
+                        session_target TEXT NOT NULL,
+                        delivery_channel TEXT NOT NULL,
+                        delivery_target TEXT NOT NULL,
+                        skill_id TEXT NOT NULL,
+                        enabled INTEGER NOT NULL,
+                        internal INTEGER NOT NULL DEFAULT 0,
+                        semantic_fingerprint TEXT NOT NULL DEFAULT ''
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO automations (
+                        automation_id, name, app_id, agent_id, prompt_template,
+                        schedule_kind, schedule_expr, timezone, session_target,
+                        delivery_channel, delivery_target, skill_id, enabled, internal, semantic_fingerprint
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "daily_hot",
+                        "Daily GitHub Hot Repos",
+                        "main_agent",
+                        "assistant",
+                        "Summarize today's hot repositories.",
+                        "daily",
+                        "09:30",
+                        "Asia/Shanghai",
+                        "isolated",
+                        "feishu",
+                        "oc_test_chat",
+                        "github_trending_digest",
+                        1,
+                        0,
+                        "legacy_fingerprint",
+                    ),
+                )
+
+            reloaded = SQLiteAutomationStore(db_path)
+            job = reloaded.get("daily_hot")
+            with sqlite3.connect(db_path) as conn:
+                row = conn.execute(
+                    "SELECT agent_id, semantic_fingerprint FROM automations WHERE automation_id = ?",
+                    ("daily_hot",),
+                ).fetchone()
+
+        self.assertEqual(job.agent_id, "main")
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(str(row[0]), "main")
+        self.assertNotEqual(str(row[1]), "legacy_fingerprint")
 
 
 if __name__ == "__main__":

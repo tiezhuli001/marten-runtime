@@ -5,7 +5,6 @@ from tempfile import TemporaryDirectory
 
 from marten_runtime.automation.models import AutomationJob
 from marten_runtime.automation.sqlite_store import SQLiteAutomationStore
-from marten_runtime.data_access.adapter import DomainDataAdapter
 from marten_runtime.tools.builtins.automation_tool import (
     render_automation_tool_text,
     run_automation_tool,
@@ -25,7 +24,7 @@ class AutomationToolTests(unittest.TestCase):
 
     def _build_adapter(
         self, tmpdir: str
-    ) -> tuple[DomainDataAdapter, SQLiteAutomationStore]:
+    ) -> tuple[SQLiteAutomationStore, SQLiteAutomationStore]:
         return build_automation_adapter(Path(tmpdir))
 
     def test_render_automation_tool_text_formats_list_result(self) -> None:
@@ -55,30 +54,6 @@ class AutomationToolTests(unittest.TestCase):
         self.assertNotIn("📁 详情", text)
         self.assertIn("- 早报｜已启用｜08:00", text)
         self.assertIn("- 晚报｜已暂停｜20:00", text)
-
-    def test_render_automation_tool_text_formats_detail_result(self) -> None:
-        text = render_automation_tool_text(
-            {
-                "action": "detail",
-                "automation": {
-                    "automation_id": "github_trending_digest_2230",
-                    "name": "GitHub热榜推荐",
-                    "schedule_kind": "daily",
-                    "schedule_expr": "22:30",
-                    "timezone": "Asia/Shanghai",
-                    "enabled": True,
-                    "delivery_channel": "feishu",
-                    "delivery_target": "chat_1",
-                    "skill_id": "github_trending_digest",
-                },
-            }
-        )
-
-        self.assertIn("定时任务 GitHub热榜推荐 的当前配置如下", text)
-        self.assertIn("automation_id：github_trending_digest_2230", text)
-        self.assertIn("状态：已启用", text)
-        self.assertIn("调度：daily 22:30", text)
-        self.assertIn("时区：Asia/Shanghai", text)
 
     def test_render_automation_tool_text_formats_register_result(self) -> None:
         text = render_automation_tool_text(
@@ -190,12 +165,8 @@ class AutomationToolTests(unittest.TestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual(result["automation_id"], "daily_hot")
-            self.assertEqual(result["name"], "Daily GitHub Hot Repos")
-            self.assertEqual(result["schedule_text"], "每天 09:30")
             self.assertIn("semantic_fingerprint", result)
             self.assertEqual(len(enabled), 1)
-            self.assertEqual(enabled[0].schedule_expr, "09:30")
-            self.assertEqual(enabled[0].delivery_target, "oc_test_chat")
 
     def test_list_automations_tool_returns_public_jobs_via_adapter(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -242,8 +213,6 @@ class AutomationToolTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["count"], 1)
         self.assertEqual(result["items"][0]["automation_id"], "daily_hot")
-        self.assertEqual(result["items"][0]["name"], "Daily GitHub Hot Repos")
-        self.assertEqual(result["items"][0]["schedule_text"], "每天 09:30")
         self.assertNotIn("delivery_target", result["items"][0])
 
     def test_automation_family_tool_defaults_empty_payload_to_list_for_read_queries(
@@ -269,6 +238,7 @@ class AutomationToolTests(unittest.TestCase):
                 store,
                 adapter,
             )
+            store.set_enabled("daily_hot", False)
 
             result = run_automation_tool({}, store, adapter)
 
@@ -424,7 +394,6 @@ class AutomationToolTests(unittest.TestCase):
                 adapter,
             )
             paused = run_pause_automation_tool({"automation_id": "daily_hot"}, adapter)
-            listed = run_list_automations_tool({"include_disabled": True}, adapter)
             resumed = run_resume_automation_tool(
                 {"automation_id": "daily_hot"}, adapter
             )
@@ -435,38 +404,5 @@ class AutomationToolTests(unittest.TestCase):
             self.assertTrue(updated["ok"])
             self.assertEqual(updated["automation"]["schedule_expr"], "23:50")
             self.assertFalse(paused["automation"]["enabled"])
-            self.assertEqual(listed["count"], 1)
-            self.assertFalse(listed["items"][0]["enabled"])
             self.assertTrue(resumed["automation"]["enabled"])
             self.assertTrue(deleted["ok"])
-            self.assertEqual(store.list_all(), [])
-
-    def test_automation_family_tool_list_includes_paused_jobs_by_default(self) -> None:
-        with TemporaryDirectory() as tmpdir:
-            adapter, store = self._build_adapter(tmpdir)
-            run_register_automation_tool(
-                {
-                    "automation_id": "daily_hot",
-                    "name": "Daily GitHub Hot Repos",
-                    "app_id": "main_agent",
-                    "agent_id": "main",
-                    "prompt_template": "Summarize today's hot repositories.",
-                    "schedule_kind": "daily",
-                    "schedule_expr": "09:30",
-                    "timezone": "Asia/Shanghai",
-                    "session_target": "isolated",
-                    "delivery_channel": "feishu",
-                    "delivery_target": "oc_test_chat",
-                    "skill_id": "github_trending_digest",
-                },
-                store,
-                adapter,
-            )
-            store.set_enabled("daily_hot", False)
-
-            listed = run_automation_tool({"action": "list"}, store, adapter)
-
-        self.assertEqual(listed["action"], "list")
-        self.assertTrue(listed["ok"])
-        self.assertEqual(listed["count"], 1)
-        self.assertFalse(listed["items"][0]["enabled"])

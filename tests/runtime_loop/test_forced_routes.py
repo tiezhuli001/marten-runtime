@@ -173,11 +173,11 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
         self.assertEqual(
             events[-1].payload["text"],
-            "CloudWide851/easy-agent 最近一次提交是 **2026-04-01 10:24:49**（北京时间）。",
+            "这个仓库最近一次提交时间是 2026-04-01 10:24:49（北京时间）。",
         )
-        self.assertEqual(len(llm.requests), 1)
+        self.assertEqual(len(llm.requests), 2)
         run = history.get(events[-1].run_id)
-        self.assertEqual(run.llm_request_count, 1)
+        self.assertEqual(run.llm_request_count, 2)
         self.assertEqual(run.tool_calls[0]["tool_payload"]["tool_name"], "list_commits")
 
     def test_runtime_returns_error_when_llm_requests_tool_outside_agent_contract(
@@ -304,13 +304,13 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
     ) -> None:
         with TemporaryDirectory() as tmpdir:
             skills_root = Path(tmpdir) / "skills"
-            skill_dir = skills_root / "example_time"
+            skill_dir = skills_root / "test_time_skill"
             skill_dir.mkdir(parents=True)
             (skill_dir / "SKILL.md").write_text(
                 (
                     "---\n"
-                    "skill_id: example_time\n"
-                    "name: Example Time\n"
+                    "skill_id: test_time_skill\n"
+                    "name: Test Time Skill\n"
                     "description: Return current time guidance\n"
                     "enabled: true\n"
                     "agents: [main]\n"
@@ -339,7 +339,7 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
 
             events = runtime.run(
                 session_id="sess_auth_skill",
-                message="请读取 example_time 这个 skill 并简单概括它的用途",
+                message="请读取 test_time_skill 这个 skill 并简单概括它的用途",
                 trace_id="trace_auth_skill",
                 agent=agent,
             )

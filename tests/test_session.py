@@ -6,10 +6,13 @@ from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.usage_models import NormalizedUsage
 from marten_runtime.session.compacted_context import CompactedContext
 from marten_runtime.session.models import SessionMessage
-from marten_runtime.session.store import SessionStore
+from tests.support.session_store_fixtures import temporary_sqlite_session_store
 
 
 class SessionStoreTests(unittest.TestCase):
+    def _store(self):
+        return self.enterContext(temporary_sqlite_session_store())
+
     def test_compacted_context_serializes_preserved_tail_user_turns(self) -> None:
         compacted = CompactedContext(
             compact_id="cmp_tail_turns",
@@ -27,7 +30,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertNotIn("preserved_tail_count", payload)
 
     def test_create_session_freezes_snapshot_ids(self) -> None:
-        store = SessionStore()
+        store = self._store()
         snapshot = ConfigSnapshot()
 
         record = store.create(
@@ -43,7 +46,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(record.bootstrap_manifest_id, "boot_default")
 
     def test_append_message_and_mark_run_updates_session(self) -> None:
-        store = SessionStore()
+        store = self._store()
         record = store.create(
             session_id="sess_1",
             conversation_id="conv-1",
@@ -66,7 +69,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(updated.history[-1].content, "hello")
 
     def test_remove_last_message_if_match_removes_exact_trailing_message(self) -> None:
-        store = SessionStore()
+        store = self._store()
         store.create(
             session_id="sess_remove",
             conversation_id="conv-remove",
@@ -97,7 +100,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(updated.last_event_at, previous.created_at)
 
     def test_remove_last_message_if_match_keeps_history_when_message_differs(self) -> None:
-        store = SessionStore()
+        store = self._store()
         store.create(
             session_id="sess_keep",
             conversation_id="conv-keep",
@@ -126,7 +129,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(updated.last_event_at, control.created_at)
 
     def test_get_or_create_by_conversation_reuses_session(self) -> None:
-        store = SessionStore()
+        store = self._store()
 
         first = store.get_or_create_for_conversation(
             conversation_id="conv-1",
@@ -142,7 +145,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(first.session_id, second.session_id)
 
     def test_get_or_create_by_conversation_does_not_cross_bind_channels(self) -> None:
-        store = SessionStore()
+        store = self._store()
 
         http_session = store.get_or_create_for_conversation(
             conversation_id="conv-1",
@@ -160,7 +163,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertNotEqual(http_session.session_id, feishu_session.session_id)
 
     def test_empty_user_id_does_not_resolve_user_owned_conversation_binding(self) -> None:
-        store = SessionStore()
+        store = self._store()
         store.create(
             session_id="sess_user_a",
             conversation_id="conv-shared",
@@ -179,7 +182,7 @@ class SessionStoreTests(unittest.TestCase):
         )
 
     def test_bind_conversation_moves_session_to_new_conversation_exclusively(self) -> None:
-        store = SessionStore()
+        store = self._store()
         current = store.create(
             session_id="sess_current",
             conversation_id="conv-current",
@@ -219,7 +222,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(rebound.channel_id, "http")
 
     def test_session_store_persists_latest_compacted_context(self) -> None:
-        store = SessionStore()
+        store = self._store()
         store.create(
             session_id="sess_compact",
             conversation_id="conv-compact",
@@ -239,7 +242,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(updated.last_compacted_at, compacted.created_at)
 
     def test_session_store_updates_last_compacted_at_without_clobbering_history(self) -> None:
-        store = SessionStore()
+        store = self._store()
         store.create(
             session_id="sess_compact_2",
             conversation_id="conv-compact-2",
@@ -261,7 +264,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(updated.last_compacted_at, compacted.created_at)
 
     def test_session_store_persists_latest_actual_usage(self) -> None:
-        store = SessionStore()
+        store = self._store()
         store.create(
             session_id="sess_usage",
             conversation_id="conv-usage",
@@ -284,7 +287,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(updated.latest_actual_usage.total_tokens, 220)
 
     def test_session_store_persists_recent_tool_outcome_summaries_separately_from_history(self) -> None:
-        store = SessionStore()
+        store = self._store()
         store.create(
             session_id="sess_tool_summary",
             conversation_id="conv-tool-summary",
@@ -308,7 +311,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(updated.recent_tool_outcome_summaries[0].source_kind, "mcp")
 
     def test_create_child_session_preserves_parent_lineage(self) -> None:
-        store = SessionStore()
+        store = self._store()
         parent = store.create(
             session_id="sess_parent",
             conversation_id="conv-parent",
@@ -331,7 +334,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(store.get(child.session_id).parent_session_id, parent.session_id)
 
     def test_create_child_session_inherits_parent_owner_metadata(self) -> None:
-        store = SessionStore()
+        store = self._store()
         parent = store.create(
             session_id="sess_parent_owner",
             conversation_id="conv-parent-owner",
@@ -361,7 +364,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(child.active_agent_id, "coding")
 
     def test_create_child_session_can_use_target_agent_metadata(self) -> None:
-        store = SessionStore()
+        store = self._store()
         parent = store.create(
             session_id="sess_parent_target_agent",
             conversation_id="conv-parent-target-agent",
@@ -393,7 +396,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(child.active_agent_id, "coding")
 
     def test_create_session_exposes_catalog_metadata_defaults(self) -> None:
-        store = SessionStore()
+        store = self._store()
 
         record = store.create(
             session_id="sess_catalog",

@@ -5,6 +5,7 @@ This page answers one question: which value belongs in which file.
 ## Rules
 
 - `.env` only carries secrets and optional machine-local overrides.
+- `config/agents.toml` carries the runtime agent registry and selected-agent execution shape.
 - `config/*.example.toml` carries the published default templates.
 - `config/*.toml` is optional and should exist only for local overrides.
 - `apps/<app_id>/app.toml` carries app manifest and app-local bindings.
@@ -19,6 +20,7 @@ This page answers one question: which value belongs in which file.
 | Local OpenAI-compatible base URL override | `.env` | `OPENAI_API_BASE`, `MINIMAX_API_BASE`, `KIMI_API_BASE` |
 | Provider connection metadata | `config/providers.example.toml` or local `config/providers.toml` | `[providers.*]`, `adapter`, `base_url`, `api_key_env`, capability flags |
 | Default model/profile selection | `config/models.example.toml` or local `config/models.toml` | `default_profile`, `[profiles.*]`, `provider_ref`, `fallback_profiles` |
+| Runtime agent registry and agent-local app/profile/tool selection | `config/agents.toml` | `[agents.*]`, `enabled`, `app_id`, `allowed_tools`, `prompt_mode`, `model_profile`, `role` |
 | Runtime bind host/port defaults | `config/platform.example.toml` or local `config/platform.toml` | `[server].host`, `[server].port` |
 | Optional public HTTP base URL | `config/platform.example.toml` or local `config/platform.toml` | `[server].public_base_url` |
 | Session replay turn budget | `config/platform.example.toml` or local `config/platform.toml` | `[runtime].session_replay_user_turns` |
@@ -36,9 +38,39 @@ This page answers one question: which value belongs in which file.
 | App binding / manifest | `apps/<app_id>/app.toml` | app-local fields |
 | Model bootstrap instructions | `apps/<app_id>/*.md` | `AGENTS.md`, `TOOLS.md`, `SOUL.md`, `BOOTSTRAP.md` |
 
+## Provider Selection And Failover
+
+Provider ownership is split cleanly:
+
+- `config/providers*.toml` owns provider connection metadata and capability flags
+- `config/models*.toml` owns `default_profile`, each profile's `provider_ref`, and `fallback_profiles`
+- `.env` only carries secrets plus optional machine-local base URL overrides
+
+Failover order belongs to `fallback_profiles` only. Do not duplicate provider order in `.env` or channel-specific config.
+
+## Agent Registry And Selected-Agent Routing
+
+Agent ownership is split cleanly:
+
+- `config/agents.toml` owns the runtime-visible agent ids and each agent's `app_id`, `allowed_tools`, `prompt_mode`, and `model_profile`
+- `config/bindings.toml` owns channel/user/conversation routing defaults
+- inbound `requested_agent_id` can explicitly select one configured agent for a turn
+- the selected agent determines which app manifest and bootstrap assets are loaded for the live request
+
+When you want to route one agent to another app, tool surface, or model profile, change `config/agents.toml`.
+
+## Runtime-Owned Persistence Paths
+
+The continuity layer has two runtime-owned storage roots and neither is a published operator tuning surface:
+
+- sessions persist in `data/sessions.sqlite3`
+- thin user memory persists under `data/memory/`
+
+Thin user memory stores explicit cross-session user facts and preferences. Session history and self-improve lessons remain separate runtime slices.
+
 ## Session Restore Contract
 
-Session restore stays on the thin runtime path and remains bounded.
+Session restore stays on the thin runtime path, remains bounded, and now survives process restart through the SQLite-backed session store.
 
 Runtime-owned restore shape:
 
@@ -52,20 +84,19 @@ Operator surface:
 
 - default replay budget lives at `[runtime].session_replay_user_turns = 8`
 - local override lives at `SESSION_REPLAY_USER_TURNS`
+- `session.new` and `session.resume` may enqueue source-session compaction work while keeping the target restore immediate
 - this slice keeps one replay knob only
 
-## Planned GitHub Hot Repos Digest MVP
+## Current GitHub Hot Repos Automation Slice
 
-This planned MVP is intentionally narrow:
+This slice is intentionally narrow:
 
 - the user asks the main agent in chat to register a recurring digest
 - the runtime stores a recurring automation record
-- a thin scheduler dispatches an isolated automation turn
-- a dedicated skill uses GitHub MCP repo-discovery capability to gather repository candidates
-- the runtime sends one final digest to the configured target
 - the operator surface can inspect current recurring jobs through `GET /automations`
 - the main agent can inspect current recurring jobs through the narrow builtin `automation` family tool with `action=list`
 - recurring-job CRUD stays on the builtin `automation` family tool with `action=update/delete/pause/resume`
+- manual execution goes through `POST /automations/{id}/trigger`, which creates one isolated automation turn and delivers the final digest to the configured target
 
 Hard prerequisites:
 
@@ -75,8 +106,9 @@ Hard prerequisites:
 
 Semantic boundary:
 
-- MVP targets "today's hot repos at the user-configured time"
-- MVP does not promise exact parity with `github.com/trending` unless the configured MCP surface can actually provide that data
+- the current baseline persists recurring definitions and supports explicit manual trigger
+- due-window auto-dispatch is not part of the current runtime baseline
+- the slice does not promise exact parity with `github.com/trending` unless the configured MCP surface can actually provide that data
 
 ## Feishu
 

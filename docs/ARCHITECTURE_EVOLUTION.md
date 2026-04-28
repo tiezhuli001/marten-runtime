@@ -81,8 +81,9 @@ Today the architecture is easiest to read as five active layers plus four suppor
   - `channel -> binding -> agent -> runtime context -> LLM -> builtin/MCP/skill -> LLM -> channel`
 - **Governance**
   - same-conversation FIFO lanes
-  - provider retry/backoff normalization
-  - long-thread compaction and context-usage accounting
+  - provider retry/backoff normalization plus profile-level failover
+  - durable SQLite session persistence with bounded replay restore
+  - source-session compaction, replay budgeting, and current-turn context-usage accounting
 - **Capability surface**
   - LLM-first tool selection
   - builtin family tools, MCP servers, file-based skills
@@ -98,7 +99,7 @@ Today the architecture is easiest to read as five active layers plus four suppor
 The deployment-facing conclusion is now straightforward:
 
 - the runtime path is complete enough for deployment work
-- durable session persistence remains the main still-deferred durability slice
+- durable session continuity, explicit session switching, and replay-bounded restore are now part of the baseline continuity layer
 - queue-first execution, planner/swarm orchestration, and general memory-platform growth remain outside the current baseline
 
 ## Architectural Guardrails
@@ -114,6 +115,8 @@ All later stages sit under a small set of non-negotiable architecture constraint
   - a general memory platform
 
 This is why many later changes look narrow by design: even useful additions are accepted only when they strengthen the runtime spine without recentering the system away from it.
+
+Later continuity hardening followed the same rule: SQLite-backed sessions, `session.new` / `session.resume`, one replay-turn budget, switch-triggered compaction, background compaction jobs, and thin file-backed memory all entered as bounded runtime continuity seams instead of expanding into a worker platform or a general memory system.
 
 ## Stage 1 · Baseline Runtime Spine
 

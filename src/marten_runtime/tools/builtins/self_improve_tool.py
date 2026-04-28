@@ -1,4 +1,3 @@
-from marten_runtime.data_access.adapter import DomainDataAdapter
 from marten_runtime.self_improve.models import LessonCandidate
 from marten_runtime.self_improve.promotion import promote_skill_candidate, _validate_skill_slug
 from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
@@ -14,26 +13,26 @@ def _require_skill_candidate_status(current, *, allowed_statuses: set[str], acti
 
 def run_delete_lesson_candidate_tool(
     payload: dict,
-    adapter: DomainDataAdapter,
+    store: SQLiteSelfImproveStore,
 ) -> dict:
     candidate_id = str(payload["candidate_id"])
-    deleted = adapter.delete_item("lesson_candidate", item_id=candidate_id)
-    if not deleted["ok"]:
+    deleted = store.delete_candidate(candidate_id)
+    if not deleted:
         return {
             "ok": False,
             "error": "LESSON_CANDIDATE_NOT_FOUND",
             "candidate_id": candidate_id,
         }
-    return deleted
+    return {"ok": True, "candidate_id": candidate_id}
 
 
 def run_get_lesson_candidate_detail_tool(
     payload: dict,
-    adapter: DomainDataAdapter,
+    store: SQLiteSelfImproveStore,
 ) -> dict:
     candidate_id = str(payload["candidate_id"])
-    item = adapter.get_item("lesson_candidate", item_id=candidate_id)
-    return {"ok": True, "candidate": item}
+    item = store.get_candidate(candidate_id)
+    return {"ok": True, "candidate": item.model_dump(mode="json")}
 
 
 def run_get_self_improve_summary_tool(
@@ -67,23 +66,20 @@ def run_get_self_improve_summary_tool(
 
 def run_list_lesson_candidates_tool(
     payload: dict,
-    adapter: DomainDataAdapter,
+    store: SQLiteSelfImproveStore,
 ) -> dict:
     agent_id = str(payload.get("agent_id", "main"))
     status = payload.get("status")
-    filters = {"agent_id": agent_id}
-    if status is not None:
-        filters["status"] = str(status)
-    items = adapter.list_items(
-        "lesson_candidate",
-        filters=filters,
+    items = store.list_candidates(
+        agent_id=agent_id,
         limit=int(payload.get("limit", 20)),
+        status=str(status) if status is not None else None,
     )
     return {
         "ok": True,
         "agent_id": agent_id,
         "count": len(items),
-        "items": items,
+        "items": [item.model_dump(mode="json") for item in items],
     }
 
 
@@ -140,19 +136,19 @@ def run_save_lesson_candidate_tool(
 
 def run_self_improve_tool(
     payload: dict,
-    adapter: DomainDataAdapter,
     store: SQLiteSelfImproveStore,
+    _legacy_store: SQLiteSelfImproveStore | None = None,
     *,
     repo_root=None,
 ) -> dict:
     action = str(payload.get("action", "")).strip().lower()
     request = {key: value for key, value in payload.items() if key != "action"}
     if action == "list_candidates":
-        result = run_list_lesson_candidates_tool(request, adapter)
+        result = run_list_lesson_candidates_tool(request, store)
     elif action == "candidate_detail":
-        result = run_get_lesson_candidate_detail_tool(request, adapter)
+        result = run_get_lesson_candidate_detail_tool(request, store)
     elif action == "delete_candidate":
-        result = run_delete_lesson_candidate_tool(request, adapter)
+        result = run_delete_lesson_candidate_tool(request, store)
     elif action == "summary":
         result = run_get_self_improve_summary_tool(request, store)
     elif action == "list_evidence":

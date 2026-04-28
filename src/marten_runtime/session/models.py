@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
+from marten_runtime.agents.ids import canonicalize_runtime_agent_id
 from marten_runtime.runtime.usage_models import NormalizedUsage
 from marten_runtime.session.compacted_context import CompactedContext
 from marten_runtime.session.tool_outcome_summary import ToolOutcomeSummary
@@ -70,3 +71,8 @@ class SessionRecord(BaseModel):
     recent_tool_outcome_summaries: list[ToolOutcomeSummary] = Field(default_factory=list)
     tool_call_count: int = 0
     history: list[SessionMessage] = Field(default_factory=list)
+
+    def model_post_init(self, __context: object) -> None:
+        self.agent_id = canonicalize_runtime_agent_id(self.agent_id, default="") or ""
+        active = canonicalize_runtime_agent_id(self.active_agent_id, default="main")
+        self.active_agent_id = active or "main"

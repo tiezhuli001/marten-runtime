@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
+from marten_runtime.agents.ids import canonicalize_runtime_agent_id
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -23,6 +25,9 @@ class FailureEvent(BaseModel):
     fingerprint: str
     created_at: datetime = Field(default_factory=_utc_now)
 
+    def model_post_init(self, __context: object) -> None:
+        self.agent_id = canonicalize_runtime_agent_id(self.agent_id, default="main") or "main"
+
 
 class RecoveryEvent(BaseModel):
     recovery_id: str
@@ -35,6 +40,9 @@ class RecoveryEvent(BaseModel):
     success_evidence: str
     created_at: datetime = Field(default_factory=_utc_now)
 
+    def model_post_init(self, __context: object) -> None:
+        self.agent_id = canonicalize_runtime_agent_id(self.agent_id, default="main") or "main"
+
 
 class LessonCandidate(BaseModel):
     candidate_id: str
@@ -45,6 +53,9 @@ class LessonCandidate(BaseModel):
     status: str = "pending"
     score: float = 0.0
     created_at: datetime = Field(default_factory=_utc_now)
+
+    def model_post_init(self, __context: object) -> None:
+        self.agent_id = canonicalize_runtime_agent_id(self.agent_id, default="main") or "main"
 
 
 class ReviewTrigger(BaseModel):
@@ -59,6 +70,9 @@ class ReviewTrigger(BaseModel):
     semantic_fingerprint: str
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
+
+    def model_post_init(self, __context: object) -> None:
+        self.agent_id = canonicalize_runtime_agent_id(self.agent_id, default="main") or "main"
 
 
 class SkillCandidate(BaseModel):
@@ -79,6 +93,9 @@ class SkillCandidate(BaseModel):
     reviewed_at: datetime | None = None
     promoted_skill_id: str | None = None
 
+    def model_post_init(self, __context: object) -> None:
+        self.agent_id = canonicalize_runtime_agent_id(self.agent_id, default="main") or "main"
+
 
 class SystemLesson(BaseModel):
     lesson_id: str
@@ -89,3 +106,6 @@ class SystemLesson(BaseModel):
     active: bool = True
     created_at: datetime = Field(default_factory=_utc_now)
     superseded_at: datetime | None = None
+
+    def model_post_init(self, __context: object) -> None:
+        self.agent_id = canonicalize_runtime_agent_id(self.agent_id, default="main") or "main"

@@ -2,7 +2,7 @@
 
 <div align="center">
 
-Simplified openclaw-style agent runtime harness for `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel`.
+Simplified openclaw-style agent runtime harness for `channel -> binding -> runtime loop -> builtin tool / MCP / skill -> delivery / diagnostics`.
 
 [中文文档](./README_CN.md) · [Docs Index](./docs/README.md) · [Deployment Guide](./docs/DEPLOYMENT.md) · [Architecture Evolution](./docs/ARCHITECTURE_EVOLUTION.md) · [Architecture Changelog](./docs/ARCHITECTURE_CHANGELOG.md) · [ADR Index](./docs/architecture/adr/README.md) · [Config Surfaces](./docs/CONFIG_SURFACES.md)
 
@@ -29,7 +29,7 @@ Many agent projects either stop at prompt demos or expand too early into queues,
 
 Current center of gravity:
 
-`channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel`
+`channel -> binding -> runtime loop -> builtin tool / MCP / skill -> delivery / diagnostics`
 
 That is the path this repository optimizes for. If a change does not make that path clearer, safer, or easier to operate, it is probably not a priority.
 
@@ -48,12 +48,11 @@ That is the path this repository optimizes for. If a change does not make that p
 ```mermaid
 flowchart LR
     A["HTTP / Feishu Message"] --> B["Gateway + Binding"]
-    B --> C["Agent Router"]
-    C --> D["Runtime Context Assembly"]
-    D --> E["LLM"]
-    E -->|"tool call"| F["MCP / Builtin Tool"]
-    F --> E
-    E --> G["Channel Delivery"]
+    B --> C["Runtime Context Assembly"]
+    C --> D["Runtime Loop / LLM"]
+    D -->|"tool call"| E["Builtin Tool / MCP / Skill"]
+    E --> D
+    D --> F["Delivery + Diagnostics"]
 ```
 
 ## Highlights
@@ -69,23 +68,27 @@ flowchart LR
 Latest MVP-facing changes:
 
 - renamed the default runtime app to `main_agent` and repositioned its prompt assets around a primary execution-agent stance
-- added a narrow GitHub hot-repos automation path driven by the `automation` family tool with `action=register`, a due-window scheduler, isolated automation turns, and final-channel delivery
-- moved the public automation resource layer onto the thin shared adapter core while keeping automation lifecycle logic outside the adapter
+- enabled selected-agent app-manifest / bootstrap switching and per-agent model-profile switching on the live runtime path
+- standardized session persistence on SQLite, with bounded restart restore and explicit `session.new` / `session.resume` control
+- split provider ownership across `config/providers.toml` and `config/models.toml`, with `provider_ref` and `fallback_profiles` driving failover
+- removed the legacy routable `assistant` runtime-agent alias from the live registry surface and canonicalized runtime agent ids to `main`
+- added a narrow GitHub hot-repos automation path driven by the `automation` family tool with `action=register`, manual trigger entrypoints, isolated automation turns, and final-channel delivery
+- moved automation CRUD and presentation into direct store-backed runtime ownership while keeping automation lifecycle logic outside the tool surface
 - added the builtin `automation` family tool for recurring-job register/list/detail/update/delete/pause/resume flows
 - added the shared `Automation Management` skill so CRUD intent stays in `LLM + skill`, while store mutation stays in builtin tools
 - replaced the temporary GitHub skill approximation with one thin repo-local MCP sidecar for trending retrieval, while keeping the rest of the runtime GitHub surface MCP-first
-- added in-memory conversation lanes so same `channel_id + conversation_id` turns queue in FIFO order for HTTP `/messages` and Feishu interactive ingress
+- added same-conversation FIFO queueing so same `channel_id + conversation_id` turns serialize for HTTP `/messages` and Feishu interactive ingress
 - strengthened provider resilience with retryable `429` / `502` / `503` / `504` normalization and stable provider-specific runtime error codes
 - strengthened Feishu live-chain observability with run-level `tool_calls`, `llm_request_count`, and websocket diagnostics exposing the latest inbound `session_id`, `run_id`, and runtime trace correlation
 - hardened Feishu ingress by suppressing semantic duplicate replays, isolating runtime-handler failures to a single message, ignoring blank-text inbound events, and keeping duplicate websocket replays from clobbering the last accepted status
 - added a narrow self-improve loop that records repeated failures plus later recoveries, synthesizes lesson candidates through a dedicated skill, gates them through a structured LLM judgment plus deterministic checks, and injects accepted active lessons from runtime-managed `SYSTEM_LESSONS.md`
-- added a thin self-improve domain-query adapter so the default main agent can inspect candidate lessons and delete bad candidates through natural-language turns without exposing raw SQL, table names, or generic CRUD
+- added a direct store-backed self-improve management surface so the default main agent can inspect candidate lessons and delete bad candidates through natural-language turns without exposing raw SQL or table names
 
 ## Architecture
 
 `marten-runtime` is optimized around one stable path:
 
-`channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel`
+`channel -> binding -> runtime loop -> builtin tool / MCP / skill -> delivery / diagnostics`
 
 That path is the project center of gravity. If a change does not make this chain clearer, safer, or easier to operate, it should be treated as low priority.
 
@@ -107,15 +110,15 @@ The current MVP A/B path is implemented:
 - multi-main-agent private config loading and stable routing precedence
 - explicit HTTP `requested_agent_id` routing from inbound request to selected agent
 - selected agent identity propagation into live LLM request inputs
+- selected agent app-manifest / bootstrap switching on the live runtime path
+- selected agent model-profile switching through `config/agents.toml`
 - runtime context assembly with governed replay, compacted working context, and long-dialogue regression coverage
+- durable SQLite session persistence with cross-restart bounded restore
+- explicit session catalog control through `session.new` and `session.resume`, plus background source-session compaction
+- thin file-backed user memory as one bounded continuity slice for explicit cross-session user facts and preferences, separate from session history and self-improve lessons
 - skills as first-class runtime inputs
 - provider retry/backoff resilience
-
-Still intentionally deferred:
-
-- thin per-agent model-profile switching via cached client factory
-- per-agent app manifest / bootstrap prompt switching
-- durable session persistence
+- profile-level provider failover through `provider_ref` and `fallback_profiles`
 
 Also out of scope for now:
 
@@ -126,11 +129,11 @@ Also out of scope for now:
 
 Implemented narrow extensions:
 
-- chat-registered recurring digest path for GitHub hot repos
-- adapter-backed automation resource CRUD with domain tools kept stable for the LLM surface
+- chat-registered recurring digest records plus manual isolated-trigger execution for GitHub hot repos
+- direct store-backed automation resource CRUD with the builtin `automation` family surface kept stable for the LLM
 - internal self-improve automation that summarizes failure/recovery evidence into candidate lessons
-- main-agent-facing self-improve candidate inspection and candidate-only deletion through skill-routed builtin tools backed by a thin adapter core
-- both paths reuse the thin automation bridge and builtin tools instead of introducing a worker-first platform
+- main-agent-facing self-improve candidate inspection and candidate-only deletion through skill-routed builtin tools backed by runtime-owned stores
+- both paths stay on builtin tools plus skills instead of introducing a worker-first platform
 
 ## Repository Layout
 
@@ -193,6 +196,7 @@ Configuration boundaries:
 
 - `.env`: secrets and machine-local overrides only
 - `mcps.json`: live MCP server definitions and optional tool hints
+- `config/agents.toml`: runtime agent registry, app binding, tool surface, and model profile selection
 - `config/*.example.toml`: published template defaults
 - `config/*.toml`: optional local overrides for the corresponding example file
 - `apps/<app_id>/*.md`: bootstrap and agent behavior assets
@@ -202,6 +206,7 @@ Minimal practical setup:
 - set provider secrets in `.env`; the committed shortest paths are `OPENAI_API_KEY`, `MINIMAX_API_KEY`, and `KIMI_API_KEY`
 - keep provider connection metadata in `config/providers.toml`
 - keep model/profile selection in `config/models.toml`
+- keep per-agent app/profile/tool selection in `config/agents.toml`
 - set `default_profile` or update `profiles.openai_gpt5` / `profiles.minimax_m25` / `profiles.kimi_k2` when you want another live profile
 - set `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY` in `.env` when you want external tracing in Langfuse
 - optionally copy `config/*.example.toml` to `config/*.toml` only for local overrides

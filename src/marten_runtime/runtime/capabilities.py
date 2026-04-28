@@ -359,7 +359,7 @@ def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
                 "The restricted profile only has runtime, skill, and time.",
                 "Use tool_profile=standard or tool_profile=mcp for MCP, web/API, or other external live data because those child tasks need MCP access.",
                 "Use tool_profile=restricted only when the child should stay on runtime, skill, and time.",
-                "Omit optional fields when defaults are already correct; do not send placeholder values such as agent_id=default or context_mode=minimal.",
+                "Omit optional fields when defaults are already correct; do not send placeholder values such as agent_id=default.",
                 "Only use acceptance/waiting wording such as 已受理, 后台执行中, or 请等待子 agent 返回结果 after this turn actually called spawn_subagent and received an accepted/queued/running result; do not infer current task state from historical summaries.",
             ],
             examples=[
@@ -373,21 +373,19 @@ def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
                     "label": {"type": "string"},
                     "tool_profile": {
                         "type": "string",
-                        "enum": ["restricted", "standard", "elevated", "mcp", "default"],
+                        "enum": ["restricted", "standard", "elevated", "mcp"],
                         "description": (
                             "Omit the field to get the default standard behavior. "
                             "restricted exposes runtime/skill/time only. "
-                            "standard or mcp should be used for MCP, web/API, or other external live-data tasks because they need MCP access. "
-                            "default aliases to standard for compatibility."
+                            "standard or mcp should be used for MCP, web/API, or other external live-data tasks because they need MCP access."
                         ),
                     },
                     "context_mode": {
                         "type": "string",
-                        "enum": ["brief_only", "brief_plus_snapshot", "minimal"],
+                        "enum": ["brief_only", "brief_plus_snapshot"],
                         "description": (
                             "Usually omit this and keep the default brief_only behavior. "
-                            "Use brief_plus_snapshot only when the child needs the parent compacted snapshot. "
-                            "minimal aliases to brief_only for compatibility."
+                            "Use brief_plus_snapshot only when the child needs the parent compacted snapshot."
                         ),
                     },
                     "notify_on_finish": {"type": "boolean"},

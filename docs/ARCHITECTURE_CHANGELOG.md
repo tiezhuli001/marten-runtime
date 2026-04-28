@@ -9,7 +9,7 @@ Use it to answer:
 - which ADR or design doc is now authoritative
 - what verification proved the new baseline
 
-Do not use this file for day-to-day task tracking. Local continuity belongs in a local-only `STATUS.md`.
+Do not use this file for day-to-day task tracking. Local branch continuity belongs in the compact `STATUS.md`.
 
 Historical verification commands in older entries may still reference pre-2026-04-11 mega-file test modules such as `tests.test_feishu` or `tests.test_runtime_loop`. For current runnable verification entrypoints, follow the active README / docs index / slimming plans instead of replaying those historical command blocks verbatim.
 
@@ -19,10 +19,118 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
 
 - Stable architectural decisions live in `docs/architecture/adr/`.
 - Time-ordered architecture evolution is recorded here.
-- Detailed execution history may still exist in local `STATUS.md`, but `STATUS.md` is not a repository source of truth.
+- Detailed execution continuity may still exist in local `STATUS.md`, but `STATUS.md` is not a repository source of truth.
 - If a change updates the runtime boundary, default capability surface, or long-lived subsystem role, add an entry here.
 
 ## Entries
+
+### 2026-04-28: Legacy `assistant` Runtime-Agent Alias Was Removed From The Registry Surface
+
+- Change:
+  - the runtime registry no longer routes `assistant` as a live agent id
+  - the active child-ingress canonical surface stays on omitted-or-explicit `standard` plus `brief_only` / `brief_plus_snapshot`
+  - compatibility moved to explicit normalization and migration boundaries:
+    - HTTP ingress `requested_agent_id`
+    - loaded binding rules
+    - `spawn_subagent` parent/payload agent ids
+    - session / automation / self-improve SQLite agent-id rows
+- Why:
+  - the canonical default runtime agent has already stabilized on `main`
+  - keeping the alias inside `AgentRegistry.get(...)` left cleanup truth in the wrong layer and made live routing depend on compatibility fallback instead of canonical ingress values
+  - explicit normalization keeps the main chain stable while shrinking the registry surface
+- Source of truth:
+  - `src/marten_runtime/agents/ids.py`
+  - `src/marten_runtime/agents/registry.py`
+  - `src/marten_runtime/agents/bindings.py`
+  - `src/marten_runtime/gateway/ingress.py`
+  - `src/marten_runtime/tools/builtins/spawn_subagent_tool.py`
+  - `src/marten_runtime/session/sqlite_store.py`
+  - `src/marten_runtime/automation/sqlite_store.py`
+  - `src/marten_runtime/self_improve/sqlite_store.py`
+- Verification:
+  - targeted compatibility bundle:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_bindings tests.test_router tests.test_gateway tests.test_session tests.test_sqlite_session_store tests.test_session_transition tests.test_automation tests.test_automation_store tests.test_self_improve_store tests.tools.test_subagent_tools tests.test_subagent_service tests.contracts.test_runtime_contracts`
+      - pass (`160` tests)
+  - hygiene:
+    - `git diff --check`
+      - pass
+    - `PYTHONPATH=src .venv/bin/python -m compileall -q src tests`
+      - pass
+
+### 2026-04-27: Session Persistence Is Now a SQLite-Only Runtime Track
+
+- Change:
+  - `SQLiteSessionStore` is now the only concrete runtime session-store implementation on the repository runtime path
+  - `src/marten_runtime/session/store.py` now defines the `SessionStore` contract only and no longer carries an in-memory session state machine
+  - dependent-owner and contract-owner session tests now exercise temporary SQLite-backed stores instead of a separate in-memory runtime shape
+- Why:
+  - production runtime had already standardized on SQLite session persistence
+  - keeping a second concrete in-memory session engine in `src/` created behavior drift risk, duplicate maintenance, and false confidence from memory-only tests
+  - the cleanup keeps the runtime spine coherent without widening into a new storage abstraction or product-surface redesign
+- Source of truth:
+  - `src/marten_runtime/session/store.py`
+  - `src/marten_runtime/session/sqlite_store.py`
+  - `src/marten_runtime/interfaces/http/bootstrap_runtime_support.py`
+  - `src/marten_runtime/session/transition.py`
+  - `src/marten_runtime/subagents/service.py`
+- Verification:
+  - contract-owner + dependent-owner regression bundle:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_session tests.test_sqlite_session_store tests.tools.test_session_tool tests.test_session_transition tests.test_session_compaction_worker tests.test_subagent_service tests.test_subagent_runtime_loop tests.test_subagent_store tests.test_gateway tests.runtime_loop.test_direct_rendering_paths`
+      - pass (`150` tests)
+  - integration guard bundle:
+    - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_acceptance tests.test_http_runtime_diagnostics tests.test_session_restart_integration tests.contracts.test_subagent_contracts tests.tools.test_subagent_tools tests.test_self_improve_integration tests.runtime_loop.test_tool_followup_and_recovery tests.runtime_loop.test_context_status_and_usage tests.test_runtime_context tests.test_runtime_capabilities tests.test_llm_client tests.tools.test_runtime_and_skill_tools tests.feishu.test_delivery tests.contracts.test_runtime_contracts`
+      - pass (`229` tests)
+  - direct-construction guard:
+    - `rg -n "= SessionStore\(" tests src -g'*.py'`
+      - pass (no matches)
+  - concrete-subclass guard:
+    - `rg -n "class .*\(SessionStore\)" src tests -g'*.py'`
+      - pass (only `src/marten_runtime/session/sqlite_store.py`)
+  - simulated Feishu full-chain smoke on `http://127.0.0.1:8017`:
+    - evidence file:
+      - `/tmp/marten_session_single_track_smoke_20260427_session-single-track-20260427-b8bef7a5.json`
+    - protected checks:
+      - `store_kind=sqlite`
+      - `session.new` target switch preserved
+      - `session.resume` target continuity preserved
+      - subagent child run succeeded
+      - token accounting populated on plain / builtin / MCP follow-up / subagent / new-session-context / resume-followup-context
+      - Feishu final card rendered on protected smoke turns
+
+### 2026-04-27: April 14-25 Archive Wave Was Absorbed Into Active Runtime Docs Before Removal
+
+- Change:
+  - active docs now state the current continuity and provider baseline directly on the primary reading path:
+    - durable SQLite session persistence
+    - explicit `session.new` / `session.resume` switching with bounded replay restore
+    - persisted compaction jobs plus background source-session compaction
+    - thin file-backed memory as a bounded continuity slice
+    - provider config split across `config/providers.toml` and `config/models.toml`, with `provider_ref` and `fallback_profiles` driving failover
+    - optional Langfuse observability as a support slice
+  - the completed 2026-04-14 through 2026-04-25 archive plan/spec wave is no longer kept under `docs/archive/`
+- Why:
+  - that archive wave had become the largest remaining historical-doc surface in the repository
+  - active docs still had drift on deployment and session-durability reality
+  - readers can now recover the durable runtime contract from the active docs path without depending on removed stage plans
+- Source of truth:
+  - `README.md`
+  - `docs/README.md`
+  - `docs/DEPLOYMENT.md`
+  - `docs/DEPLOYMENT_CN.md`
+  - `docs/ARCHITECTURE_EVOLUTION.md`
+  - `docs/ARCHITECTURE_EVOLUTION_CN.md`
+  - `docs/CONFIG_SURFACES.md`
+  - `src/marten_runtime/interfaces/http/bootstrap_runtime.py`
+  - `src/marten_runtime/session/sqlite_store.py`
+  - `src/marten_runtime/session/transition.py`
+  - `src/marten_runtime/session/compaction_worker.py`
+  - `src/marten_runtime/runtime/provider_registry.py`
+- Verification:
+  - active-doc drift review against the current runtime bootstrap, session store, transition, compaction-worker, and provider-registry code paths
+  - pending-phrasing drift scan on the active README and docs path
+    - pass
+  - removed-archive-link scan on the active README and docs path
+    - pass
 
 ### 2026-04-25: Feishu Structured Replies Now Persist Durable Plain Text While Cards Keep Compact Presentation
 
@@ -48,7 +156,10 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
   - session history, replay, restart, and plain HTTP readers now receive the same durable information content that the Feishu card body communicates
   - live Feishu presentation keeps the compact lead and structured card body instead of re-rendering from the durable plain sink
 - Source of truth:
-  - `docs/2026-04-25-final-text-history-feishu-card-durability-consistency-implementation-plan.md`
+  - `src/marten_runtime/channels/output_normalization.py`
+  - `src/marten_runtime/channels/feishu/rendering.py`
+  - `src/marten_runtime/channels/feishu/delivery.py`
+  - `src/marten_runtime/interfaces/http/bootstrap_handlers.py`
   - `docs/architecture/adr/0004-llm-first-tool-routing-boundary.md`
 - Verification:
   - chunk 3 sink + delivery regressions:
@@ -146,6 +257,7 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
   - recovery and loop finalization now share the same execution-derived evidence source, including bounded retry/fallback handling for partial multi-tool summaries:
     - `src/marten_runtime/runtime/recovery_flow.py`
     - `src/marten_runtime/runtime/loop.py`
+  - the transcript remains canonical, the ledger stays current-turn execution-derived, and the validator stays bounded to omission / empty-final / false-execution checks instead of becoming a second routing layer
   - run diagnostics now persist bounded finalization state:
     - assessment
     - request kind
@@ -159,8 +271,10 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
   - successful multi-tool chains could still end with thin answers that omitted current-turn results
   - operators needed one inspectable run-level record of whether the runtime accepted, retried, or recovered the final answer
 - Source of truth:
-  - `docs/2026-04-24-current-turn-evidence-ledger-finalization-design.md`
-  - `docs/2026-04-24-current-turn-evidence-ledger-finalization-implementation-plan.md`
+  - `src/marten_runtime/runtime/llm_message_support.py`
+  - `src/marten_runtime/runtime/tool_followup_support.py`
+  - `src/marten_runtime/runtime/recovery_flow.py`
+  - `src/marten_runtime/runtime/history.py`
   - `docs/architecture/adr/0004-llm-first-tool-routing-boundary.md`
 - Verification:
   - focused diagnostics + recovery regressions:
@@ -199,9 +313,9 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
   - Feishu card rendering could already be correct while stored history or top-level text still retained protocol residue such as trailing fenced closers
   - the durable fix was one shared boundary at the channel/finalization edge, while keeping runtime loop output as raw text
 - Source of truth:
-  - `docs/2026-04-24-terminal-output-normalization-implementation-plan.md`
+  - `src/marten_runtime/channels/output_normalization.py`
+  - `src/marten_runtime/interfaces/http/channel_event_serialization.py`
   - `docs/2026-04-01-feishu-generic-card-protocol-design.md`
-  - `docs/2026-04-22-generic-loop-finalization-contract-design.md`
 - Verification:
   - focused normalization regressions:
     - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_gateway tests.test_http_event_serialization tests.feishu.test_rendering tests.test_feishu_rendering_support`
@@ -243,6 +357,7 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
     - `accepted`
     - `retryable_degraded`
     - `unrecoverable`
+  - terminal direct render stays terminal-only, while deterministic fallback consumes only ordered safe `recovery_fragment`s plus loop-owned round-trip facts when needed
   - successful tool chains now get one bounded `finalization_retry` request that:
     - keeps `tool_history`
     - exposes no callable tools
@@ -258,8 +373,8 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
     - ADR 0004 LLM-first tool routing
   - the durable fix was one generic post-tool finalization contract with bounded retry and truthful fallback
 - Source of truth:
-  - `docs/2026-04-22-generic-loop-finalization-contract-design.md`
-  - `docs/2026-04-22-generic-loop-finalization-contract-implementation-plan.md`
+  - `src/marten_runtime/runtime/recovery_flow.py`
+  - `src/marten_runtime/runtime/loop.py`
   - `docs/architecture/adr/0001-thin-harness-boundary.md`
   - `docs/architecture/adr/0004-llm-first-tool-routing-boundary.md`
 - Verification:
@@ -605,8 +720,8 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
     - move family-level direct-render policy into a small deterministic seam rather than spreading action-specific branches through the runtime loop
 - Source of truth:
   - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
-  - `/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/runtime/direct_rendering.py`
-  - `/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/tools/builtins/automation_tool.py`
+  - `src/marten_runtime/runtime/direct_rendering.py`
+  - `src/marten_runtime/tools/builtins/automation_tool.py`
 - Verification:
   - focused TDD / regression:
     - `PYTHONPATH=src python -m unittest -v tests.test_tools.ToolTests.test_render_automation_tool_text_formats_detail_result tests.test_tools.ToolTests.test_render_automation_tool_text_formats_register_result tests.test_tools.ToolTests.test_render_automation_tool_text_formats_pause_resume_update_delete_results tests.test_runtime_loop.RuntimeLoopTests.test_runtime_uses_llm_first_for_natural_language_automation_detail_query tests.test_runtime_loop.RuntimeLoopTests.test_runtime_allows_main_agent_to_register_automation_via_family_tool tests.test_runtime_loop.RuntimeLoopTests.test_runtime_does_not_misroute_automation_registration_prompt_to_trending_fast_path`
@@ -702,7 +817,7 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
 - Source of truth:
   - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
   - [2026-04-07 LLM Tool Episode Summary Design](./archive/2026-04-07-llm-tool-episode-summary-design.md)
-  - `/Users/litiezhu/workspace/github/marten-runtime/tests/test_runtime_loop.py`
+  - `tests/test_runtime_loop.py`
   - local continuity details in `STATUS.md`
 - Verification:
   - `PYTHONPATH=src python -m unittest -v tests.test_runtime_lanes tests.test_runtime_loop tests.test_feishu tests.test_contract_compatibility`
@@ -904,10 +1019,10 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
 ### 2026-04-05: GitHub Trending Became A Repo-Local MCP Sidecar Instead Of A Skill-Only Approximation
 
 - Change:
-  - added one repo-local stdio MCP sidecar at [github_trending.py](/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/mcp_servers/github_trending.py)
+  - added one repo-local stdio MCP sidecar at [github_trending.py](../src/marten_runtime/mcp_servers/github_trending.py)
   - the new sidecar exposes exactly one tool:
     - `trending_repositories`
-  - registered the sidecar through [mcps.json](/Users/litiezhu/workspace/github/marten-runtime/mcps.json) instead of adding a runtime builtin or GitHub-specific routing branch
+  - registered the sidecar through [mcps.json](../mcps.json) instead of adding a runtime builtin or GitHub-specific routing branch
   - the temporary GitHub skill bridge was first narrowed and has now been removed; trending requests now rely on the MCP sidecar plus automation-boundary compatibility instead of a GitHub-specific skill file
 - Why:
   - the upstream official GitHub MCP surface currently exposes repository search but not a real trending feed
@@ -931,9 +1046,9 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
 
 - Change:
   - finalized the Feishu outbound boundary around:
-    - one generic renderer in [rendering.py](/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/channels/feishu/rendering.py)
-    - transport-only delivery in [delivery.py](/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/channels/feishu/delivery.py)
-    - one thin always-on Feishu skill in [feishu_channel_formatting/SKILL.md](/Users/litiezhu/workspace/github/marten-runtime/skills/feishu_channel_formatting/SKILL.md)
+    - one generic renderer in [rendering.py](../src/marten_runtime/channels/feishu/rendering.py)
+    - transport-only delivery in [delivery.py](../src/marten_runtime/channels/feishu/delivery.py)
+    - one thin always-on Feishu skill in [feishu_channel_formatting/SKILL.md](../skills/feishu_channel_formatting/SKILL.md)
   - the generic renderer now owns:
     - protocol parsing for observed provider output shapes
     - one schema `2.0` card skeleton

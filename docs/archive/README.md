@@ -1,44 +1,36 @@
 # Archive Index
 
-This directory holds completed plans and one-off audits that remain useful for traceability but are no longer part of the primary reading path.
+This directory holds a small set of historical documents kept only for audit traceability.
 
-## What Belongs Here
+## What Stays Here
 
-- completed implementation plans
-- cleanup audits
-- architecture audits that were superseded by ADRs plus `ARCHITECTURE_CHANGELOG.md`
+- superseded design history that still helps explain older code or cleanup decisions
+- older cleanup / architecture audits
+- a short list of archived execution plans whose durable truth already lives in active docs
 
-## Current Archived Items
+## Current Groups
 
-- `2026-03-31-agent-domain-query-adapter-design.md`
-- `2026-03-31-automation-domain-adapter-design.md`
-- `2026-04-06-thin-llm-context-compaction-design.md`
-- `2026-04-07-context-usage-accuracy-design.md`
-- `2026-04-07-llm-tool-episode-summary-design.md`
-- `audits/ARCHITECTURE_AUDIT.md`
-- `audits/2026-03-31-repo-cleanup-audit.md`
-- `plans/2026-04-01-bootstrap-assembly-hygiene-plan.md`
-- `plans/2026-04-01-feishu-message-pipeline-unification-plan.md`
-- `plans/2026-04-05-github-trending-mcp-plan.md`
-- `plans/2026-04-07-context-usage-accuracy-plan.md`
-- `plans/2026-04-07-llm-tool-episode-summary-plan.md`
-- `plans/2026-04-07-thin-llm-context-compaction-plan.md`
-- `plans/2026-04-05-delete-github-hot-repos-digest-plan.md`
-- `plans/2026-04-11-repo-slimming-summary.md`
-
-## Archive Groups
-
+- root archived design notes:
+  - `2026-04-06-thin-llm-context-compaction-design.md`
+  - `2026-04-07-context-usage-accuracy-design.md`
+  - `2026-04-07-llm-tool-episode-summary-design.md`
+- `audits/`
+  - older architecture and cleanup audits kept only when they still carry unique traceability
 - `branch-evolution/`
-  - 2026-04-09 fast-path inventory / exit strategy, preserved as the only remaining branch-phase decision note from that slice
+  - one retained fast-path inventory note from the 2026-04-09 branch-evolution slice
+- `plans/`
+  - older archived execution plans that still provide traceability for pre-2026-04-14 work
+  - the compressed `STATUS.md` history summary from 2026-04-28
+
+## Removed After Absorption
+
+The completed 2026-04-14 through 2026-04-25 plan/spec wave was removed on 2026-04-27 after its durable truth was absorbed into `README.md`, `docs/DEPLOYMENT*.md`, `docs/ARCHITECTURE_EVOLUTION*.md`, `docs/ARCHITECTURE_CHANGELOG.md`, and `docs/CONFIG_SURFACES.md`.
+
+The 2026-03-31 adapter-wave archive trio was removed on 2026-04-28 after the direct-store runtime baseline became the only live control-plane shape in code, tests, `README.md`, `docs/README.md`, and `docs/ARCHITECTURE_CHANGELOG.md`.
 
 ## Rules
 
-- Do not treat archive docs as the current source of truth.
+- Archive is not part of the primary reading path.
 - Stable architecture truth lives in `docs/architecture/adr/` and `docs/ARCHITECTURE_CHANGELOG.md`.
-- Archive is intentionally small; move docs here only when they still carry unique traceability value after summary-first consolidation.
-- If a future cleanup or implementation plan is reopened, it should return to `docs/plans/`; otherwise completed plans stay archived here.
-
-- some historical design docs were removed instead of archived once their durable truth was absorbed into ADRs and `docs/ARCHITECTURE_CHANGELOG.md`
-- the 2026-04-01 runtime-latency / 2026-04-02 Feishu generic-renderer / 2026-04-07 tool-outcome-summary execution plans were removed after their durable truth was absorbed into code, tests, `docs/README.md`, and `docs/ARCHITECTURE_CHANGELOG.md`
-- the 2026-04-09 branch-evolution design / blueprint docs were removed after their durable truth was absorbed into `docs/ARCHITECTURE_CHANGELOG.md`, `docs/ARCHITECTURE_EVOLUTION*.md`, and the retained fast-path inventory note
-- the 2026-03-31 progressive-disclosure capability-refinement plan was removed after its remaining audit references were compressed into durable-truth pointers to ADR/changelog/evolution docs
+- Active operator and deployment truth lives on the main docs path.
+- Archive stays intentionally small.

@@ -247,6 +247,7 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         spawn_description = render_tool_description(declarations["spawn_subagent"])
         spawn_schema = get_parameters_schema(declarations["spawn_subagent"])
         tool_profile_schema = spawn_schema["properties"]["tool_profile"]
+        context_mode_schema = spawn_schema["properties"]["context_mode"]
         agent_id_schema = spawn_schema["properties"]["agent_id"]
 
         self.assertIn("default when tool_profile is omitted", spawn_description)
@@ -260,10 +261,15 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         self.assertIn("Omit optional fields", spawn_description)
         self.assertEqual(
             tool_profile_schema["enum"],
-            ["restricted", "standard", "elevated", "mcp", "default"],
+            ["restricted", "standard", "elevated", "mcp"],
         )
         self.assertIn("Omit the field to get the default standard behavior", tool_profile_schema["description"])
         self.assertIn("MCP", tool_profile_schema["description"])
+        self.assertEqual(
+            context_mode_schema["enum"],
+            ["brief_only", "brief_plus_snapshot"],
+        )
+        self.assertIn("default brief_only behavior", context_mode_schema["description"])
         self.assertIn("do not send placeholder values", agent_id_schema["description"])
 
 

@@ -113,8 +113,8 @@ skills/
 
 当前实现：
 
-- [SkillLoader.load_all()](/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/skills/loader.py) 每次扫描所有 `SKILL.md`
-- [SkillService.build_runtime()](/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/skills/service.py) 每个 turn 都读取完整 skill body
+- [SkillLoader.load_all()](../src/marten_runtime/skills/loader.py) 每次扫描所有 `SKILL.md`
+- [SkillService.build_runtime()](../src/marten_runtime/skills/service.py) 每个 turn 都读取完整 skill body
 - runtime 最终只渲染 summary 给模型，但正文已经提前全部读入内存并参与组装
 
 问题：
@@ -129,9 +129,9 @@ skills/
 
 当前实现：
 
-- [load_mcp_servers()](/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/mcp/loader.py) 在启动时读取 `mcps.json`
-- [discover_mcp_tools()](/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/mcp/discovery.py) 在启动时发现工具
-- [build_http_runtime()](/Users/litiezhu/workspace/github/marten-runtime/src/marten_runtime/interfaces/http/bootstrap.py) 在启动时把所有 MCP tool 注册进全局 `ToolRegistry`
+- [load_mcp_servers()](../src/marten_runtime/mcp/loader.py) 在启动时读取 `mcps.json`
+- [discover_mcp_tools()](../src/marten_runtime/mcp/discovery.py) 在启动时发现工具
+- [build_http_runtime()](../src/marten_runtime/interfaces/http/bootstrap.py) 在启动时把所有 MCP tool 注册进全局 `ToolRegistry`
 
 问题：
 
