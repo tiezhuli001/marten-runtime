@@ -1,35 +1,35 @@
-# Architecture Evolution
+# 架构演进
 
-This document is a reader-first guide to how `marten-runtime` evolved into its current shape.
+本文是一份面向新读者的 `marten-runtime` 架构演进说明。
 
-It is **not** a replacement for:
+它**不是**以下文档的替代品：
 
-- [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md), which is the append-only time-ordered record
-- [`architecture/adr/README.md`](./architecture/adr/README.md), which holds stable decisions
-- a small set of historical design docs, which may still explain detailed reasoning for selected slices when the changelog summary is not enough
+- [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)：按时间追加的架构变更记录
+- [`architecture/adr/README.md`](./architecture/adr/README.md)：稳定架构决策的归档位置
+- 少量保留下来的历史 design 文档：当 changelog 摘要仍不足时，用来补充关键阶段的细节推理
 
-Instead, this guide answers a simpler question:
+这份文档要回答的是一个更直接的问题：
 
-**How did the runtime spine become the current architecture, and why do the current boundaries look the way they do?**
+**`marten-runtime` 是如何沿着一条主链逐步演进成现在这个样子的？为什么当前边界会收敛成今天这样？**
 
-## Why This Document Matters For Harness Engineering
+## 这份文档对 Harness 工程化的价值
 
-This guide is meant to do more than describe one repository. It records how an agent runtime harness was engineered step by step:
+这份文档不只是在描述一个仓库。它也在记录一个 agent runtime harness 是怎样一步步工程化出来的：
 
-- which boundary was added at each stage
-- which pressure or failure forced that change
-- how the repo kept the runtime spine as the center while still improving reliability, continuity, and observability
-- which tempting platform directions were deliberately kept out of the baseline
+- 每个阶段新增了什么边界
+- 哪类真实压力或失败促成了这次演进
+- 仓库是怎样在增强可靠性、连续性、可观测性的同时，始终把 runtime spine 放在中心
+- 哪些看起来很诱人的平台化方向，被刻意留在基线之外
 
-If you are studying how to engineer an agent harness without letting it sprawl into a workflow platform, read each stage as both project history and a reusable engineering pattern.
+如果你想学习怎样把 agent harness 做成可运行、可治理、可诊断的系统，同时又避免它膨胀成 workflow platform，可以把每个阶段同时看成项目历史和可复用的工程模式。
 
-## Evolution At A Glance
+## 演进总览
 
-From the beginning, the project optimized for one narrow execution spine:
+从一开始，这个项目就围绕一条非常明确的执行主链展开：
 
 `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel`
 
-Everything else was added only when it made that path clearer, safer, or easier to operate.
+后续新增的边界，只有在它们能让这条链路更清晰、更稳定、更可操作时，才会被接受进入基线。
 
 ```mermaid
 flowchart LR
@@ -57,92 +57,92 @@ flowchart LR
     style M fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
 ```
 
-> **Legend**
-> - **Red nodes / red borders** = the key boundaries introduced or formalized in that stage
-> - **Dashed edges** = support or governance layers that strengthen the spine without replacing it
+> **图例说明**
+> - **红色节点 / 红色边框** = 在该阶段新增或正式收敛出来的关键边界
+> - **虚线连接** = 支撑层或治理层，用于增强主链，但不替代主执行 spine
 
-| Stage | Focus | What became part of the baseline |
+| 阶段 | 关注点 | 成为基线的内容 |
 | --- | --- | --- |
-| 1 | Runtime spine | the main execution chain |
-| 2 | Harness baseline | routing, context rehydration, skills, transport resilience |
-| 3 | Governance | conversation lanes, provider resilience, runtime learning |
-| 4 | Capability surface | progressive disclosure, LLM-first selection, ADR + changelog truth |
-| 5 | Channel boundary | generic Feishu rendering instead of renderer proliferation |
-| 6 | Long conversations | compaction, usage accuracy, runtime context status |
-| 7 | Continuity and narrow extensions | tool summaries, MCP sidecars, direct render, bounded extensions |
-| 8 | Execution surfaces | `main_agent`, lightweight subagents, execution-first prompt posture |
-| 9 | Observability hardening | Langfuse tracing, run/trace correlation, live proof |
+| 1 | Runtime spine | 主执行链 |
+| 2 | Harness baseline | 路由、上下文回灌、skills、传输韧性 |
+| 3 | Governance | conversation lanes、provider resilience、runtime learning |
+| 4 | Capability surface | progressive disclosure、LLM-first 选择、ADR + changelog 真相 |
+| 5 | Channel boundary | generic Feishu rendering，而不是渲染器扩张 |
+| 6 | Long conversations | compaction、usage accuracy、runtime context status |
+| 7 | Continuity & extensions | tool summaries、MCP sidecars、direct render、窄扩展 |
+| 8 | Execution surfaces | `main_agent`、lightweight subagents、执行型默认 prompt |
+| 9 | Observability hardening | Langfuse tracing、run/trace correlation、实链验证 |
 
-## Current Snapshot
+## 当前架构快照
 
-Today the architecture is easiest to read as five active layers plus four supporting slices:
+今天这套架构最适合按“五层主面 + 四个支撑切片”来理解：
 
-- **Execution spine**
+- **执行主链**
   - `channel -> binding -> agent -> runtime context -> LLM -> builtin/MCP/skill -> LLM -> channel`
-- **Governance**
+- **治理层**
   - same-conversation FIFO lanes
-  - provider retry/backoff normalization plus profile-level failover
-  - durable SQLite session persistence with bounded replay restore
-  - source-session compaction, replay budgeting, and current-turn context-usage accounting
-- **Capability surface**
+  - provider retry/backoff normalization + profile-level failover
+  - durable SQLite session persistence 与 bounded replay restore
+  - source-session compaction、replay budgeting，以及 current-turn context-usage accounting
+- **能力面**
   - LLM-first tool selection
-  - builtin family tools, MCP servers, file-based skills
-- **Narrow extensions**
+  - builtin family tools、MCP servers、file-based skills
+- **窄扩展**
   - automation
   - self-improve
   - lightweight subagents
-- **Observability**
+- **可观测性**
   - runtime diagnostics
   - run / trace correlation
-  - optional Langfuse tracing
+  - 可选的 Langfuse tracing
 
-The deployment-facing conclusion is now straightforward:
+当前部署相关的结论也很直接：
 
-- the runtime path is complete enough for deployment work
-- durable session continuity, explicit session switching, and replay-bounded restore are now part of the baseline continuity layer
-- queue-first execution, planner/swarm orchestration, and general memory-platform growth remain outside the current baseline
+- runtime 主链已经完整到可以进入部署阶段
+- durable session continuity、显式 session switch，以及 replay-bounded restore 已经进入当前 continuity baseline
+- queue-first execution、planner/swarm orchestration、general memory-platform growth 继续留在当前基线之外
 
-## Architectural Guardrails
+## 架构护栏
 
-All later stages sit under a small set of non-negotiable architecture constraints. The most important one is the thin-harness boundary from [ADR 0001](./architecture/adr/0001-thin-harness-boundary.md):
+后续所有阶段都运行在一组很小但很硬的架构约束之下。其中最关键的是 [ADR 0001](./architecture/adr/0001-thin-harness-boundary.md) 定义的 thin-harness boundary：
 
-- the host may assemble context, expose capabilities, execute tools, normalize retries/errors, and provide diagnostics
-- the host must **not** turn into:
-  - a turn-level message classifier
-  - a host-side intent router
-  - a generic workflow or durable worker platform
-  - a mutable capability policy center
-  - a general memory platform
+- 宿主可以做上下文组装、能力暴露、工具执行、重试/错误归一化，以及诊断观察
+- 宿主**不能**演进成：
+  - turn-level message classifier
+  - host-side intent router
+  - generic workflow / durable worker platform
+  - mutable capability policy center
+  - general memory platform
 
-This is why many later changes look narrow by design: even useful additions are accepted only when they strengthen the runtime spine without recentering the system away from it.
+这也是为什么后续很多演进看起来都“刻意收敛”：即使某个能力有价值，只有在它能增强 runtime spine、而不会把系统中心从主链上挪走时，它才会进入基线。
 
-Later continuity hardening followed the same rule: SQLite-backed sessions, `session.new` / `session.resume`, one replay-turn budget, switch-triggered compaction, background compaction jobs, and thin file-backed memory all entered as bounded runtime continuity seams instead of expanding into a worker platform or a general memory system.
+后续 continuity hardening 也遵守同一条规则：SQLite-backed sessions、`session.new` / `session.resume`、单一 replay-turn budget、switch-triggered compaction、background compaction jobs，以及 thin file-backed memory 都是以 bounded runtime continuity seam 的形态进入，而没有把系统推向 worker platform 或通用 memory system。
 
-## Stage 1 · Baseline Runtime Spine
+## 第 1 阶段：Baseline Runtime Spine
 
-### Period
+### 时间范围
 
-Before March 29, 2026.
+2026-03-29 之前。
 
-### What changed
+### 新增了什么
 
-The project established one explicit center of gravity:
+项目首先建立的是一个非常明确的中心：
 
-- receive messages from a channel
-- bind them to the intended agent
-- assemble runtime context
-- let the LLM choose tools and skills
-- return through the channel without turning the host into a workflow platform
+- 从 channel 接收消息
+- 通过 binding 命中正确 agent
+- 组装运行时上下文
+- 让 LLM 选择工具与 skill
+- 再经由 channel 返回结果，而不是把宿主扩成 workflow 平台
 
-### Why it mattered
+### 为什么重要
 
-This stage defined the repo's lasting filter for later work:
+这一阶段定义了之后几乎所有演进都要遵守的过滤条件：
 
-- optimize the main execution spine first
-- keep the harness thin
-- defer worker-heavy, planner-heavy, or memory-platform-like expansion until the main chain is already stable
+- 优先优化主执行链
+- 保持 harness thin
+- 在主链没稳之前，不提前扩到 worker、planner、memory platform 这类更重的系统中心
 
-### Main path at this stage
+### 这一阶段的主链
 
 `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel`
 
@@ -160,37 +160,37 @@ flowchart LR
     style E fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
 ```
 
-### Key references
+### 关键引用
 
 - [`README.md`](../README.md)
 - [`Agent Runtime Harness Design`](./2026-03-29-private-agent-harness-design.md)
 
-## Stage 2 · Agent Runtime Harness Became The First Real Baseline
+## 第 2 阶段：Agent Runtime Harness 成为第一层正式基线
 
-### Period
+### 时间范围
 
-March 29, 2026.
+2026-03-29。
 
-### What changed
+### 新增了什么
 
-The runtime was explicitly narrowed around a first milestone that prioritized:
+runtime 被明确收敛到一个第一里程碑：
 
-- gateway binding and multi-agent routing
+- gateway binding 与 multi-agent routing
 - live context rehydration
-- skills as first-class runtime inputs
+- skills first-class runtime integration
 - provider transport resilience
 
-At the same time, several tempting expansions were deliberately deferred, including durable delivery queues, proactive job systems, hybrid memory promotion, and full worker backbones.
+同时，也明确延后了若干容易让系统中心膨胀的能力，例如 durable delivery queue、主动任务系统、hybrid memory promotion、full worker backbone。
 
-### Why it mattered
+### 为什么重要
 
-This was the moment the project stopped being just an agent runtime idea and became a concrete runtime program with a strict execution order:
+这一阶段意味着项目从“agent runtime harness 的想法”变成了“有严格执行顺序的真实 program”：
 
-- first make the spine executable
-- then add hardening around it
-- do not widen the system center just because adjacent capabilities are interesting
+- 先打通主链
+- 再围绕主链补硬化
+- 不因为旁边的能力也有价值，就把系统中心一起做大
 
-### Main path at this stage
+### 这一阶段的主链
 
 `channel -> binding -> agent -> runtime context -> LLM -> MCP / skill -> LLM -> channel`
 
@@ -208,35 +208,35 @@ flowchart LR
     style D fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
 ```
 
-### Key references
+### 关键引用
 
 - [`Agent Runtime Harness Design`](./2026-03-29-private-agent-harness-design.md)
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 
-## Stage 3 · Conversation Governance And Runtime Learning Were Added Without Changing The Spine
+## 第 3 阶段：会话治理与 Runtime Learning 在不改变主链的前提下加入
 
-### Period
+### 时间范围
 
-March 30, 2026.
+2026-03-30。
 
-### What changed
+### 新增了什么
 
-Two narrow but important control-plane additions arrived around the same time:
+这一阶段同时加入了两类窄而关键的控制面：
 
-- **conversation governance** through same-conversation FIFO lanes and stronger provider retry / diagnostics
-- **runtime learning** through the narrow `self_improve` slice, which records failure/recovery evidence and promotes accepted lessons into runtime-managed prompt material
+- **会话治理**：通过 same-conversation FIFO lanes、provider retry 与更细 diagnostics，让 interactive chain 真正稳定下来
+- **runtime learning**：通过窄范围的 `self_improve` 机制记录 failure/recovery evidence，并把被接受的 lessons 注入 runtime-managed prompt 材料
 
-Neither slice replaced the main execution path. Both were added as bounded support layers around it.
+这两者都没有替代主执行链，而是作为围绕主链的受控支撑层存在。
 
-### Why it mattered
+### 为什么重要
 
-The project moved from “the spine exists” to “the spine can survive real interactive usage”:
+项目从“主链能跑”走向了“主链能经得住真实交互场景”：
 
-- overlapping turns no longer had to race each other inside one conversation
-- provider jitter became a runtime concern instead of an operator surprise
-- repeated failures could be turned into reviewed lessons without expanding into a general memory platform
+- 同一会话的重叠 turn 不再互相踩踏
+- provider 抖动变成 runtime 自己要处理的问题，而不是 operator 事后补救的问题
+- 重复失败可以沉淀为经过 gate 的 lessons，但不会顺势扩成通用 memory platform
 
-### Main path at this stage
+### 这一阶段的主链
 
 `channel -> binding -> agent -> runtime -> LLM -> MCP / skill -> LLM -> channel`
 
@@ -260,38 +260,38 @@ flowchart LR
     style J fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
 ```
 
-### Key references
+### 关键引用
 
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 - [`architecture/adr/0001-thin-harness-boundary.md`](./architecture/adr/0001-thin-harness-boundary.md)
 - [`architecture/adr/0003-self-improve-runtime-learning-not-architecture-memory.md`](./architecture/adr/0003-self-improve-runtime-learning-not-architecture-memory.md)
 
-## Stage 4 · Capability Exposure Was Narrowed Around Progressive Disclosure
+## 第 4 阶段：Capability Surface 围绕 Progressive Disclosure 收敛
 
-### Period
+### 时间范围
 
-March 31 to April 1, 2026.
+2026-03-31 到 2026-04-01。
 
-### What changed
+### 新增了什么
 
-The runtime stopped drifting toward host-side intent routing and instead tightened around a thinner capability surface:
+runtime 不再朝 host-side intent routing 漂移，而是收敛到一个更薄的 capability surface：
 
-- summary-first exposure instead of eager full detail
-- LLM-first choice of skill loading and MCP expansion
-- a stable family-level surface instead of wider host-side routing rules
-- ADR + architecture changelog became the durable architecture source of truth, replacing tracked task-state files for long-term decisions
-- even narrow fixes such as natural-language `time` queries were kept inside capability semantics rather than widened into new host-side routing policy
+- 默认只暴露 summary-first 的能力面
+- 由 LLM 自主决定 skill loading 与 MCP expansion
+- 以 family-level surface 替代更重的 host-side routing rules
+- ADR + architecture changelog 成为长期的架构 source of truth，用于替代 tracked task-state 文件承担架构真相
+- 即使是自然语言 `time` 查询这类窄修复，也仍然放在 capability semantics 内完成，而不是扩成新的 host-side routing policy
 
-### Why it mattered
+### 为什么重要
 
-This stage made the harness more scalable without making it heavier:
+这一阶段让 harness 在“能力更多”的同时，反而更薄、更可扩展：
 
-- capability count can grow without turning the host into a chat classifier
-- the model remains responsible for capability selection
-- the runtime stays focused on assembly, execution, governance, and diagnostics
-- architecture truth moved away from local task continuity and into stable public documents
+- capability 数量增长，不必把宿主变成聊天语义分类器
+- capability 选择继续由模型承担
+- runtime 更专注于 assembly、execution、governance 与 diagnostics
+- 架构真相从本地任务连续性转移到了稳定的公开文档中
 
-### Main path at this stage
+### 这一阶段的主链
 
 `channel -> binding -> agent -> runtime context assembly -> LLM -> family tools / MCP / skill -> LLM -> channel`
 
@@ -313,37 +313,37 @@ flowchart LR
     style I fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
 ```
 
-### Key references
+### 关键引用
 
 - [`2026-03-31-progressive-disclosure-llm-first-capability-design.md`](./2026-03-31-progressive-disclosure-llm-first-capability-design.md)
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 - [`architecture/adr/README.md`](./architecture/adr/README.md)
 
-## Stage 5 · Feishu Was Kept As A Thin Channel Boundary, Not A Separate Product Layer
+## 第 5 阶段：Feishu 被保持为薄 channel boundary，而不是单独的产品层
 
-### Period
+### 时间范围
 
-April 1, 2026.
+2026-04-01。
 
-### What changed
+### 新增了什么
 
-The Feishu path gained a stronger presentation boundary without growing a business-specific rendering system:
+Feishu 路径的表现力被增强了，但没有扩成一套业务型渲染平台：
 
-- one optional `feishu_card` protocol
-- one generic renderer
-- clean separation between rendering and delivery responsibilities
-- no renderer taxonomy by business type
-- no delivery-side semantic classification as a substitute for model reasoning
+- 一个可选的 `feishu_card` protocol
+- 一个 generic renderer
+- rendering / delivery 清晰分责
+- 不为业务类型建立 renderer taxonomy
+- 不在 delivery 层做语义分类来替代模型决策
 
-### Why it mattered
+### 为什么重要
 
-The project improved the channel experience while protecting the same core architecture principles:
+这一阶段说明：channel 体验可以增强，但不能因此破坏项目的核心约束：
 
-- richer output is allowed
-- but channel presentation still remains a thin boundary
-- rendering does not become a second orchestration layer beside the runtime
+- richer output 是允许的
+- 但 channel presentation 仍应是一个薄边界
+- 渲染层不应变成 runtime 之外的第二套 orchestration 系统
 
-### Main path at this stage
+### 这一阶段的主链
 
 `channel -> binding -> agent -> runtime -> LLM -> tool / skill -> LLM -> generic channel rendering`
 
@@ -364,35 +364,35 @@ flowchart LR
     style I fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
 ```
 
-### Key references
+### 关键引用
 
 - [`2026-04-01-feishu-generic-card-protocol-design.md`](./2026-04-01-feishu-generic-card-protocol-design.md)
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 
-## Stage 6 · Long-Conversation Governance Became Part Of The Runtime Baseline
+## 第 6 阶段：长对话治理成为 runtime 基线的一部分
 
-### Period
+### 时间范围
 
-April 7, 2026.
+2026-04-07。
 
-### What changed
+### 新增了什么
 
-The runtime gained a thin but explicit governance layer for long conversations:
+runtime 增加了一层薄但明确的长对话治理边界：
 
-- thin context compaction for oversized history prefixes
-- provider-first usage accuracy with payload-based preflight estimation
-- one bounded runtime inspection path through `runtime.context_status`
-- replay and follow-up tightening so context-status questions stay grounded in current runtime truth
+- 针对超长历史前缀的 thin context compaction
+- provider-first usage accuracy + payload-based preflight estimation
+- 通过 `runtime.context_status` 暴露一个受控的 runtime inspection path
+- replay 与 tool follow-up 规则收紧，保证 context-status 问题回到当前 runtime truth，而不是复述旧记忆
 
-### Why it mattered
+### 为什么重要
 
-Long threads are where thin runtimes are most likely to bloat or drift. This stage mattered because it solved real pressure without changing the architectural center:
+长对话是 thin runtime 最容易膨胀或漂移的地方。这一阶段重要之处在于：
 
-- compaction stayed a thin continuity slice instead of becoming a memory platform
-- context status became a safe builtin inspection path instead of always-on telemetry narration
-- usage truth became much more trustworthy without turning prompt accounting into a new subsystem
+- compaction 仍然只是 continuity slice，而不是 memory platform
+- context status 被做成了一个安全的 builtin inspection path，而不是常驻频道遥测
+- usage truth 显著变准，但没有把 prompt accounting 扩成新的系统中心
 
-### Main path at this stage
+### 这一阶段的主链
 
 `channel -> binding -> agent -> governed runtime context -> LLM -> runtime / MCP / builtin tool -> LLM -> channel`
 
@@ -415,49 +415,49 @@ flowchart LR
     style J fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
 ```
 
-### Key references
+### 关键引用
 
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 - [`archive/2026-04-06-thin-llm-context-compaction-design.md`](./archive/2026-04-06-thin-llm-context-compaction-design.md)
 - [`archive/2026-04-07-context-usage-accuracy-design.md`](./archive/2026-04-07-context-usage-accuracy-design.md)
 - [`archive/plans/2026-04-07-thin-llm-context-compaction-plan.md`](./archive/plans/2026-04-07-thin-llm-context-compaction-plan.md)
 
-## Stage 7 · Cross-Turn Tool Continuity And Narrow Extensions Were Added Without Changing The Center
+## 第 7 阶段：跨轮工具连续性与窄扩展能力被加入，但系统中心没有改变
 
-### Period
+### 时间范围
 
-April 5 to April 10, 2026.
+2026-04-05 到 2026-04-10。
 
-### What changed
+### 新增了什么
 
-#### Tool continuity became a first-class runtime concern
+#### 工具连续性成为正式 runtime 议题
 
-- a repo-local GitHub Trending MCP sidecar replaced a looser skill-only approximation
-- cross-turn tool continuity moved toward LLM-first tool-episode summaries instead of a growing rules-first parser path
-- deterministic recovery was added where the runtime already had enough result to answer safely
+- repo-local GitHub Trending MCP sidecar 替代了更松散的 skill-only approximation
+- 跨轮工具连续性逐步转向 LLM-first 的 tool-episode summaries，而不是继续长大成 rules-first parser path
+- 当 runtime 已经拿到足够结果时，引入 deterministic recovery
 
-#### Narrow extensions were kept narrow
+#### 窄扩展仍然保持窄边界
 
-- the `automation` family converged into a thin internal adapter and later into a bounded direct-render follow-up seam
-- `self_improve` remained a narrow runtime-learning slice rather than becoming a general architecture-memory layer
-- direct render was used as a thin follow-up seam, not as a new orchestration layer
+- `automation` family 收敛到 thin internal adapter，再进一步收敛为 bounded direct-render follow-up seam
+- `self_improve` 仍然只是 narrow runtime-learning slice，而不是通用 architecture-memory layer
+- direct render 被用作薄 follow-up seam，而不是新的 orchestration layer
 
-#### Temporary deviations also became explicit architecture knowledge
+#### 临时偏移也被显式纳入架构知识
 
-- the repo started documenting which host-side fast paths were temporary deviations rather than silently letting them become permanent architecture
-- examples included runtime-context forced routes, `time` forced routes, and request-specific GitHub instruction shaping
-- this made later shrink/remove decisions part of the architecture story instead of leaving them implicit in historical code
+- 仓库开始明确记录哪些 host-side fast path 只是 temporary deviation，而不是默认让它们静默固化为长期架构
+- 例子包括 runtime-context forced route、`time` forced route，以及 request-specific GitHub instruction shaping
+- 这样，后续 shrink / remove 就成为架构演进的一部分，而不只是历史代码里的隐性行为
 
-### Why it mattered
+### 为什么重要
 
-This stage shows the mature form of the repo's architecture discipline:
+这一阶段体现了项目成熟后的架构纪律：
 
-- the runtime can add useful extensions
-- but each extension must justify itself as a bounded seam around the main chain
-- when a feature can be modeled as MCP, family tool, sidecar, summary sidecar, or narrow adapter, it should stay that way instead of becoming a new platform center
-- even temporary deviations are stronger once they are named, bounded, and given exit conditions
+- runtime 可以增加有用扩展
+- 但每个扩展都必须证明自己只是主链周围的 bounded seam
+- 如果某个能力可以建模为 MCP、family tool、sidecar、summary sidecar 或 narrow adapter，就不应该顺势变成新的平台中心
+- 即使是 temporary deviation，只要被命名、被限制、被赋予 exit condition，它的架构含义就会更清晰
 
-### Main path at this stage
+### 这一阶段的主链
 
 `channel -> binding -> agent -> governed runtime -> LLM -> MCP / family tool / summary sidecar -> LLM or direct render -> channel`
 
@@ -485,7 +485,7 @@ Narrow Adapters"] -.-> F
     style L fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
 ```
 
-### Key references
+### 关键引用
 
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 - [`archive/2026-04-07-llm-tool-episode-summary-design.md`](./archive/2026-04-07-llm-tool-episode-summary-design.md)
@@ -493,30 +493,30 @@ Narrow Adapters"] -.-> F
 - [`archive/plans/2026-04-05-github-trending-mcp-plan.md`](./archive/plans/2026-04-05-github-trending-mcp-plan.md)
 - [`2026-04-09-fast-path-inventory-and-exit-strategy.md`](./archive/branch-evolution/2026-04-09-fast-path-inventory-and-exit-strategy.md)
 
-## Stage 8 · The Default Runtime Surface Shifted Toward Execution-First Agents
+## 第 8 阶段：默认运行时表面转向执行型 Agent
 
-### Period
+### 时间范围
 
-April 14 to April 15, 2026.
+2026-04-14 到 2026-04-15。
 
-### What changed
+### 新增了什么
 
-The repository tightened the runtime surface around the idea of a real execution agent:
+仓库把默认运行时表面进一步收敛成“真正执行 agent”的形态：
 
-- the default app became `main_agent`
-- the default agent id became `main`
-- the prompt posture moved away from a demo helper and toward an execution-first default agent
-- lightweight subagents became a real runtime lane with policy, selector-aware ceilings, registry-backed agent resolution, and cooperative MCP cancellation
+- 默认 app 变成 `main_agent`
+- 默认 agent id 变成 `main`
+- prompt 姿态从 demo helper 转向 execution-first default agent
+- lightweight subagents 进入正式运行时路径，具备 policy、selector-aware ceiling、registry-backed agent resolution，以及 cooperative MCP cancellation
 
-### Why it mattered
+### 为什么重要
 
-This stage made the runtime easier to reason about as a product surface:
+这一阶段让运行时作为产品表面更容易理解：
 
-- the default agent identity now matches the repository’s actual posture
-- isolated background work became a supported runtime path instead of a prompt-only convention
-- parent/child execution stayed inside the thin-harness model instead of turning into a planner platform
+- 默认 agent 身份终于和仓库的真实姿态一致
+- 隔离后台工作成为正式 runtime path，而不是只靠 prompt 约定
+- parent/child 执行仍然留在 thin-harness 模型里，没有演进成 planner platform
 
-### Main path at this stage
+### 这一阶段的主链
 
 `channel -> binding -> main_agent -> runtime -> LLM -> builtin/MCP/skill or spawn_subagent -> child runtime -> parent summary -> channel`
 
@@ -542,38 +542,38 @@ flowchart LR
     style J fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
 ```
 
-### Key references
+### 关键引用
 
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 - [`LIVE_VERIFICATION_CHECKLIST.md`](./LIVE_VERIFICATION_CHECKLIST.md)
 
-## Stage 9 · External Observability Became Part Of The Runtime Baseline
+## 第 9 阶段：外部可观测性进入运行时基线
 
-### Period
+### 时间范围
 
-April 17 to April 18, 2026.
+2026-04-17 到 2026-04-18。
 
-### What changed
+### 新增了什么
 
-The runtime gained one narrow external observability slice:
+runtime 新增了一层很窄但很关键的 external observability slice：
 
 - Langfuse observer bootstrap
-- root trace, generation, and tool-span lifecycle reporting
-- runtime/run/trace diagnostics that expose external correlation refs
-- fail-open hardening so tracing cannot break the main runtime path
-- cleanup and transient-error recovery that preserve tracing capability while exposing degraded health
+- root trace、generation、tool span 生命周期上报
+- runtime/run/trace diagnostics 暴露 external correlation refs
+- fail-open hardening，确保 tracing 不会影响主执行链
+- cleanup 与 transient-error recovery 收口，既保留 tracing capability，也暴露 degraded health
 
-### Why it mattered
+### 为什么重要
 
-This stage closed the gap between local diagnostics and service-side proof:
+这一阶段补上了“本地诊断”到“服务侧实证”的最后一段链路：
 
-- operators can correlate one real turn from runtime diagnostics to an external trace
-- multi-tool and parent/child subagent paths now have external verification evidence
-- observability remains a support slice instead of turning the runtime into an analytics platform
+- operator 可以从 runtime diagnostics 直接关联到外部 trace
+- multi-tool 和 parent/child subagent 路径现在都有外部验证证据
+- observability 继续保持为 support slice，没有扩成 analytics platform
 
-### Main path at this stage
+### 这一阶段的主链
 
-`channel -> binding -> agent -> runtime -> LLM -> builtin/MCP/skill -> LLM -> channel`, with local diagnostics plus external Langfuse trace correlation on the same run
+`channel -> binding -> agent -> runtime -> LLM -> builtin/MCP/skill -> LLM -> channel`，同时在同一次 run 上具备本地诊断与外部 Langfuse trace correlation
 
 ```mermaid
 flowchart LR
@@ -596,73 +596,73 @@ flowchart LR
     style J fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
 ```
 
-### Key references
+### 关键引用
 
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 - [`2026-04-17-langfuse-observability-design.md`](./2026-04-17-langfuse-observability-design.md)
 - [`LIVE_VERIFICATION_CHECKLIST.md`](./LIVE_VERIFICATION_CHECKLIST.md)
 
-## Deliberately Excluded Capabilities
+## 明确未构建的能力
 
-| Capability | Status | Why it stays out of the baseline |
+| Capability | 状态 | 为什么暂不进入基线 |
 | --- | --- | --- |
-| Durable delivery queue | Deferred | the repo keeps prioritizing the interactive spine before durable workflow machinery |
-| Planner / swarm orchestration | Rejected for now | it would move the host away from the thin-harness role |
-| Hybrid memory promotion | Deferred | it risks widening the runtime into a memory platform too early |
-| Full async worker backbone | Deferred | the current baseline still prefers interactive execution over worker-first architecture |
-| Host-side intent classifier | Rejected | capability choice stays with the model, not the host |
+| Durable delivery queue | Deferred | 仓库当前仍优先保证 interactive spine，而不是先补 durable workflow machinery |
+| Planner / swarm orchestration | Rejected for now | 会让宿主偏离 thin-harness 角色 |
+| Hybrid memory promotion | Deferred | 太早引入会把 runtime 推向 memory platform |
+| Full async worker backbone | Deferred | 当前基线仍优先 interactive execution，而不是 worker-first architecture |
+| Host-side intent classifier | Rejected | capability choice 应继续留给模型，而不是交给宿主 |
 
-## Current Architecture Direction
+## 当前架构方向总结
 
-Today, `marten-runtime` can be summarized like this:
+今天的 `marten-runtime` 可以用下面几句话来概括：
 
-- the main execution spine is still the product center
-- the harness remains intentionally thin
-- the model remains responsible for capability choice
-- long-thread and cross-turn governance now exist, but as bounded runtime slices
-- channel formatting, automation, self-improve, lightweight subagents, deterministic recovery, and Langfuse tracing are all treated as narrow extensions, not as excuses to recenter the system around orchestration
+- 主执行链仍然是产品中心
+- harness 仍然刻意保持 thin
+- capability choice 继续由模型负责
+- 长线程治理与跨轮治理已经进入基线，但都以 bounded runtime slice 的形式存在
+- channel formatting、automation、self-improve、lightweight subagents、deterministic recovery、Langfuse tracing 都被视为 narrow extension，而不是系统中心重构的理由
 
-In practice, that means new work is favored when it does one of three things:
+换句话说，新工作更容易被接受，如果它能做到三件事之一：
 
-1. clarifies the main spine
-2. hardens the runtime around the main spine
-3. adds a narrow extension without moving the architectural center away from the spine
+1. 让主链更清晰
+2. 让主链周围的 runtime 更稳
+3. 新增一个有价值但不会重塑系统中心的窄扩展边界
 
-## Harness Engineering Lessons
+## Harness 工程化经验总结 / Lessons
 
-These nine stages compress into a small set of reusable lessons for engineering an agent runtime harness:
+这 9 个阶段可以压缩成一组可复用的 agent runtime harness 工程化经验：
 
-1. **Stabilize one execution spine before expanding sideways**
-   - The repo kept returning to one path: `channel -> binding -> agent -> runtime -> LLM -> tool/skill -> channel`.
-   - That decision made later trade-offs easier because every new slice had to justify how it strengthened the spine.
+1. **先把一条执行主链打稳，再考虑横向扩张**
+   - 这个仓库一直反复回到同一条路径：`channel -> binding -> agent -> runtime -> LLM -> tool/skill -> channel`。
+   - 这让后续所有架构取舍都有了统一判断标准：新边界必须解释自己怎样增强主链。
 
-2. **Add governance only when real runtime pressure proves the need**
-   - conversation lanes, provider resilience, compaction, and cross-turn continuity all entered because real interactive failures exposed them.
-   - This kept governance practical instead of speculative.
+2. **只有在真实运行压力出现后，才引入治理层**
+   - conversation lanes、provider resilience、compaction、cross-turn continuity 都是在真实交互故障暴露后进入基线。
+   - 这样得到的是实战型治理，而不是预设过多的抽象层。
 
-3. **Keep the host thin and let the model keep capability choice by default**
-   - The harness assembled context, executed tools, and normalized errors.
-   - It still avoided turning into a host-side intent router or message classifier.
+3. **宿主保持 thin，capability choice 默认继续交给模型**
+   - harness 负责上下文组装、工具执行、错误归一化和诊断。
+   - 同时它持续避免演进成 host-side intent router 或 message classifier。
 
-4. **Accept narrow deterministic seams when they reduce drift on the live path**
-   - direct render, deterministic recovery, and bounded diagnostics all entered as thin support seams.
-   - They were accepted because they shortened or stabilized the runtime path without moving the system center.
+4. **当确定性薄边界可以减少实链漂移时，可以接受它**
+   - direct render、deterministic recovery、bounded diagnostics 都属于这种薄支撑层。
+   - 它们之所以能进入基线，是因为它们缩短或稳定了主链，同时没有把系统中心挪走。
 
-5. **Treat extensions as bounded slices, not as permission to build a platform**
-   - automation, self-improve, lightweight subagents, and Langfuse tracing were all added as narrow extensions.
-   - Each one stayed attached to the main runtime contracts instead of becoming a new orchestration center.
+5. **把扩展能力做成 bounded slice，而不是平台化入口**
+   - automation、self-improve、lightweight subagents、Langfuse tracing 都是以窄扩展形式进入系统。
+   - 它们都继续挂靠在主 runtime contract 上，而没有长成新的 orchestration center。
 
-6. **Make timeline truth and verification part of the architecture**
-   - changelog entries, ADRs, live verification, and runtime diagnostics all became part of how the system is operated and understood.
-   - For a harness, observability and documented boundary decisions are part of the architecture itself.
+6. **把时间线真相和验证证据也视为架构的一部分**
+   - changelog、ADR、live verification、runtime diagnostics 一起构成了系统的可理解性和可运维性。
+   - 对 harness 来说，可观测性和边界决策文档本身就是架构组成部分。
 
-7. **Keep tempting platform directions explicit and outside the baseline until the spine demands them**
-   - durable queues, planner/swarm orchestration, general memory-platform growth, and worker-first execution remained outside the baseline.
-   - That restraint is part of why the harness stayed understandable while still becoming more production-like.
+7. **把诱人的平台化方向明确留在基线之外，直到主链真的要求它们进入**
+   - durable queue、planner/swarm orchestration、general memory-platform growth、worker-first execution 目前都没有进入基线。
+   - 这种克制正是仓库能在不断增强的同时仍然保持可理解的原因之一。
 
-If another team wants to learn from this repository, the deepest lesson is simple: make the runtime path real first, then add only the smallest boundary that solves the next real pressure.
+如果别人想从这个仓库学习，最值得带走的一条经验是：先把 runtime path 做成真的，再只补那一层能解决下一个真实压力的最小边界。
 
-## Where To Read Next
+## 继续阅读
 
 - [`../README.md`](../README.md)
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)

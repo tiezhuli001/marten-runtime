@@ -19,6 +19,7 @@ from marten_runtime.tools.registry import ToolSnapshot
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODELS_TOML = REPO_ROOT / "config/models.toml"
 PROVIDERS_TOML = REPO_ROOT / "config/providers.toml"
+MODELS_EXAMPLE_TOML = REPO_ROOT / "config/models.example.toml"
 
 
 class ModelSmokeTests(unittest.TestCase):
@@ -57,19 +58,19 @@ class ModelSmokeTests(unittest.TestCase):
         self.assertEqual(config.default_profile, "openai_gpt5")
         self.assertEqual(
             sorted(config.profiles.keys()),
-            ["kimi_k2", "minimax_m25", "openai_gpt5"],
+            ["minimax_m25", "openai_gpt5"],
         )
         self.assertEqual(config.profiles["openai_gpt5"].model, "gpt-5.4")
         self.assertEqual(config.profiles["minimax_m25"].provider_ref, "minimax")
 
     def test_models_loader_reads_default_profile(self) -> None:
-        config = load_models_config(str(MODELS_TOML))
+        config = load_models_config(str(MODELS_EXAMPLE_TOML))
         profile_name, profile = resolve_model_profile(config)
 
         self.assertEqual(profile_name, "openai_gpt5")
         self.assertEqual(profile.provider_ref, "openai")
         self.assertEqual(profile.model, "gpt-5.4")
-        self.assertEqual(profile.fallback_profiles, ["kimi_k2", "minimax_m25"])
+        self.assertEqual(profile.fallback_profiles, ["minimax_m25"])
 
     def test_models_loader_accepts_optional_context_window_metadata(self) -> None:
         profile = ModelProfile(

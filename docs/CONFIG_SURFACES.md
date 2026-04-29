@@ -16,7 +16,7 @@ This page answers one question: which value belongs in which file.
 
 | Need | File | Key |
 | --- | --- | --- |
-| Provider secrets | `.env` | `OPENAI_API_KEY`, `MINIMAX_API_KEY`, `KIMI_API_KEY` |
+| Provider secrets | `.env` | `OPENAI_API_KEY`, `MINIMAX_API_KEY` |
 | Local OpenAI-compatible base URL override | `.env` | `OPENAI_API_BASE`, `MINIMAX_API_BASE`, `KIMI_API_BASE` |
 | Provider connection metadata | `config/providers.example.toml` or local `config/providers.toml` | `[providers.*]`, `adapter`, `base_url`, `api_key_env`, capability flags |
 | Default model/profile selection | `config/models.example.toml` or local `config/models.toml` | `default_profile`, `[profiles.*]`, `provider_ref`, `fallback_profiles` |

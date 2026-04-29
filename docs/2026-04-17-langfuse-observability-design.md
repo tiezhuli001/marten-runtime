@@ -365,7 +365,7 @@ These are useful later and stay out of the first minimal slice.
   - only if the team wants lower-level provider payload instrumentation later
 - `docs/CONFIG_SURFACES.md`
   - add the Langfuse base URL once implementation lands
-- `README.md` / `README_CN.md`
+- `README.md` / `README.md`
   - add operator-facing observability setup notes once implementation lands
 
 ## Verification Plan for the Future Implementation

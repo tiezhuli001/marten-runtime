@@ -521,7 +521,7 @@ PYTHONPATH=src python -m unittest tests.test_runtime_mcp tests.test_contract_com
 
 - `docs/ARCHITECTURE_CHANGELOG.md`
 - `README.md`
-- `README_CN.md`
+- `README.md`
 
 ---
 
