@@ -19,7 +19,7 @@ class ProvidersLoaderTests(unittest.TestCase):
 
             config = load_providers_config(str(REPO_ROOT / "config/providers.toml"))
 
-        self.assertEqual(sorted(config.providers.keys()), ["kimi", "minimax", "openai"])
+        self.assertEqual(sorted(config.providers.keys()), ["minimax", "openai"])
         self.assertEqual(config.providers["openai"].adapter, "openai_compat")
         self.assertTrue(config.providers["openai"].supports_responses_api)
         self.assertTrue(config.providers["openai"].supports_responses_streaming)

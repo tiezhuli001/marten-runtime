@@ -2,9 +2,9 @@
 
 <div align="center">
 
-Simplified openclaw-style agent runtime harness for `channel -> binding -> runtime loop -> builtin tool / MCP / skill -> delivery / diagnostics`.
+面向自托管场景的 simplified openclaw-style agent runtime harness，聚焦 `channel -> binding -> runtime loop -> builtin tool / MCP / skill -> delivery / diagnostics` 主链。
 
-[中文文档](./README_CN.md) · [Docs Index](./docs/README.md) · [Deployment Guide](./docs/DEPLOYMENT.md) · [Architecture Evolution](./docs/ARCHITECTURE_EVOLUTION.md) · [Architecture Changelog](./docs/ARCHITECTURE_CHANGELOG.md) · [ADR Index](./docs/architecture/adr/README.md) · [Config Surfaces](./docs/CONFIG_SURFACES.md)
+[文档索引](./docs/README.md) · [部署指南](./docs/DEPLOYMENT.md) · [架构演进](./docs/ARCHITECTURE_EVOLUTION.md) · [架构时间线](./docs/ARCHITECTURE_CHANGELOG.md) · [ADR 索引](./docs/architecture/adr/README.md) · [配置面说明](./docs/CONFIG_SURFACES.md)
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
@@ -12,42 +12,43 @@ Simplified openclaw-style agent runtime harness for `channel -> binding -> runti
 
 </div>
 
-`marten-runtime` is a lightweight agent runtime harness built around one narrow goal: host your own agents, MCP servers, and skills without turning the harness into a workflow platform. The project keeps the control surface thin and pushes most intelligence into `LLM + agent + MCP + skill`.
+`marten-runtime` 是一个收敛的 agent runtime harness。它的目标是先把你自己的 agent、MCP 和 skill 托管到一条稳定、可诊断、可扩展的执行主链上。
 
-## Overview
+## 项目概览
 
 - `LLM + agent + MCP + skill` first
 - `harness-thin, policy-hard, workflow-light`
-- Channel-aware binding and multi-agent routing
-- Runtime context assembly with governed replay, compacted working context, and live skill activation
-- OpenAI-compatible provider support with retry/backoff normalization
-- Feishu websocket ingress plus thin HTTP operator surface
+- 支持 channel/user/conversation 级绑定与多 agent 路由
+- 支持受治理的 runtime context assembly、会话回放与 working context 压缩
+- skills 作为运行时一等输入，而不是静态文件摆设
+- 支持 OpenAI-compatible provider，并带最小 retry/backoff 韧性
+- 提供 Feishu websocket 接入和轻量 HTTP operator surface
 
-## Why This Exists
+## 为什么做这个项目
 
-Many agent projects either stop at prompt demos or expand too early into queues, planners, and heavy orchestration. `marten-runtime` is intentionally narrower: it focuses on the executable agent runtime spine first and defers heavier durability and workflow machinery until the main chain is already stable.
+很多 agent 项目要么停在 prompt demo，要么过早扩张到 queue、planner、复杂 worker 编排。`marten-runtime` 刻意不走那条路线，而是先把真正要跑通的 agent runtime 主链打稳。
 
-Current center of gravity:
+当前唯一优先的链路是：
 
 `channel -> binding -> runtime loop -> builtin tool / MCP / skill -> delivery / diagnostics`
 
-That is the path this repository optimizes for. If a change does not make that path clearer, safer, or easier to operate, it is probably not a priority.
+如果一个改动不能直接增强这条链路，它就不应该排到高优先级。
 
-## At A Glance
+## 一眼看清
 
-| Layer | Responsibility |
+| 层 | 职责 |
 | --- | --- |
-| `channel` | HTTP and Feishu ingress, progress, final delivery |
-| `binding` | route channel/user/conversation to the intended agent |
-| `agent` | app-local policy, allowed tools, bootstrap prompt |
-| `runtime` | context assembly, model calls, tool loop, diagnostics |
-| `capabilities` | MCP tools and file-based skills |
+| `channel` | HTTP / Feishu 输入、进度事件和最终回包 |
+| `binding` | 把 channel/user/conversation 稳定绑定到正确 agent |
+| `agent` | app 层策略、可用工具和 bootstrap prompt |
+| `runtime` | 上下文拼装、模型调用、tool loop、诊断 |
+| `capabilities` | MCP 工具和文件型 skills |
 
-## Core Flow
+## 主链流程
 
 ```mermaid
 flowchart LR
-    A["HTTP / Feishu Message"] --> B["Gateway + Binding"]
+    A["HTTP / Feishu 消息"] --> B["Gateway + Binding"]
     B --> C["Runtime Context Assembly"]
     C --> D["Runtime Loop / LLM"]
     D -->|"tool call"| E["Builtin Tool / MCP / Skill"]
@@ -55,125 +56,101 @@ flowchart LR
     D --> F["Delivery + Diagnostics"]
 ```
 
-## Highlights
+## 当前范围
 
-- Stable binding rules let one runtime host multiple agents without hard-coded channel logic
-- Runtime context assembly replays session history and injects active skill bodies into the live LLM request
-- MCP remains a first-class capability surface without turning the harness into a workflow engine
-- Feishu delivery keeps hidden progress, single final delivery, dedupe, and self-message ignore semantics
-- Provider retry/backoff reduces random upstream timeout breakage on the main chain
+当前 MVP 的 A/B 主线已经实现：
 
-## Upgrade Notes
-
-Latest MVP-facing changes:
-
-- renamed the default runtime app to `main_agent` and repositioned its prompt assets around a primary execution-agent stance
-- enabled selected-agent app-manifest / bootstrap switching and per-agent model-profile switching on the live runtime path
-- standardized session persistence on SQLite, with bounded restart restore and explicit `session.new` / `session.resume` control
-- split provider ownership across `config/providers.toml` and `config/models.toml`, with `provider_ref` and `fallback_profiles` driving failover
-- removed the legacy routable `assistant` runtime-agent alias from the live registry surface and canonicalized runtime agent ids to `main`
-- added a narrow GitHub hot-repos automation path driven by the `automation` family tool with `action=register`, manual trigger entrypoints, isolated automation turns, and final-channel delivery
-- moved automation CRUD and presentation into direct store-backed runtime ownership while keeping automation lifecycle logic outside the tool surface
-- added the builtin `automation` family tool for recurring-job register/list/detail/update/delete/pause/resume flows
-- added the shared `Automation Management` skill so CRUD intent stays in `LLM + skill`, while store mutation stays in builtin tools
-- replaced the temporary GitHub skill approximation with one thin repo-local MCP sidecar for trending retrieval, while keeping the rest of the runtime GitHub surface MCP-first
-- added same-conversation FIFO queueing so same `channel_id + conversation_id` turns serialize for HTTP `/messages` and Feishu interactive ingress
-- strengthened provider resilience with retryable `429` / `502` / `503` / `504` normalization and stable provider-specific runtime error codes
-- strengthened Feishu live-chain observability with run-level `tool_calls`, `llm_request_count`, and websocket diagnostics exposing the latest inbound `session_id`, `run_id`, and runtime trace correlation
-- hardened Feishu ingress by suppressing semantic duplicate replays, isolating runtime-handler failures to a single message, ignoring blank-text inbound events, and keeping duplicate websocket replays from clobbering the last accepted status
-- added a narrow self-improve loop that records repeated failures plus later recoveries, synthesizes lesson candidates through a dedicated skill, gates them through a structured LLM judgment plus deterministic checks, and injects accepted active lessons from runtime-managed `SYSTEM_LESSONS.md`
-- added a direct store-backed self-improve management surface so the default main agent can inspect candidate lessons and delete bad candidates through natural-language turns without exposing raw SQL or table names
-
-## Architecture
-
-`marten-runtime` is optimized around one stable path:
-
-`channel -> binding -> runtime loop -> builtin tool / MCP / skill -> delivery / diagnostics`
-
-That path is the project center of gravity. If a change does not make this chain clearer, safer, or easier to operate, it should be treated as low priority.
-
-Primary reading path:
-
-- [Docs Index](./docs/README.md)
-- [Architecture Evolution](./docs/ARCHITECTURE_EVOLUTION.md)
-- [Architecture Changelog](./docs/ARCHITECTURE_CHANGELOG.md)
-- [ADR Index](./docs/architecture/adr/README.md)
-- [Config Surfaces](./docs/CONFIG_SURFACES.md)
-- [Live Verification Checklist](./docs/LIVE_VERIFICATION_CHECKLIST.md)
-
-Historical design documents are intentionally secondary. Read them only when the changelog, evolution guide, or ADRs are not enough.
-
-## Current Scope
-
-The current MVP A/B path is implemented:
-
-- multi-main-agent private config loading and stable routing precedence
-- explicit HTTP `requested_agent_id` routing from inbound request to selected agent
-- selected agent identity propagation into live LLM request inputs
-- selected agent app-manifest / bootstrap switching on the live runtime path
-- selected agent model-profile switching through `config/agents.toml`
-- runtime context assembly with governed replay, compacted working context, and long-dialogue regression coverage
-- durable SQLite session persistence with cross-restart bounded restore
-- explicit session catalog control through `session.new` and `session.resume`, plus background source-session compaction
-- thin file-backed user memory as one bounded continuity slice for explicit cross-session user facts and preferences, separate from session history and self-improve lessons
-- skills as first-class runtime inputs
+- 多主 agent 私有配置加载与稳定路由优先级
+- HTTP 入站 `requested_agent_id` 已能真实命中选中的 agent
+- selected agent 身份已真实下沉到 LLM request
+- selected agent 的 app manifest / bootstrap 已能在运行时切换
+- selected agent 的 model profile 已能通过 `config/agents.toml` 切换
+- runtime context assembly 已具备受治理 replay、working context 压缩和长对话回归测试
+- durable SQLite session persistence 已进入 baseline，并支持跨重启有界 restore
+- `session.new` / `session.resume` 已成为显式会话切换控制面
+- thin file-backed memory 已作为受限 continuity slice 接入
+- skills first-class runtime integration
 - provider retry/backoff resilience
-- profile-level provider failover through `provider_ref` and `fallback_profiles`
+- profile-level provider failover 已由 `provider_ref` 和 `fallback_profiles` 驱动
 
-Also out of scope for now:
+同样明确暂不做：
 
 - queue-first execution
 - durable delivery outbox
+- heartbeat / cron / proactive jobs
 - hybrid memory promotion
-- planner / swarm orchestration
+- planner / swarm 编排
 
-Implemented narrow extensions:
+当前正在收敛实现的 MVP 例外：
 
-- chat-registered recurring digest records plus manual isolated-trigger execution for GitHub hot repos
-- direct store-backed automation resource CRUD with the builtin `automation` family surface kept stable for the LLM
-- internal self-improve automation that summarizes failure/recovery evidence into candidate lessons
-- main-agent-facing self-improve candidate inspection and candidate-only deletion through skill-routed builtin tools backed by runtime-owned stores
-- both paths stay on builtin tools plus skills instead of introducing a worker-first platform
+- 一个通过聊天注册的 GitHub 热门仓库日报路径
+- 该路径要求已经配置 GitHub MCP，且 MCP 至少提供 `search_repositories` 这类 repo discovery 能力
+- 业务逻辑仍放在 skill 中，runtime 只保留收敛的 builtin tool / store 边界
+- 自动任务查询能力保持收敛：模型侧只暴露 `automation` family tool；operator 侧保留 `GET /automations`
+- 自动任务增删改停恢复同样保持收敛，只通过 builtin tools 完成，不额外引入本地 automation MCP
+- 这不代表仓库正在扩成通用 proactive jobs / workflow 平台
 
-## Repository Layout
+## 升级日志
 
-- `src/marten_runtime/`: runtime, channels, MCP, skills, sessions, diagnostics
-- `config/*.toml`: runtime-wide policy and defaults
-- `config/bindings.toml`: channel/user/conversation to agent binding rules
-- `apps/<app_id>/app.toml`: app manifest
-- `apps/<app_id>/*.md`: bootstrap assets compiled into the runtime prompt
-- `skills/`: shared file-based skills
-- `.env.example`: local secret template
-- `mcps.example.json`: MCP connection template
-- `docs/`: design notes, checklists, plans, and configuration references
-- `tests/`: unit and contract coverage for the runtime spine
+最近一轮 MVP 收敛更新：
 
-## Getting Started
+- 默认 runtime app 已切到 `main_agent`，prompt 姿态同步收敛到 execution-first 主代理
+- selected-agent app/profile 切换已进入真实 runtime 路径
+- session persistence 已标准化到 SQLite，并补齐 `session.new` / `session.resume`
+- provider 配置已拆分为 `config/providers.toml` 与 `config/models.toml`，failover 由 `provider_ref` / `fallback_profiles` 驱动
+- 运行时已移除 legacy routable `assistant` alias，runtime agent id 统一 canonical 到 `main`
+- GitHub 热榜已收敛到 repo-local MCP sidecar：`github_trending.trending_repositories`
+- 已从 active 代码、测试、automation 数据中移除 legacy `github_hot_repos_digest` skill 面
+- 历史 `github_hot_repos_digest` automation 记录已不再属于当前受支持的运行时输入；当前受支持 automation 数据均已 canonical 到 `github_trending_digest`
+- GitHub 热榜 Feishu 卡片现在会明确说明“按 GitHub Trending 页面顺序”，且不会重复展示抓取时间
+- 自动任务 `automation` family tool 统一承载 `register/list/detail/update/delete/pause/resume`
+- 自动任务 CRUD 与展示已直接回到 runtime-owned store 边界
+- self-improve 管理面也已回到 direct store-backed runtime ownership
+- 保持 `LLM + agent + skill + MCP first`，没有为 GitHub 热榜增加 runtime 业务特判
+- 增加会话级 conversation lanes，同一 `channel_id + conversation_id` 的 HTTP `/messages` 和 Feishu interactive turn 会按 FIFO 串行处理
+- 增强 provider resilience，对 `429`、`502`、`503`、`504` 做 retryable 归一化，并输出稳定的 provider-specific error code
+- 增强 Feishu 诊断面，能直接看到最近一次入站对应的 `session_id`、`run_id`、`llm_request_count` 和 `tool_calls`
+- 修复 Feishu 实链不稳定因素：重复语义重放、单次 runtime 异常打断 websocket、空白消息触发错误可见回复，以及重复 websocket 事件覆盖最近 accepted 状态
 
-### Fastest local bootstrap
+## 仓库结构
+
+- `src/marten_runtime/`：runtime、channels、MCP、skills、sessions、diagnostics
+- `config/*.toml`：运行时策略和默认值
+- `config/bindings.toml`：channel/user/conversation 到 agent 的绑定规则
+- `apps/<app_id>/app.toml`：app manifest
+- `apps/<app_id>/*.md`：bootstrap prompt 资产
+- `skills/`：共享文件型 skills
+- `.env.example`：本地 secrets 模板
+- `mcps.example.json`：MCP 连接模板
+- `docs/`：设计、计划、检查清单与配置说明
+- `tests/`：主链相关单元测试与契约测试
+
+## 快速开始
+
+### 最快本地初始化
 
 ```bash
 ./init.sh
 ```
 
-`./init.sh` is the recommended shortest path for a fresh local checkout. It creates or reuses `.venv`, installs dependencies, copies `.env` / `mcps.json` from templates when missing, prints the canonical startup command, and runs a temporary local smoke against `/healthz`, `/readyz`, and `/diagnostics/runtime`.
+对 fresh checkout 来说，推荐优先执行 `./init.sh`。它会创建或复用 `.venv`、安装依赖、在缺失时从模板补齐 `.env` 和 `mcps.json`、打印 canonical 启动命令，并对 `/healthz`、`/readyz`、`/diagnostics/runtime` 跑一次临时本地 smoke。
 
-Useful variants:
+常用变体：
 
-- `./init.sh --skip-install`: reuse the existing virtualenv and skip dependency installation, but still run readiness checks and local smoke
-- `./init.sh --smoke-only`: assume the workspace is already initialized and run only readiness checks plus the temporary local smoke
+- `./init.sh --skip-install`：复用现有虚拟环境，跳过依赖安装，但仍执行 readiness 检查和本地 smoke
+- `./init.sh --smoke-only`：假定 workspace 已完成初始化，只执行 readiness 检查和临时本地 smoke
 
-If you want the shortest deployment-oriented reading path, start with [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md).
+如果你想走最短的部署阅读路径，直接先看 [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)。
 
-If you want the shortest container entry, use `docker compose up -d --build` from the repository root.
+如果你想走最短的容器部署入口，直接在仓库根目录执行 `docker compose up -d --build`。
 
-### Requirements
+### 环境要求
 
-- Python `3.11`, `3.12`, or `3.13`
-- a working OpenAI-compatible provider credential
-- optional Feishu and MCP credentials for live integration tests
+- Python `3.11`、`3.12` 或 `3.13`
+- 一个可用的 OpenAI-compatible provider 凭据
+- 如果要跑真实集成，还需要可选的 Feishu 和 MCP 凭据
 
-### Install
+### 安装
 
 ```bash
 python3.11 -m venv .venv
@@ -183,59 +160,59 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-Use the manual path above when you want to run each setup step yourself instead of the one-shot `./init.sh`.
+如果你想手动控制每一步初始化过程，可以直接使用上面的显式安装命令，而不是一键 `./init.sh`。
 
-### Configure
+### 配置
 
 ```bash
 cp .env.example .env
 cp mcps.example.json mcps.json
 ```
 
-Configuration boundaries:
+配置边界：
 
-- `.env`: secrets and machine-local overrides only
-- `mcps.json`: live MCP server definitions and optional tool hints
-- `config/agents.toml`: runtime agent registry, app binding, tool surface, and model profile selection
-- `config/*.example.toml`: published template defaults
-- `config/*.toml`: optional local overrides for the corresponding example file
-- `apps/<app_id>/*.md`: bootstrap and agent behavior assets
+- `.env`：只放 secrets 和机器本地 override
+- `mcps.json`：放实时 MCP server 定义和可选工具提示
+- `config/agents.toml`：放 runtime agent registry、app 绑定、tool surface 和 model profile 选择
+- `config/*.example.toml`：公开提交的模板默认值
+- `config/*.toml`：对应模板的本地覆盖文件
+- `apps/<app_id>/*.md`：放 bootstrap 和 agent 行为资产
 
-Minimal practical setup:
+最小可运行配置：
 
-- set provider secrets in `.env`; the committed shortest paths are `OPENAI_API_KEY`, `MINIMAX_API_KEY`, and `KIMI_API_KEY`
-- keep provider connection metadata in `config/providers.toml`
-- keep model/profile selection in `config/models.toml`
-- keep per-agent app/profile/tool selection in `config/agents.toml`
-- set `default_profile` or update `profiles.openai_gpt5` / `profiles.minimax_m25` / `profiles.kimi_k2` when you want another live profile
-- set `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY` in `.env` when you want external tracing in Langfuse
-- optionally copy `config/*.example.toml` to `config/*.toml` only for local overrides
-- add MCP servers to `mcps.json` only when you need external tools
-- enable Feishu through a local `config/channels.toml` only when you have a live bot app
+- 在 `.env` 设置 provider secret；当前最短路径包括 `OPENAI_API_KEY`、`MINIMAX_API_KEY`
+- 在 `config/providers.toml` 放 provider 连接元数据
+- 在 `config/models.toml` 放 profile 和模型选择
+- 在 `config/agents.toml` 放 agent 对应的 app / profile / tool 选择
+- 如果你想切换 live profile，更新 `default_profile` 或 `profiles.openai_gpt5` / `profiles.minimax_m25`
+- 如果要启用 Langfuse 外部 tracing，在 `.env` 里补齐 `LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`
+- 只有需要本地覆盖时才把 `config/*.example.toml` 复制成 `config/*.toml`
+- 只有需要外部工具时才在 `mcps.json` 配置 MCP
+- 只有准备好了 Feishu bot 时才通过本地 `config/channels.toml` 打开 Feishu
 
-Published config shape:
+当前公开仓库的配置形态：
 
-- committed: `config/agents.toml`, `config/bindings.toml`, `config/*.example.toml`
-- ignored local overrides: `config/platform.toml`, `config/providers.toml`, `config/models.toml`, `config/channels.toml`
+- 提交：`config/agents.toml`、`config/bindings.toml`、`config/*.example.toml`
+- 本地忽略覆盖：`config/platform.toml`、`config/providers.toml`、`config/models.toml`、`config/channels.toml`
 
-## Privacy And Open-Source Hygiene
+## 隐私与开源清洁度
 
-This repository is prepared for public hosting with template-first config:
+仓库按模板优先的方式准备开源：
 
-- commit `.env.example`, never real `.env`
-- commit `mcps.example.json`, never real `mcps.json`
-- keep secrets in local environment or local ignored files
-- keep operator-specific runtime snapshots, tokens, and chat identifiers out of docs
+- 提交 `.env.example`，不提交真实 `.env`
+- 提交 `mcps.example.json`，不提交真实 `mcps.json`
+- secrets 只保留在本地环境或被忽略的本地文件里
+- 文档不保留本地路径、真实 token、聊天标识或运维快照
 
-The default `.gitignore` already excludes local secrets, MCP connection files, local databases, and runtime artifacts.
+默认 `.gitignore` 已经忽略本地 secrets、MCP 连接文件、数据库和运行时产物。
 
-## Run
+## 运行
 
 ```bash
 PYTHONPATH=src python -m marten_runtime.interfaces.http.serve
 ```
 
-Useful endpoints:
+常用端点：
 
 - `GET /healthz`
 - `GET /readyz`
@@ -248,29 +225,20 @@ Useful endpoints:
 - `GET /diagnostics/run/{run_id}`
 - `GET /diagnostics/trace/{trace_id}`
 
-Run diagnostics include `llm_request_count` and `tool_calls`, so operator checks can verify whether a turn stayed on the intended `LLM -> tool -> LLM` path.
-Run diagnostics also expose `provider_ref`, `attempted_profiles`, `attempted_providers`, `failover_trigger`, `failover_stage`, and `final_provider_ref`.
+其中 `GET /diagnostics/run/{run_id}` 会暴露 `llm_request_count`、`tool_calls`、`provider_ref`、`attempted_profiles`、`attempted_providers`、`failover_trigger`、`failover_stage`、`final_provider_ref`，便于确认一次 turn 是否真的走了预期的 `LLM -> tool -> LLM` 主链，以及是否发生了 provider failover。
 
-Langfuse observability is now supported as an optional tracing surface:
+Langfuse 可观测性现在已经是可选的 tracing 面：
 
-- `GET /diagnostics/runtime` exposes `observability.langfuse.enabled`, `healthy`, `configured`, `base_url`, and the current config reason
-- `GET /diagnostics/run/{run_id}` exposes `external_observability.langfuse_trace_id` and `external_observability.langfuse_url`
-- `GET /diagnostics/trace/{trace_id}` exposes `external_refs.langfuse_trace_id` and `external_refs.langfuse_url`
-- one runtime turn maps to one Langfuse trace, each LLM round maps to one generation, and builtin/MCP tool calls map to tool spans
-- `enabled` reports whether the runtime still has Langfuse capability wired in, while `healthy` reports whether the most recent Langfuse client call succeeded
-- live validation in this environment confirmed plain chat, multi-tool, and parent/child subagent traces against Langfuse cloud
+- `GET /diagnostics/runtime` 会暴露 `observability.langfuse.enabled`、`healthy`、`configured`、`base_url` 和当前配置原因
+- `GET /diagnostics/run/{run_id}` 会暴露 `external_observability.langfuse_trace_id` 和 `external_observability.langfuse_url`
+- `GET /diagnostics/trace/{trace_id}` 会暴露 `external_refs.langfuse_trace_id` 和 `external_refs.langfuse_url`
+- 一次 runtime turn 对应一条 Langfuse trace，每一轮 LLM 调用对应一条 generation，builtin/MCP tool 调用对应 tool span
+- `enabled` 表示当前 runtime 仍然具备 Langfuse 接线能力，`healthy` 表示最近一次 Langfuse client 调用是否成功
+- 当前环境的 live 验证已经确认 plain chat、多轮 tool、以及 parent/child subagent tracing 可以在 Langfuse cloud 中看到
 
-For Feishu live debugging, use this correlation path:
+## 测试
 
-- `channels.feishu.websocket.last_run_id` from `GET /diagnostics/runtime`
-- `GET /diagnostics/run/{run_id}` to read tool calls and the runtime `trace_id`
-- `GET /diagnostics/trace/{trace_id}` using that runtime `trace_id`
-
-Do not treat `channels.feishu.websocket.last_trace_id` as the runtime trace. That field is the raw Feishu websocket trace header. Use `last_runtime_trace_id` or the `trace_id` from run diagnostics for runtime correlation.
-
-## Testing
-
-Targeted Milestone A regression suite:
+Milestone A 重点回归：
 
 ```bash
 PYTHONPATH=src python -m unittest \
@@ -290,17 +258,17 @@ PYTHONPATH=src python -m unittest \
   -v
 ```
 
-Full suite:
+全量测试：
 
 ```bash
 PYTHONPATH=src python -m unittest -v
 ```
 
-Latest local result: `269` tests green.
+建议直接运行上面的命令进行本地全量验证，不要依赖文档中固定的测试数量。
 
-## Documentation
+## 文档
 
-Recommended reading order:
+建议阅读顺序：
 
 1. [docs/README.md](./docs/README.md)
 2. [docs/ARCHITECTURE_EVOLUTION.md](./docs/ARCHITECTURE_EVOLUTION.md)
@@ -309,10 +277,3 @@ Recommended reading order:
 5. [docs/CONFIG_SURFACES.md](./docs/CONFIG_SURFACES.md)
 6. [docs/LIVE_VERIFICATION_CHECKLIST.md](./docs/LIVE_VERIFICATION_CHECKLIST.md)
 7. [docs/archive/README.md](./docs/archive/README.md)
-
-## Recent Updates
-
-- GitHub trending now runs through one thin repo-local MCP sidecar: `github_trending.trending_repositories`.
-- The removed legacy `github_hot_repos_digest` skill surface has been cleaned from active code, tests, and automation data.
-- Historical `github_hot_repos_digest` automation rows are no longer a supported runtime input; current supported automation data is already canonical `github_trending_digest`.
-- Feishu GitHub trending cards now state that ranking follows the GitHub Trending page order and avoid repeating the fetched time in multiple places.

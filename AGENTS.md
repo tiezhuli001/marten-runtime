@@ -25,12 +25,24 @@ Treat as lower priority by default:
 ## Change Rules
 
 - Preserve the main runtime path and its contracts first.
+- Start each tracked change on a named work branch before editing files.
+- Keep `main` as the clean integration baseline.
 - Do not widen the control surface without a strong reason.
 - Prefer narrow, local changes over broad refactors.
 - Do not delete code only because it is large, old, or lightly documented.
 - Prefer removing high-confidence orphan helpers, false-alive tests, and unjustified wrapper layers first.
 - Treat support/helper splits as valid only when they carry clear ownership or reduce real complexity.
 - Keep docs/archive work behind source-code and active-test cleanup unless docs are blocking execution.
+
+## LLM-First Boundary
+
+- Keep message understanding, intent recognition, tool selection, and capability choice in the LLM path.
+- Keep host code focused on capability declaration, on-demand loading, execution, safety checks, retry, persistence, delivery, and diagnostics.
+- Keep routing declarative through config, bindings, and metadata.
+- Prefer prompt, skill, schema, and capability-catalog updates when behavior needs to improve.
+- Prefer config and metadata tables when capability exposure needs to scale.
+- Keep code-owned branching limited to runtime safety, auth, retry, delivery, persistence, and diagnostics.
+- Review each new branch by checking whether it expresses runtime safety or model reasoning; model reasoning belongs in the LLM path.
 
 ## Verification
 

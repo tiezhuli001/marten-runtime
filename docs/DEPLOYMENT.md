@@ -1,86 +1,86 @@
-# Deployment Guide
+# 部署指南
 
-This guide is the shortest deployment path for `marten-runtime`.
+这份文档提供 `marten-runtime` 的最短部署路径。
 
-Goal:
+目标是：
 
-- get one runtime process up quickly
-- keep the required configuration small
-- verify the service with a few obvious checks
-- add Feishu, MCP, and Langfuse only when you actually need them
+- 用尽量少的步骤把 runtime 跑起来
+- 把必需配置压到最小
+- 用少量直观检查确认服务健康
+- 只在真正需要时再加 Feishu、MCP 和 Langfuse
 
-## Recommended Path
+## 推荐路径
 
-For most deployments, use this order:
+对大多数部署场景，建议按这个顺序做：
 
-1. choose one runtime shape:
-   - local process for development
-   - Docker container for isolated deployment
-2. set one provider credential
-3. start the HTTP runtime
-4. verify `/healthz`, `/readyz`, and `/diagnostics/runtime`
-5. add optional integrations one by one
+1. 先选择部署形态：
+   - 本地进程
+   - Docker 容器
+2. 配置一个 provider 凭据
+3. 启动 HTTP runtime
+4. 检查 `/healthz`、`/readyz`、`/diagnostics/runtime`
+5. 再按需逐个打开可选集成
 
-## Deployment Shapes
+## 部署形态
 
-Use one of these two shapes:
+当前建议保留两种部署形态：
 
-- Local process
-  - best for source-level development, debugging, and rapid iteration
-- Docker container
-  - best for isolated deployment, reproducible startup, and cleaner runtime dependencies
+- 本地进程
+  - 适合开发、调试、源码级排查
+- Docker 容器
+  - 适合隔离部署、稳定复现启动过程、收敛运行环境依赖
 
-For deployment-facing usage, Docker is now the recommended default shape.
+面向部署时，Docker 现在是更推荐的默认形态。
 
-If you want one stable operator command instead of a long `docker run ...`, use `docker compose`.
+如果你希望把部署命令进一步收短、变成一个稳定入口，优先使用 `docker compose`。
 
-## Minimal Deployment
+## 最小部署
 
-This is the smallest useful setup.
+这是当前最小可用的部署方式。
 
-### 1. Requirements
+### 1. 环境要求
 
-- Python `3.11`, `3.12`, or `3.13`
-- one OpenAI-compatible provider credential
+- Python `3.11`、`3.12` 或 `3.13`
+- 一个 OpenAI-compatible provider 凭据
 
-### 2. Bootstrap
+### 2. 初始化
 
 ```bash
 ./init.sh
 ```
 
-What it does:
+它会：
 
-- creates or reuses `.venv`
-- installs dependencies
-- creates `.env` from `.env.example` when missing
-- creates `mcps.json` from `mcps.example.json` when missing
-- runs a local smoke check
+- 创建或复用 `.venv`
+- 安装依赖
+- 在缺失时从 `.env.example` 创建 `.env`
+- 在缺失时从 `mcps.example.json` 创建 `mcps.json`
+- 跑一轮本地 smoke 检查
 
-### 3. Minimum config
+### 3. 最小配置
 
-The committed default runtime now uses the shared `default` profile.
+当前提交态默认 runtime 使用 `default_profile = "openai_gpt5"`。
 
-The shortest current setup is:
+最短路径是：
 
 ```env
 OPENAI_API_KEY=
 ```
 
-The committed default model for that profile is `gpt-5.4`.
+这个默认 profile 对应的提交态默认模型是 `gpt-5.4`。
 
-If you want another provider or model, redefine `profiles.default` in a local `config/models.toml`.
+如果你想切到别的 provider 或模型，在本地 `config/models.toml` 里切换 `default_profile`，或重定义它指向的 profile。
 
-Keep everything else at defaults unless you need local overrides.
+其他配置保持默认即可，只有需要本地覆盖时再加。
 
-### 4. Start the runtime
+### 4. 启动 runtime
 
 ```bash
 source .venv/bin/activate
 PYTHONPATH=src python -m marten_runtime.interfaces.http.serve
 ```
 
-### 5. Verify the process
+### 5. 检查进程健康
 
 ```bash
 curl -sS http://127.0.0.1:8000/healthz
@@ -88,28 +88,28 @@ curl -sS http://127.0.0.1:8000/readyz
 curl -sS http://127.0.0.1:8000/diagnostics/runtime
 ```
 
-Healthy signs:
+健康信号：
 
-- `/healthz` returns `status = ok`
-- `/readyz` returns `status = ready`
-- `/diagnostics/runtime` shows the expected app and LLM profile
+- `/healthz` 返回 `status = ok`
+- `/readyz` 返回 `status = ready`
+- `/diagnostics/runtime` 能看到预期的 app 和 LLM profile
 
-## Copy-Paste Quick Start
+## 可直接复制的 Quick Start
 
-If you want the shortest possible path, use this exact sequence:
+如果你想走最短路径，直接按这组命令做：
 
 ```bash
 ./init.sh
 ```
 
-Edit `.env` and set one provider key, then start the runtime:
+在 `.env` 里设置一个 provider key 后，启动 runtime：
 
 ```bash
 source .venv/bin/activate
 PYTHONPATH=src python -m marten_runtime.interfaces.http.serve
 ```
 
-In another terminal, verify the process:
+在另一个终端检查进程：
 
 ```bash
 curl -sS http://127.0.0.1:8000/healthz
@@ -117,7 +117,7 @@ curl -sS http://127.0.0.1:8000/readyz
 curl -sS http://127.0.0.1:8000/diagnostics/runtime
 ```
 
-Then send one minimal HTTP message:
+然后发一个最小 HTTP 消息：
 
 ```bash
 curl -sS http://127.0.0.1:8000/messages \
@@ -131,74 +131,76 @@ curl -sS http://127.0.0.1:8000/messages \
   }'
 ```
 
-Expected result:
+预期结果：
 
-- the response is HTTP `200`
-- the JSON contains `session_id`
-- the final event contains `run_id`
+- 返回 HTTP `200`
+- JSON 里有 `session_id`
+- 最后一个 event 里有 `run_id`
 
-To route one request to a non-default agent, add `requested_agent_id` to the same JSON payload.
+如果要把这次请求路由到非默认 agent，就在同一个 JSON payload 里补 `requested_agent_id`。
 
-If you want one more confirmation step, open:
+如果还想再确认一步，可以打开：
 
 ```bash
 curl -sS http://127.0.0.1:8000/diagnostics/run/<run_id>
 ```
 
-## Docker Deployment
+## Docker 部署
 
-Docker is the recommended deployment path when you want a cleaner runtime boundary.
+如果你希望运行环境更隔离、启动方式更稳定，推荐直接使用 Docker。
 
-### 1. Build the image
+### 1. 构建镜像
 
-From the repository root:
+在仓库根目录执行：
 
 ```bash
 docker build -t marten-runtime:local .
 ```
 
-### 2. Prepare runtime config
+### 2. 准备运行时配置
 
-Use runtime-injected config instead of baking secrets into the image.
+推荐把配置在运行时注入进容器，不要把 secrets 烘焙进镜像。
 
-Minimum env file for the committed default runtime:
+针对当前提交态默认 runtime，最小 env 文件是：
 
 ```env
 OPENAI_API_KEY=
 ```
 
-The committed default model is `gpt-5.4`.
+当前提交态默认模型是 `gpt-5.4`。
 
-If you want another provider or model, redefine the shared `default` profile in a local `config/models.toml`.
+如果你想切到别的 provider 或模型，在本地 `config/models.toml` 里切换 `default_profile`，或重定义它指向的 profile。
 
-Example:
+示例：
 
 ```toml
-default_profile = "default"
+default_profile = "openai_gpt5"
 
-[profiles.default]
-provider = "openai"
+[profiles.openai_gpt5]
+provider_ref = "openai"
 model = "gpt-5.4"
 tokenizer_family = "openai_o200k"
 supports_provider_usage = true
 ```
 
-Optional server overrides:
+`base_url`、`api_key_env` 和能力开关这类 provider 连接元数据继续放在 `config/providers.toml`。
+
+可选 server 覆盖：
 
 ```env
 SERVER_PORT=8000
 SERVER_PUBLIC_BASE_URL=http://127.0.0.1:8000
 ```
 
-Recommended practice:
+推荐做法：
 
-- keep secrets in a local `.env`
-- pass them with `--env-file .env`
-- mount local overrides only when you actually need them
+- secrets 保留在本地 `.env`
+- 用 `--env-file .env` 注入
+- 只有需要本地覆盖时才挂载额外文件
 
-### 3. Run the container
+### 3. 启动容器
 
-The minimal isolated shape is:
+最小隔离部署形态：
 
 ```bash
 docker run --rm \
@@ -208,11 +210,11 @@ docker run --rm \
   marten-runtime:local
 ```
 
-That is enough for the default HTTP runtime.
+这个命令已经足够启动默认 HTTP runtime。
 
-### 4. Verify the container
+### 4. 检查容器
 
-In another terminal:
+在另一个终端执行：
 
 ```bash
 curl -sS http://127.0.0.1:8000/healthz
@@ -220,17 +222,17 @@ curl -sS http://127.0.0.1:8000/readyz
 curl -sS http://127.0.0.1:8000/diagnostics/runtime
 ```
 
-Healthy signs stay the same:
+健康信号和本地部署一致：
 
-- `/healthz` returns `status = ok`
-- `/readyz` returns `status = ready`
-- `/diagnostics/runtime` shows the expected runtime profile
+- `/healthz` 返回 `status = ok`
+- `/readyz` 返回 `status = ready`
+- `/diagnostics/runtime` 能看到预期的 runtime profile
 
-### 5. Optional mounts
+### 5. 可选挂载
 
-Use mounts only for live local overrides.
+只有需要实时本地覆盖时，再挂载这些文件。
 
-Mount local MCP config:
+挂载本地 MCP 配置：
 
 ```bash
 docker run --rm \
@@ -241,7 +243,7 @@ docker run --rm \
   marten-runtime:local
 ```
 
-Mount local TOML overrides:
+挂载本地 TOML 覆盖：
 
 ```bash
 docker run --rm \
@@ -250,16 +252,19 @@ docker run --rm \
   --env-file .env \
   -v "$(pwd)/config/platform.toml:/app/config/platform.toml:ro" \
   -v "$(pwd)/config/agents.toml:/app/config/agents.toml:ro" \
+  -v "$(pwd)/config/providers.toml:/app/config/providers.toml:ro" \
   -v "$(pwd)/config/models.toml:/app/config/models.toml:ro" \
   -v "$(pwd)/config/channels.toml:/app/config/channels.toml:ro" \
   marten-runtime:local
 ```
 
-Use `config/models.toml` when you want to redefine the shared `default` profile or add extra profiles.
+如果你要切换默认 profile、修改某个 profile 的模型、或新增 profile，优先挂载 `config/models.toml`。
 
-Use `config/agents.toml` only when you want to change which profile a specific agent runs.
+如果你要改某个 agent 实际使用的 profile，再挂载 `config/agents.toml`。
 
-Persist local SQLite data:
+如果你要改 provider 地址、鉴权 env 名或 provider 能力开关，再挂载 `config/providers.toml`。
+
+持久化本地 SQLite 数据：
 
 ```bash
 docker run --rm \
@@ -270,9 +275,9 @@ docker run --rm \
   marten-runtime:local
 ```
 
-### 6. One-file operator command
+### 6. 一条更实用的 operator 命令
 
-If you want one practical default command for operators, use:
+如果你想给运维同学一条更接近默认值的命令，可以用：
 
 ```bash
 docker run --rm \
@@ -284,35 +289,35 @@ docker run --rm \
   marten-runtime:local
 ```
 
-This keeps:
+这条命令能同时满足：
 
-- image contents stable
-- secrets outside the image
-- data persistent across container restarts
-- MCP definitions easy to replace
+- 镜像内容稳定
+- secrets 留在镜像外
+- 容器重启后数据可保留
+- MCP 定义可直接替换
 
-## Docker Compose Deployment
+## Docker Compose 部署
 
-`docker compose` is recommended when you want the deployment command to stay short and repeatable.
+如果你希望部署命令更短、更稳定、更适合运维复用，推荐直接使用 `docker compose`。
 
-### 1. Base compose path
+### 1. 基础 compose 路径
 
-The repository now includes a root [compose.yaml](../compose.yaml).
+仓库已经提供根目录 [compose.yaml](../compose.yaml)。
 
-For the committed default runtime baseline:
+针对当前提交态默认 runtime，直接执行：
 
 ```bash
 docker compose up -d --build
 ```
 
-That path uses:
+这条路径默认使用：
 
-- the root `compose.yaml`
-- `.env` as the runtime env file
-- `./data` as the persistent data directory
-- the current repository baseline for agent and model config
+- 根目录 `compose.yaml`
+- `.env` 作为运行时 env 文件
+- `./data` 作为持久化数据目录
+- 仓库当前默认的 agent / model 配置
 
-Then verify:
+然后检查：
 
 ```bash
 curl -sS http://127.0.0.1:8000/healthz
@@ -320,90 +325,90 @@ curl -sS http://127.0.0.1:8000/readyz
 curl -sS http://127.0.0.1:8000/diagnostics/runtime
 ```
 
-### 2. Provider selection
+### 2. Provider 选择方式
 
-`compose.yaml` now mounts the whole local `config/` directory into the container.
+`compose.yaml` 现在会把整个本地 `config/` 目录挂进容器。
 
-That keeps provider selection generic:
+这让 provider 选择回到通用配置面：
 
-- set the matching secret in `.env`
-- redefine `profiles.default` in local `config/models.toml` when you want another provider or model
-- restart the stack
+- 在 `.env` 里放对应 secret
+- 如果要换 provider 或模型，在本地 `config/models.toml` 里调整 `default_profile` 或它引用的 profile
+- 重启 compose stack
 
-Example local `config/models.toml` for the committed default OpenAI path:
+当前提交态默认 OpenAI 路径对应的本地 `config/models.toml` 例子：
 
 ```toml
-default_profile = "default"
+default_profile = "openai_gpt5"
 
-[profiles.default]
-provider = "openai"
+[profiles.openai_gpt5]
+provider_ref = "openai"
 model = "gpt-5.4"
 tokenizer_family = "openai_o200k"
 supports_provider_usage = true
 ```
 
-Example local `config/models.toml` for a MiniMax path:
+MiniMax 路径例子：
 
 ```toml
-default_profile = "default"
+default_profile = "minimax_m25"
 
-[profiles.default]
-provider = "openai"
+[profiles.minimax_m25]
+provider_ref = "minimax"
 model = "MiniMax-M2.5"
-base_url = "https://api.minimaxi.com/v1"
-api_key_env = "MINIMAX_API_KEY"
 tokenizer_family = "openai_o200k"
 supports_provider_usage = true
 ```
 
-If `.env` does not contain the API key required by the active `profiles.default`, the service exits during startup.
+`openai`、`minimax` 这类 provider ref 对应的连接元数据放在 `config/providers.toml`。
 
-### 3. Useful compose controls
+如果 `.env` 里没有 active `default_profile` 所引用 provider 需要的 API key，服务会在启动阶段直接失败并退出。
 
-Stop the stack:
+### 3. 常用 compose 控制命令
+
+停止整套服务：
 
 ```bash
 docker compose down
 ```
 
-Tail logs:
+跟日志：
 
 ```bash
 docker compose logs -f
 ```
 
-Use a different env file:
+切换 env 文件：
 
 ```bash
 MARTEN_RUNTIME_ENV_FILE=.env.production docker compose up -d --build
 ```
 
-Use a different host port:
+切换主机端口：
 
 ```bash
 MARTEN_RUNTIME_HOST_PORT=18080 docker compose up -d --build
 ```
 
-### 4. When compose is the better default
+### 4. 什么时候 compose 更适合做默认入口
 
-Prefer `docker compose` when you want:
+以下场景优先使用 `docker compose`：
 
-- one checked-in deployment entry
-- stable restarts and log access
-- fewer copy-paste flags
-- a clean path for later reverse-proxy or extra sidecars
+- 需要一个仓库内可复用的部署入口
+- 需要稳定重启和统一看日志
+- 想减少一长串命令参数
+- 后面准备再接反向代理或其他 sidecar
 
-## Simple Local Operator Workflow
+## 简单运维路径
 
-Once the server is up, the shortest useful operator loop is:
+服务起来后，最短的运维路径是：
 
-1. create or reuse config through templates
-2. start the server
-3. hit `/diagnostics/runtime`
-4. send one HTTP `/messages` request or one Feishu message
-5. inspect `/diagnostics/run/{run_id}` when needed
+1. 用模板准备配置
+2. 启动服务
+3. 打开 `/diagnostics/runtime`
+4. 发一个 HTTP `/messages` 请求或一条 Feishu 消息
+5. 需要追查时再看 `/diagnostics/run/{run_id}`
 
-Useful endpoints:
+常用端点：
 
 - `GET /healthz`
 - `GET /readyz`
@@ -416,64 +421,64 @@ Useful endpoints:
 - `GET /diagnostics/run/{run_id}`
 - `GET /diagnostics/trace/{trace_id}`
 
-## Optional Integrations
+## 可选集成
 
-Add these only when the minimal HTTP runtime is already healthy.
+只有在最小 HTTP runtime 已经健康后，再逐个打开这些能力。
 
 ### Feishu
 
-Add Feishu when you want live chat ingress.
+当你需要 live chat ingress 时再打开 Feishu。
 
-Required local pieces:
+本地必需项：
 
-- `FEISHU_APP_ID` in `.env`
-- `FEISHU_APP_SECRET` in `.env`
-- optional `FEISHU_BASE_URL` override in `.env`
-- local `config/channels.toml` with:
+- `.env` 中有 `FEISHU_APP_ID`
+- `.env` 中有 `FEISHU_APP_SECRET`
+- 如需覆盖可加 `FEISHU_BASE_URL`
+- 本地 `config/channels.toml` 至少包含：
   - `[feishu].enabled = true`
   - `connection_mode = "websocket"`
   - `auto_start = true`
 
-Then verify:
+然后检查：
 
 ```bash
 curl -sS http://127.0.0.1:8000/diagnostics/runtime
 ```
 
-Look for:
+重点看：
 
 - `channels.feishu.connection_mode = websocket`
 - `channels.feishu.websocket.connected = true`
 
-For the real-chain procedure, use [LIVE_VERIFICATION_CHECKLIST.md](./LIVE_VERIFICATION_CHECKLIST.md).
+真实链路验证流程请看 [LIVE_VERIFICATION_CHECKLIST.md](./LIVE_VERIFICATION_CHECKLIST.md)。
 
 ### MCP
 
-Add MCP only when you need external tools.
+只有需要外部工具时再打开 MCP。
 
-Required file:
+必需文件：
 
-- root `mcps.json`
+- 根目录 `mcps.json`
 
-Recommended pattern:
+推荐方式：
 
-- start from `mcps.example.json`
-- keep the file empty until you need a server
-- add one server at a time
+- 从 `mcps.example.json` 开始
+- 不需要时保持为空
+- 一次只接一个 server
 
-Then verify:
+然后检查：
 
 ```bash
 curl -sS http://127.0.0.1:8000/diagnostics/runtime
 ```
 
-Look for discovered MCP servers and tool surfaces.
+重点看 MCP server 是否被发现，以及工具面是否出现。
 
 ### Langfuse
 
-Add Langfuse only when you want external tracing.
+只有需要外部 tracing 时再打开 Langfuse。
 
-Required `.env` keys:
+`.env` 需要：
 
 ```env
 LANGFUSE_BASE_URL=
@@ -481,141 +486,141 @@ LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
 ```
 
-Then verify:
+然后检查：
 
 ```bash
 curl -sS http://127.0.0.1:8000/diagnostics/runtime
 ```
 
-Look for:
+重点看：
 
 - `observability.langfuse.enabled`
 - `observability.langfuse.configured`
 - `observability.langfuse.healthy`
 
-## Config Ownership
+## 配置归属
 
-Keep config simple by using each file for one purpose:
+为了保持部署简单，每类配置只放在一个地方：
 
 - `.env`
-  - secrets and machine-local overrides
+  - secrets 和机器本地 override
 - `config/*.example.toml`
-  - published defaults
+  - 公开模板默认值
 - `config/*.toml`
-  - optional local overrides only
+  - 可选本地覆盖
 - `mcps.json`
-  - live MCP server definitions only
+  - 实时 MCP server 定义
 - `apps/<app_id>/*.md`
-  - prompt/bootstrap assets
+  - prompt / bootstrap 资产
 
-For the full mapping, use [CONFIG_SURFACES.md](./CONFIG_SURFACES.md).
+完整配置映射请看 [CONFIG_SURFACES.md](./CONFIG_SURFACES.md)。
 
-## Deployment Notes
+## 当前部署说明
 
-Current deployment reality:
+当前部署层面的真实情况是：
 
-- the runtime path is ready for deployment-oriented setup work
-- durable SQLite session persistence is part of the baseline
-- cross-restart session continuity works through bounded restore, session binding persistence, and persisted compaction jobs
-- session switching stays explicit through `session.new` and `session.resume`, with source-session compaction allowed to finish in the background
+- runtime 主链已经适合进入部署准备
+- durable SQLite session persistence 已经进入基线
+- 跨重启 session continuity 通过 bounded restore、session binding 持久化和 persisted compaction jobs 生效
+- 会话切换继续保持显式控制面：`session.new` / `session.resume`，source session compaction 可以在后台完成
 
-This means the simplest current deployment shape is:
+这意味着当前最简单的部署形态是：
 
-- one runtime process or one Docker container
-- template-first config
-- runtime diagnostics as the first operator surface
-- optional Feishu, MCP, and Langfuse added incrementally
+- 一个 runtime 进程或一个 Docker 容器
+- template-first 配置
+- 先用 runtime diagnostics 作为 operator surface
+- Feishu、MCP、Langfuse 按需逐步打开
 
-## Recommended Deployment Shapes
+## 推荐部署形态
 
-Use the smallest shape that matches your current goal:
+根据当前目标，优先选择最小部署形态：
 
-### 1. Local HTTP-only quick start
+### 1. 本地 HTTP-only quick start
 
-Use this when you want the fastest proof that the runtime is alive.
+适合先确认 runtime 活着。
 
-- one local process
-- one provider key
-- no Feishu
-- no MCP
-- no Langfuse
+- 一个本地进程
+- 一个 provider key
+- 不开 Feishu
+- 不开 MCP
+- 不开 Langfuse
 
-### 2. Operator development setup
+### 2. Operator 开发环境
 
-Use this when you want the runtime plus diagnostics and optional external tools.
+适合带上诊断面和可选外部工具。
 
-- one local process
-- one provider key
-- optional MCP
-- optional Langfuse
-- Feishu only if you are validating the chat path
+- 一个本地进程
+- 一个 provider key
+- 可选 MCP
+- 可选 Langfuse
+- 只有需要验证聊天路径时才开 Feishu
 
-### 3. Live chat setup
+### 3. 实时聊天环境
 
-Use this when you need the real Feishu path.
+适合验证真实 Feishu 路径。
 
-- one runtime process
+- 一个 runtime 进程
 - provider key
-- Feishu credentials
-- optional MCP depending on the scenario
-- optional Langfuse if you want external tracing
+- Feishu 凭据
+- 是否启用 MCP 取决于场景
+- 如果需要外部 tracing，再开 Langfuse
 
-This ordering is intentional:
+这个顺序是刻意设计的：
 
-- HTTP-only first
-- then diagnostics and external tools
-- then live chat ingress
+- 先 HTTP-only
+- 再加 diagnostics 和外部工具
+- 最后再加 live chat ingress
 
-That keeps deployment simple and makes failures easier to isolate.
+这样部署过程更简单，问题也更容易定位。
 
-## Fast Troubleshooting
+## 快速排障
 
-### `./init.sh` stops with provider credential missing
+### `./init.sh` 提示 provider credential missing
 
-Cause:
+原因：
 
-- `.env` does not contain `OPENAI_API_KEY` or `MINIMAX_API_KEY`
+- `.env` 里没有 `OPENAI_API_KEY` 或 `MINIMAX_API_KEY`
 
-Fix:
+处理：
 
-- set one provider key in `.env`
-- rerun `./init.sh`
+- 在 `.env` 里设置一个 provider key
+- 重新执行 `./init.sh`
 
-### `/readyz` is not ready
+### `/readyz` 没有 ready
 
-Check:
+先检查：
 
-- provider credentials
-- local config overrides
-- startup logs from the running process
+- provider 凭据
+- 本地 config override
+- 启动日志
 
-### Feishu is not connected
+### Feishu 没连上
 
-Check:
+先检查：
 
 - `config/channels.toml`
-- Feishu credentials in `.env`
-- websocket connection fields in `/diagnostics/runtime`
+- `.env` 里的 Feishu 凭据
+- `/diagnostics/runtime` 中的 websocket 字段
 
-### MCP tools are missing
+### MCP 工具没出现
 
-Check:
+先检查：
 
 - `mcps.json`
-- MCP credentials
-- discovered tool list in `/diagnostics/runtime`
+- MCP 凭据
+- `/diagnostics/runtime` 中的 discovered tools
 
-### Langfuse is configured but unhealthy
+### Langfuse 已配置但 unhealthy
 
-Check:
+先检查：
 
-- Langfuse credentials
-- network reachability
-- `observability.langfuse` fields in `/diagnostics/runtime`
+- Langfuse 凭据
+- 网络可达性
+- `/diagnostics/runtime` 中的 `observability.langfuse` 字段
 
-## Suggested Reading Order
+## 推荐阅读顺序
 
-Use this order during deployment work:
+部署过程中建议按这个顺序读：
 
 1. [../README.md](../README.md)
 2. [CONFIG_SURFACES.md](./CONFIG_SURFACES.md)

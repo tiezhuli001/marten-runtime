@@ -116,9 +116,9 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
   - `README.md`
   - `docs/README.md`
   - `docs/DEPLOYMENT.md`
-  - `docs/DEPLOYMENT_CN.md`
+  - `docs/DEPLOYMENT.md`
   - `docs/ARCHITECTURE_EVOLUTION.md`
-  - `docs/ARCHITECTURE_EVOLUTION_CN.md`
+  - `docs/ARCHITECTURE_EVOLUTION.md`
   - `docs/CONFIG_SURFACES.md`
   - `src/marten_runtime/interfaces/http/bootstrap_runtime.py`
   - `src/marten_runtime/session/sqlite_store.py`
@@ -568,7 +568,7 @@ For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of archi
     - `PYTHONPATH=src python -m unittest -v`
       - pass, `504` tests green
   - active-surface grep:
-    - `rg -n "example_assistant" README.md README_CN.md docs src tests config apps`
+    - `rg -n "example_assistant" README.md README.md docs src tests config apps`
       - pass, remaining matches are limited to architecture-history / archive references and the implementation plan for this rename
 ### 2026-04-13: Fresh Real Feishu Inbound Evidence Was Recovered On The Live Runtime
 

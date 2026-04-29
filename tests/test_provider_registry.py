@@ -12,12 +12,14 @@ from marten_runtime.runtime.provider_registry import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+MODELS_EXAMPLE_TOML = REPO_ROOT / "config/models.example.toml"
+PROVIDERS_EXAMPLE_TOML = REPO_ROOT / "config/providers.example.toml"
 
 
 class ProviderRegistryTests(unittest.TestCase):
     def test_resolve_provider_returns_primary_provider_metadata(self) -> None:
-        models = load_models_config(str(REPO_ROOT / "config/models.toml"))
-        providers = load_providers_config(str(REPO_ROOT / "config/providers.toml"))
+        models = load_models_config(str(MODELS_EXAMPLE_TOML))
+        providers = load_providers_config(str(PROVIDERS_EXAMPLE_TOML))
 
         provider = resolve_provider(
             profile_name="openai_gpt5",
@@ -29,8 +31,8 @@ class ProviderRegistryTests(unittest.TestCase):
         self.assertEqual(provider.base_url, "https://api.openai.com/v1")
 
     def test_resolve_fallback_profiles_preserves_declared_order(self) -> None:
-        models = load_models_config(str(REPO_ROOT / "config/models.toml"))
-        providers = load_providers_config(str(REPO_ROOT / "config/providers.toml"))
+        models = load_models_config(str(MODELS_EXAMPLE_TOML))
+        providers = load_providers_config(str(PROVIDERS_EXAMPLE_TOML))
 
         fallbacks = resolve_fallback_profiles(
             profile_name="openai_gpt5",
@@ -38,9 +40,8 @@ class ProviderRegistryTests(unittest.TestCase):
             providers_config=providers,
         )
 
-        self.assertEqual([item[0] for item in fallbacks], ["kimi_k2", "minimax_m25"])
+        self.assertEqual([item[0] for item in fallbacks], ["minimax_m25"])
         self.assertEqual([item[1].base_url for item in fallbacks], [
-            "https://api.moonshot.cn/v1",
             "https://api.minimaxi.com/v1",
         ])
 
@@ -102,16 +103,16 @@ class ProviderRegistryTests(unittest.TestCase):
             [profiles.openai_gpt5]
             provider_ref = "openai"
             model = "gpt-5.4"
-            fallback_profiles = ["kimi_k2", "kimi_k2"]
+            fallback_profiles = ["minimax_m25", "minimax_m25"]
 
-            [profiles.kimi_k2]
-            provider_ref = "kimi"
-            model = "kimi-k2"
+            [profiles.minimax_m25]
+            provider_ref = "minimax"
+            model = "MiniMax-M2.5"
             """
         )
         providers = load_providers_config(str(REPO_ROOT / "config/providers.toml"))
 
-        with self.assertRaisesRegex(ValueError, "duplicate_fallback_profile:kimi_k2"):
+        with self.assertRaisesRegex(ValueError, "duplicate_fallback_profile:minimax_m25"):
             resolve_fallback_profiles(
                 profile_name="openai_gpt5",
                 models_config=models,

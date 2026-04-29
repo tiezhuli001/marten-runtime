@@ -30,11 +30,7 @@ def load_models_config(path: str) -> ModelsConfig:
                 "openai_gpt5": {
                     "provider_ref": "openai",
                     "model": "gpt-5.4",
-                    "fallback_profiles": ["kimi_k2", "minimax_m25"],
-                },
-                "kimi_k2": {
-                    "provider_ref": "kimi",
-                    "model": "kimi-k2",
+                    "fallback_profiles": ["minimax_m25"],
                 },
                 "minimax_m25": {
                     "provider_ref": "minimax",
