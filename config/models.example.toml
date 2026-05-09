@@ -1,16 +1,17 @@
 # Default runtime profile for local overrides.
 # Provider secrets still belong in .env.
-default_profile = "openai_gpt5"
+# Profile ids in committed examples use provider + model slugs only.
+default_profile = "minimax_m2_7_highspeed"
 
-[profiles.openai_gpt5]
+[profiles.openai_gpt_5_4]
 provider_ref = "openai"
 model = "gpt-5.4"
-fallback_profiles = ["minimax_m25"]
+fallback_profiles = ["minimax_m2_7_highspeed"]
 tokenizer_family = "openai_o200k"
 supports_provider_usage = true
 
-[profiles.minimax_m25]
+[profiles.minimax_m2_7_highspeed]
 provider_ref = "minimax"
-model = "MiniMax-M2.5"
+model = "MiniMax-M2.7-highspeed"
 tokenizer_family = "openai_o200k"
 supports_provider_usage = true

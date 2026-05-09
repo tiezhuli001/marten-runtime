@@ -27,12 +27,13 @@ from marten_runtime.session.compaction import compact_context
 from marten_runtime.skills.service import SkillService, SkillRuntimeView
 from marten_runtime.skills.snapshot import SkillSnapshot
 from tests.http_app_support import build_test_app
+from tests.support.finalization_contracts import contracted_final_reply
 
 
 class RuntimeContractTests(unittest.TestCase):
 
     def test_runtime_bootstrap_keeps_current_default_runtime_asset(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
 
         self.assertEqual(runtime.app_manifest.app_id, DEFAULT_APP_ID)
@@ -41,7 +42,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(runtime.default_agent.agent_id, DEFAULT_AGENT_ID)
 
     def test_runtime_router_keeps_main_as_the_only_default_runtime_agent_id(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
 
         self.assertEqual(runtime.agent_router.default_agent_id, DEFAULT_AGENT_ID)
@@ -50,7 +51,7 @@ class RuntimeContractTests(unittest.TestCase):
             runtime.agent_router.registry.get("assistant")
 
     def test_runtime_diagnostics_include_langfuse_observability_block(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
 
         with TestClient(app) as client:
             runtime_diag = client.get("/diagnostics/runtime")
@@ -62,7 +63,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertFalse(runtime_diag.json()["observability"]["langfuse"]["healthy"])
 
     def test_runtime_bootstrap_registers_automation_tool(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         tool_names = app.state.runtime.tool_registry.list()
 
         self.assertIn("skill", tool_names)
@@ -75,7 +76,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertNotIn("register_automation", tool_names)
 
     def test_default_main_agent_keeps_family_tool_contract(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
 
         assistant = app.state.runtime.default_agent
 
@@ -85,7 +86,7 @@ class RuntimeContractTests(unittest.TestCase):
         )
 
     def test_runtime_bootstrap_uses_capability_catalog_and_descriptions(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         snapshot = runtime.tool_registry.build_snapshot(
             ["automation", "mcp", "runtime", "self_improve", "session", "memory", "skill", "time"]
@@ -98,7 +99,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertNotIn("mock_search", catalog)
 
     def test_runtime_bootstrap_preserves_family_tool_parameter_schemas(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         snapshot = app.state.runtime.tool_registry.build_snapshot(
             ["automation", "mcp", "runtime", "self_improve", "skill", "time"]
         )
@@ -109,7 +110,7 @@ class RuntimeContractTests(unittest.TestCase):
             self.assertNotEqual(schema, {"type": "object"}, tool_name)
 
     def test_internal_self_improve_automation_is_not_exposed_in_operator_listing(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
 
         with TestClient(app) as client:
             response = client.get("/automations")
@@ -120,7 +121,7 @@ class RuntimeContractTests(unittest.TestCase):
 
     def test_internal_self_improve_automation_trigger_accepts_candidate_and_exports_lessons(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            app = build_test_app()
+            app = build_test_app(emit_explicit_empty_contract=True)
             runtime = app.state.runtime
             isolated_store = SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3")
             runtime.self_improve_store = isolated_store
@@ -192,9 +193,9 @@ class RuntimeContractTests(unittest.TestCase):
                             "score": 0.95,
                         },
                     ),
-                    LLMReply(final_text="self improve ok"),
-                    LLMReply(
-                        final_text=(
+                    contracted_final_reply("action=save_candidate"),
+                    contracted_final_reply(
+                        (
                             '{"accept": true, "reason": "stable repeated recovery pattern", '
                             '"normalized_lesson_text": "遇到重复 provider timeout 时先减少无关工具面。", '
                             '"topic_key": "provider_timeout"}'
@@ -218,7 +219,7 @@ class RuntimeContractTests(unittest.TestCase):
             self.assertIn("遇到重复 provider timeout 时先减少无关工具面。", exported)
 
     def test_feishu_inbound_registration_resolves_current_target_and_daily_schedule(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         runtime.runtime_loop.llm = ScriptedLLMClient(
             [
@@ -240,7 +241,7 @@ class RuntimeContractTests(unittest.TestCase):
                         "skill_id": "github_trending_digest",
                     },
                 ),
-                LLMReply(final_text="ok"),
+                contracted_final_reply("ok"),
             ]
         )
 
@@ -263,7 +264,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(enabled[0].delivery_target, "oc_current_chat")
 
     def test_metrics_and_diagnostics_endpoints_exist(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         with TestClient(app) as client:
             message = client.post(
                 "/messages",
@@ -338,7 +339,7 @@ class RuntimeContractTests(unittest.TestCase):
         )
 
     def test_runtime_diagnostics_heal_stale_github_discovery_after_successful_call(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         server = MCPServerSpec(server_id="github", transport="stdio", backend_id="github", tools=[])
         runtime.mcp_servers = [server]
@@ -383,11 +384,13 @@ class RuntimeContractTests(unittest.TestCase):
                         "arguments": {"owner": "CloudWide851", "repo": "easy-agent", "perPage": 1},
                     },
                 ),
-                LLMReply(final_text="最新提交已返回。"),
+                contracted_final_reply(
+                    "CloudWide851/easy-agent 最近一次提交是 **2026-04-01 10:24:49**（北京时间），commit 信息为 `release ok`。"
+                ),
             ]
         )
-        runtime.llm_client_factory.cache_client("openai_gpt5", runtime.runtime_loop.llm)
-        runtime.llm_client_factory.cache_client("minimax_m25", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("openai_gpt_5_4", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", runtime.runtime_loop.llm)
 
         with TestClient(app) as client:
             response = client.post(
@@ -409,7 +412,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(github_entry["discovery"]["error"], None)
 
     def test_run_diagnostics_expose_tool_calls_for_registration(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         runtime.runtime_loop.llm = ScriptedLLMClient(
             [
@@ -431,7 +434,7 @@ class RuntimeContractTests(unittest.TestCase):
                         "skill_id": "github_trending_digest",
                     },
                 ),
-                LLMReply(final_text="ok"),
+                contracted_final_reply("ok"),
             ]
         )
 
@@ -460,7 +463,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertIn("total_ms", body["timings"])
 
     def test_runtime_diagnostics_expose_feishu_channel_hardening_signals(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         receipts = InMemoryReceiptStore()
         receipts.claim(
@@ -540,7 +543,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertIsNone(feishu["websocket"]["last_run_id"])
 
     def test_runtime_diagnostics_redact_feishu_websocket_endpoint_secrets(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         runtime.feishu_socket_service.state.endpoint_url = (
             "wss://msg-frontier.feishu.cn/ws/v2"

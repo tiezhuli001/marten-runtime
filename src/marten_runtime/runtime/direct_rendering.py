@@ -46,7 +46,7 @@ def maybe_render_tool_followup_text(
             return ""
         return render_direct_tool_text(tool_name, tool_result, tool_payload=tool_payload)
     if tool_name == "runtime":
-        if tool_round_trip_count > 1:
+        if tool_round_trip_count > 1 and not _llm_requested_terminal_render(tool_payload):
             return ""
         return render_direct_tool_text(tool_name, tool_result, tool_payload=tool_payload)
     if tool_name == "automation":
@@ -81,9 +81,40 @@ def render_direct_tool_text(tool_name: str, tool_result: object, *, tool_payload
         return render_direct_mcp_text(tool_result, tool_payload=tool_payload)
     if tool_name == "session":
         return render_direct_session_text(tool_result, tool_payload=tool_payload)
+    if tool_name == "memory":
+        return render_direct_memory_text(tool_result, tool_payload=tool_payload)
     if tool_name == "spawn_subagent":
         return render_spawn_subagent_text(tool_result, tool_payload=tool_payload)
     return ""
+
+
+def render_direct_memory_text(
+    tool_result: dict[str, object],
+    *,
+    tool_payload: dict[str, object] | None = None,
+) -> str:
+    payload = dict(tool_payload or {})
+    action = str(tool_result.get("action") or payload.get("action") or "").strip().lower()
+    if tool_result.get("ok") is False or tool_result.get("is_error") is True:
+        return ""
+    if tool_result.get("available") is False:
+        return "当前没有可用的持久记忆。"
+    sections = tool_result.get("sections")
+    if not isinstance(sections, dict) or not sections:
+        return "当前还没有已保存的持久记忆。"
+    rendered_sections: list[str] = []
+    for section_name, raw_items in sorted(sections.items()):
+        if not isinstance(raw_items, list):
+            continue
+        items = [str(item).strip() for item in raw_items if str(item).strip()]
+        if not items:
+            continue
+        rendered_sections.append(f"{section_name}: {'；'.join(items)}")
+    if not rendered_sections:
+        return "当前还没有已保存的持久记忆。"
+    if action == "get":
+        return f"当前记忆包含：{'；'.join(rendered_sections)}。"
+    return f"当前记忆状态：{'；'.join(rendered_sections)}。"
 
 
 def render_direct_mcp_text(tool_result: dict[str, object], *, tool_payload: dict | None = None) -> str:

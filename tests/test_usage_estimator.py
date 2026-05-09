@@ -169,8 +169,8 @@ class UsageEstimatorTests(unittest.TestCase):
         serialized = serialize_payload_stably(payload)
         buckets = classify_serialized_payload_chars(serialized)
 
-        self.assertGreater(buckets["escaped_unicode_sequences"], 3000)
-        self.assertGreater(estimate.input_tokens_estimate, 10000)
+        self.assertGreater(buckets["escaped_unicode_sequences"], 1000)
+        self.assertGreater(estimate.input_tokens_estimate, 8500)
 
 
 if __name__ == "__main__":

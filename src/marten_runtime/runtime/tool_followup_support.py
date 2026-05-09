@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from marten_runtime.runtime.direct_rendering import (
     maybe_render_tool_followup_text,
@@ -15,7 +16,9 @@ from marten_runtime.runtime.llm_client import (
     ToolFollowupFragment,
     ToolFollowupRender,
 )
+from marten_runtime.runtime.tool_outcome_flow import collect_structured_hint_facts
 from marten_runtime.tools.builtins.runtime_tool import annotate_runtime_context_status_peak
+from marten_runtime.tools.builtins.runtime_tool import render_runtime_compaction_status_text
 
 
 def append_tool_exchange(
@@ -127,11 +130,11 @@ def build_finalization_retry_request(
     *,
     tool_history: list[ToolExchange],
     finalization_evidence_ledger: FinalizationEvidenceLedger | None = None,
+    invalid_final_text: str | None = None,
 ) -> LLMRequest:
     return base_request.model_copy(
         update={
             "conversation_messages": [],
-            "compact_summary_text": None,
             "tool_outcome_summary_text": None,
             "memory_text": None,
             "tool_history": list(tool_history),
@@ -141,6 +144,8 @@ def build_finalization_retry_request(
             "available_tools": [],
             "request_kind": "finalization_retry",
             "finalization_evidence_ledger": finalization_evidence_ledger,
+            "invalid_final_text": " ".join(str(invalid_final_text or "").split()).strip()
+            or None,
         }
     )
 
@@ -162,13 +167,15 @@ def build_finalization_evidence_ledger(
                 tool_action=_tool_action(exchange),
                 payload_summary=_payload_summary(exchange.tool_payload),
                 result_summary=_result_summary(exchange),
+                coverage_tokens=_coverage_tokens(exchange),
                 required_for_user_request=(
                     requires_result_coverage and _is_successful_tool_result(exchange.tool_result)
+                    and not is_intermediate_support_tool_result(tool_history, index - 1)
                 ),
                 evidence_source="tool_result",
             )
         )
-    if requires_round_trip_report:
+    if model_request_count is not None:
         loop_meta_summary = _loop_meta_summary(
             model_request_count=model_request_count,
             tool_call_count=len(tool_history),
@@ -179,7 +186,7 @@ def build_finalization_evidence_ledger(
                     ordinal=len(items) + 1,
                     tool_name="runtime_loop",
                     result_summary=loop_meta_summary,
-                    required_for_user_request=True,
+                    required_for_user_request=requires_round_trip_report,
                     evidence_source="loop_meta",
                 )
             )
@@ -191,6 +198,24 @@ def build_finalization_evidence_ledger(
         requires_round_trip_report=requires_round_trip_report,
         items=items,
     )
+
+
+def is_intermediate_support_tool_result(
+    tool_history: list[ToolExchange],
+    index: int,
+) -> bool:
+    if index < 0 or index >= len(tool_history):
+        return False
+    exchange = tool_history[index]
+    if not _is_successful_tool_result(exchange.tool_result):
+        return False
+    if exchange.tool_name == "mcp" and _tool_action(exchange) in {"list", "detail"}:
+        return any(
+            later.tool_name == "mcp"
+            and _tool_action(later) == "call"
+            for later in tool_history[index + 1 :]
+        )
+    return False
 
 
 def _tool_result_fragment(
@@ -296,6 +321,114 @@ def _loop_meta_summary(
             "属于多次模型/工具往返。"
         )
     return f"本轮共执行了 {tool_call_count} 次工具调用。"
+
+
+def _coverage_tokens(exchange: ToolExchange) -> list[str]:
+    tool_result = exchange.tool_result if isinstance(exchange.tool_result, dict) else {}
+    tool_payload = exchange.tool_payload if isinstance(exchange.tool_payload, dict) else {}
+    tokens: list[str] = []
+    if exchange.tool_name == "time":
+        iso_time = str(tool_result.get("iso_time") or "").strip()
+        if iso_time:
+            try:
+                observed = datetime.fromisoformat(iso_time)
+            except ValueError:
+                observed = None
+            if observed is not None:
+                tokens.extend(
+                    [
+                        observed.strftime("%Y-%m-%d"),
+                        f"{observed.year}年{observed.month}月{observed.day}日",
+                        observed.strftime("%H:%M"),
+                        observed.strftime("%H:%M:%S"),
+                    ]
+                )
+                weekday_tokens = (
+                    "星期一",
+                    "星期二",
+                    "星期三",
+                    "星期四",
+                    "星期五",
+                    "星期六",
+                    "星期日",
+                )
+                english_weekdays = (
+                    "monday",
+                    "tuesday",
+                    "wednesday",
+                    "thursday",
+                    "friday",
+                    "saturday",
+                    "sunday",
+                )
+                weekday_index = observed.weekday()
+                if 0 <= weekday_index < len(weekday_tokens):
+                    tokens.extend(
+                        [
+                            weekday_tokens[weekday_index],
+                            english_weekdays[weekday_index],
+                        ]
+                    )
+    elif exchange.tool_name == "runtime":
+        next_request = dict(tool_result.get("next_request_estimate") or {})
+        for value in (
+            next_request.get("input_tokens_estimate"),
+            next_request.get("effective_window_tokens"),
+            next_request.get("context_window_tokens"),
+            tool_result.get("replay_user_turns"),
+        ):
+            if isinstance(value, (int, float)) and int(value) > 0:
+                tokens.append(str(int(value)))
+        usage_percent = tool_result.get("usage_percent")
+        if isinstance(usage_percent, (int, float)) and int(usage_percent) >= 0:
+            tokens.append(f"{int(usage_percent)}%")
+        compaction_status = render_runtime_compaction_status_text(tool_result)
+        if compaction_status:
+            tokens.append(compaction_status)
+    elif exchange.tool_name == "session":
+        for value in (
+            tool_payload.get("session_id"),
+            ((tool_result.get("session") or {}).get("session_id") if isinstance(tool_result.get("session"), dict) else None),
+            ((tool_result.get("transition") or {}).get("target_session_id") if isinstance(tool_result.get("transition"), dict) else None),
+        ):
+            normalized = str(value or "").strip()
+            if normalized:
+                tokens.append(normalized)
+        count = tool_result.get("count")
+        if isinstance(count, int) and count >= 0:
+            tokens.append(str(count))
+    elif exchange.tool_name == "memory":
+        for key in ("section", "content"):
+            normalized = str(tool_payload.get(key) or "").strip()
+            if normalized:
+                tokens.append(normalized)
+        sections = tool_result.get("sections")
+        if isinstance(sections, dict):
+            for section_name, raw_items in sections.items():
+                normalized_section = str(section_name or "").strip()
+                if normalized_section:
+                    tokens.append(normalized_section)
+                if not isinstance(raw_items, list):
+                    continue
+                for item in raw_items[:3]:
+                    normalized_item = str(item or "").strip()
+                    if normalized_item:
+                        tokens.append(normalized_item)
+    elif exchange.tool_name == "spawn_subagent":
+        queue_state = str(tool_result.get("queue_state") or "").strip()
+        if queue_state:
+            tokens.append(queue_state)
+    for fact in collect_structured_hint_facts([exchange]):
+        normalized = str(fact.value or "").strip()
+        if normalized:
+            tokens.append(normalized)
+    deduped: list[str] = []
+    for token in tokens:
+        normalized = str(token).strip()
+        if not normalized or normalized in deduped:
+            continue
+        deduped.append(normalized)
+    return deduped
 
 
 def _is_successful_tool_result(tool_result: object) -> bool:

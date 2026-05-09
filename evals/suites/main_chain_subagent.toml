@@ -1,0 +1,11 @@
+suite_id = "main_chain_subagent"
+description = "Main chain subagent golden replay suite"
+default_mode = "live"
+scripted_supported = true
+required_dependencies = ["provider", "subagent"]
+baseline_policy = "latest_passed_auto"
+case_files = [
+  "evals/cases/main_chain_subagent/subagent_github_lookup_cn.toml",
+  "evals/cases/main_chain_subagent/subagent_completion_notice_cn.toml",
+  "evals/cases/main_chain_subagent/subagent_parent_summary_cn.toml",
+]

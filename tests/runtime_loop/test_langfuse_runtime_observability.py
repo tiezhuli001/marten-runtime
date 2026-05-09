@@ -7,6 +7,7 @@ from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.runtime.usage_models import NormalizedUsage
 from marten_runtime.tools.registry import ToolRegistry
+from tests.support.finalization_contracts import contracted_final_reply
 from tests.support.scripted_llm import FailingLLMClient
 
 
@@ -79,7 +80,7 @@ class RuntimeLoopLangfuseObservabilityTests(unittest.TestCase):
         fake_client = FakeLangfuseClient()
         history = InMemoryRunHistory()
         runtime = RuntimeLoop(
-            ScriptedLLMClient([LLMReply(final_text="plain-ok")]),
+            ScriptedLLMClient([contracted_final_reply("plain-ok")]),
             ToolRegistry(),
             history,
             langfuse_observer=self._build_observer(fake_client),
@@ -148,7 +149,7 @@ class RuntimeLoopLangfuseObservabilityTests(unittest.TestCase):
             ScriptedLLMClient(
                 [
                     LLMReply(tool_name="mock_tool", tool_payload={"query": "x"}),
-                    LLMReply(final_text="tool-finish"),
+                    contracted_final_reply("done"),
                 ]
             ),
             tools,
@@ -172,7 +173,7 @@ class RuntimeLoopLangfuseObservabilityTests(unittest.TestCase):
 
         self.assertEqual([item["name"] for item in fake_client.generations], ["llm.first", "llm.followup"])
         self.assertEqual(fake_client.generations[0]["output_payload"]["tool_name"], "mock_tool")
-        self.assertEqual(fake_client.generations[1]["output_payload"]["final_text"], "tool-finish")
+        self.assertEqual(fake_client.generations[1]["output_payload"]["final_text"], "done")
         self.assertEqual(run.external_observability.langfuse_trace_id, "trace_tool")
 
     def test_successful_builtin_tool_call_records_tool_span(self) -> None:
@@ -181,7 +182,12 @@ class RuntimeLoopLangfuseObservabilityTests(unittest.TestCase):
         tools.register("time", lambda payload: {"iso_time": "2026-04-17T00:00:00Z", "ok": True})
         history = InMemoryRunHistory()
         runtime = RuntimeLoop(
-            ScriptedLLMClient([LLMReply(tool_name="time", tool_payload={"timezone": "UTC"}), LLMReply(final_text="done")]),
+            ScriptedLLMClient(
+                [
+                    LLMReply(tool_name="time", tool_payload={"timezone": "UTC"}),
+                    contracted_final_reply("done"),
+                ]
+            ),
             tools,
             history,
             langfuse_observer=self._build_observer(fake_client),
@@ -205,7 +211,12 @@ class RuntimeLoopLangfuseObservabilityTests(unittest.TestCase):
         )
         history = InMemoryRunHistory()
         runtime = RuntimeLoop(
-            ScriptedLLMClient([LLMReply(tool_name="mcp", tool_payload={"action": "call"}), LLMReply(final_text="done")]),
+            ScriptedLLMClient(
+                [
+                    LLMReply(tool_name="mcp", tool_payload={"action": "call"}),
+                    contracted_final_reply("done"),
+                ]
+            ),
             tools,
             history,
             langfuse_observer=self._build_observer(fake_client),
@@ -266,7 +277,7 @@ class RuntimeLoopLangfuseObservabilityTests(unittest.TestCase):
     def test_langfuse_client_errors_do_not_break_successful_runtime_turn(self) -> None:
         history = InMemoryRunHistory()
         runtime = RuntimeLoop(
-            ScriptedLLMClient([LLMReply(final_text="plain-ok")]),
+            ScriptedLLMClient([contracted_final_reply("plain-ok")]),
             ToolRegistry(),
             history,
             langfuse_observer=build_langfuse_observer(
@@ -308,8 +319,8 @@ class RuntimeLoopLangfuseObservabilityTests(unittest.TestCase):
                             model_name="test-double",
                         ),
                     ),
-                    LLMReply(
-                        final_text="tool-finish",
+                    contracted_final_reply(
+                        "done",
                         usage=NormalizedUsage(
                             input_tokens=20,
                             output_tokens=10,

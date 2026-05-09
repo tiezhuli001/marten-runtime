@@ -35,6 +35,10 @@ def infer_episode_source_kind(
 def collect_structured_hint_facts(history: list[ToolExchange]) -> list[ToolOutcomeFact]:
     preferred_keys = (
         "full_name",
+        "path",
+        "sha",
+        "date",
+        "message",
         "default_branch",
         "repo",
         "branch",
@@ -49,7 +53,11 @@ def collect_structured_hint_facts(history: list[ToolExchange]) -> list[ToolOutco
     for item in reversed(history):
         if not isinstance(item.tool_result, dict):
             continue
-        candidate_dicts: list[dict[str, object]] = [item.tool_result]
+        candidate_dicts: list[dict[str, object]] = []
+        synthetic_candidate = _mcp_argument_candidate(item)
+        if synthetic_candidate:
+            candidate_dicts.append(synthetic_candidate)
+        candidate_dicts.append(item.tool_result)
         current_run = item.tool_result.get("current_run")
         if isinstance(current_run, dict):
             actual_peak_total = int(current_run.get("actual_peak_total_tokens") or 0)
@@ -86,10 +94,9 @@ def collect_structured_hint_facts(history: list[ToolExchange]) -> list[ToolOutco
             try:
                 parsed = json.loads(result_text)
                 if isinstance(parsed, dict):
-                    candidate_dicts.append(parsed)
-                    items = parsed.get("items")
-                    if isinstance(items, list) and items and isinstance(items[0], dict):
-                        candidate_dicts.append(items[0])
+                    _append_candidate_dicts(candidate_dicts, parsed)
+                elif isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                    _append_candidate_dicts(candidate_dicts, parsed[0])
             except Exception:
                 logger.debug(
                     "mcp result parse failed for structured hint", exc_info=True
@@ -113,6 +120,47 @@ def collect_structured_hint_facts(history: list[ToolExchange]) -> list[ToolOutco
                 if len(facts) >= 3:
                     return facts
     return facts
+
+
+def _mcp_argument_candidate(item: ToolExchange) -> dict[str, object]:
+    if item.tool_name != "mcp":
+        return {}
+    if str(item.tool_payload.get("action") or "").strip() != "call":
+        return {}
+    arguments = item.tool_payload.get("arguments")
+    if not isinstance(arguments, dict):
+        arguments = item.tool_payload
+    synthetic: dict[str, object] = {}
+    owner = str(arguments.get("owner") or "").strip()
+    repo = str(arguments.get("repo") or "").strip()
+    path = str(arguments.get("path") or arguments.get("file_path") or "").strip()
+    if owner and repo:
+        synthetic["full_name"] = f"{owner}/{repo}"
+    if path:
+        synthetic["path"] = path
+        path_name = path.rsplit("/", 1)[-1].strip()
+        if path_name and "." in path_name:
+            synthetic["name"] = path_name.rsplit(".", 1)[0]
+    return synthetic
+
+
+def _append_candidate_dicts(
+    candidate_dicts: list[dict[str, object]],
+    candidate: dict[str, object],
+) -> None:
+    candidate_dicts.append(candidate)
+    items = candidate.get("items")
+    if isinstance(items, list) and items and isinstance(items[0], dict):
+        candidate_dicts.append(items[0])
+    commit = candidate.get("commit")
+    if isinstance(commit, dict):
+        commit_author = commit.get("author")
+        if isinstance(commit_author, dict):
+            candidate_dicts.append(commit_author)
+        candidate_dicts.append(commit)
+    author = candidate.get("author")
+    if isinstance(author, dict):
+        candidate_dicts.append(author)
 
 
 def merge_tool_episode_facts(
@@ -164,6 +212,7 @@ def build_fallback_tool_episode_summary(
     final_text: str,
     tool_snapshot: ToolSnapshot,
 ) -> ToolOutcomeSummary | None:
+    del final_text
     summary = extract_rule_based_tool_outcome_summary(
         run_id=run_id,
         history=history,
@@ -171,12 +220,14 @@ def build_fallback_tool_episode_summary(
     )
     if summary is not None:
         return summary
-    if not final_text.strip():
+    facts = collect_structured_hint_facts(history)
+    if not facts:
         return None
     return ToolOutcomeSummary.create(
         run_id=run_id,
         source_kind=infer_episode_source_kind(history, tool_snapshot),
-        summary_text=f"上一轮工具调用完成：{final_text.strip()}",
+        summary_text="上一轮工具调用已完成。",
+        facts=facts,
         keep_next_turn=False,
     )
 

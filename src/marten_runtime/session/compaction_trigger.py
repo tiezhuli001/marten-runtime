@@ -69,41 +69,9 @@ def is_reactive_compaction_error(exc: Exception) -> bool:
     )
 
 
-_TERMINAL_KEYWORDS = (
-    "已完成",
-    "完成了",
-    "可以结束",
-    "结束吧",
-    "thanks",
-    "thank you",
-    "resolved",
-    "done",
-    "finished",
-)
-
-_CONTINUATION_KEYWORDS = (
-    "todo",
-    "待办",
-    "下一步",
-    "接下来",
-    "继续",
-    "follow-up",
-    "remaining",
-    "风险",
-    "注意",
-    "risk",
-    "blocker",
-)
-
-
 def has_continuation_demand(*, current_message: str, recent_messages: list[str] | None = None) -> bool:
-    lowered = current_message.lower()
-    recent = [item.strip() for item in (recent_messages or []) if item and item.strip()]
-    haystack = [lowered] + [item.lower() for item in recent]
-    if any(keyword in lowered for keyword in _CONTINUATION_KEYWORDS):
-        return True
-    if any(any(keyword in item for keyword in _CONTINUATION_KEYWORDS) for item in haystack):
-        return True
-    if any(keyword in lowered for keyword in _TERMINAL_KEYWORDS):
-        return False
+    normalized_current = str(current_message or "").strip()
+    recent = [str(item).strip() for item in (recent_messages or []) if str(item or "").strip()]
+    if normalized_current and recent and recent[-1] == normalized_current:
+        recent = recent[:-1]
     return bool(recent)

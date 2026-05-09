@@ -1,0 +1,46 @@
+case_id = "session_resume_continuity_cn"
+suite_id = "main_chain_core"
+family = "session_switch"
+enabled = true
+required = true
+description = "恢复旧会话后继续"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "session", "resume"]
+
+[[turns]]
+role = "user"
+content = "恢复到旧会话。"
+
+[[turns]]
+role = "user"
+content = "继续旧会话。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_all = ["旧会话"]
+
+[[expectations.tool_path.required_calls]]
+tool_name = "session"
+min_calls = 1
+max_calls = 1
+
+[expectations.efficiency]
+max_llm_requests = 2
+max_tool_calls = 1
+
+[expectations.context]
+expect_compaction = false
+
+[expectations.diagnostics]
+expect_provider_ref = "openai"
+
+[weights]
+outcome = 55
+tool_path = 25
+efficiency = 15
+context = 5

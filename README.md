@@ -184,7 +184,8 @@ cp mcps.example.json mcps.json
 - 在 `config/providers.toml` 放 provider 连接元数据
 - 在 `config/models.toml` 放 profile 和模型选择
 - 在 `config/agents.toml` 放 agent 对应的 app / profile / tool 选择
-- 如果你想切换 live profile，更新 `default_profile` 或 `profiles.openai_gpt5` / `profiles.minimax_m25`
+- 提交态示例 profile id 统一采用 `provider + model` 的 slug；runtime 实际只读取 `provider_ref`、`model`、`fallback_profiles`
+- 如果你想切换 live profile，更新 `default_profile` 或 `profiles.openai_gpt_5_4` / `profiles.minimax_m2_7_highspeed`
 - 如果要启用 Langfuse 外部 tracing，在 `.env` 里补齐 `LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`
 - 只有需要本地覆盖时才把 `config/*.example.toml` 复制成 `config/*.toml`
 - 只有需要外部工具时才在 `mcps.json` 配置 MCP
@@ -235,6 +236,37 @@ Langfuse 可观测性现在已经是可选的 tracing 面：
 - 一次 runtime turn 对应一条 Langfuse trace，每一轮 LLM 调用对应一条 generation，builtin/MCP tool 调用对应 tool span
 - `enabled` 表示当前 runtime 仍然具备 Langfuse 接线能力，`healthy` 表示最近一次 Langfuse client 调用是否成功
 - 当前环境的 live 验证已经确认 plain chat、多轮 tool、以及 parent/child subagent tracing 可以在 Langfuse cloud 中看到
+
+## 离线评测
+
+主链评测基础能力保持在离线运维面，通过 `scripts/run_eval.py` 复用现有 HTTP app surface、诊断端点和 runtime 主链。
+
+最小命令：
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
+  --suite main_chain_core \
+  --mode scripted \
+  --profile openai_gpt_5_4
+```
+
+默认产物：
+
+- SQLite 历史：`data/evals.sqlite3`
+- 报告目录：`reports/evals/<eval_run_id>/`
+- 汇总 Markdown：`reports/evals/<eval_run_id>/summary.md`
+- 汇总 JSON：`reports/evals/<eval_run_id>/summary.json`
+- 汇总 HTML：`reports/evals/<eval_run_id>/summary.html`
+- 单 case 详情：`reports/evals/<eval_run_id>/cases/<case_id>.json`
+- 稳定性统计：三种汇总文件都会带最近 5 次同 suite/profile/mode + 同 `git_sha` / `config_fingerprint` / `suite_fingerprint` 的波动统计、波动 case、组件波动、锚点强度
+
+当前套件分层：
+
+- `main_chain_core`：默认黄金任务基线，覆盖 direct answer、builtin tool、多轮 continuity、上下文压缩
+- `main_chain_mcp`：GitHub MCP 主链回放，依赖 MCP 与对应凭据
+- `main_chain_subagent`：主线程委派、子任务完成通知、父线程总结回放，依赖 subagent surface 和外部能力
+- `memory_long_horizon`：长期记忆收益专项，覆盖记住、隔轮召回、跨会话召回、覆盖更新、抗干扰召回
+- `subagent_task_progress`：子代理任务推进专项，覆盖受理、子任务完成、父线程吸收子结果、多子任务推进
 
 ## 测试
 

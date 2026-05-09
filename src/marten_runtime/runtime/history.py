@@ -48,6 +48,7 @@ class FinalizationDiagnostics(BaseModel):
     retry_triggered: bool = False
     recovered_from_fragments: bool = False
     invalid_final_text: str | None = None
+    invalid_final_text_full: str | None = Field(default=None, exclude=True)
 
 
 class RunRecord(BaseModel):
@@ -105,6 +106,7 @@ class RunRecord(BaseModel):
     compaction: CompactionDiagnostics = Field(default_factory=CompactionDiagnostics)
     external_observability: ExternalObservabilityRefs = Field(default_factory=ExternalObservabilityRefs)
     finalization: FinalizationDiagnostics = Field(default_factory=FinalizationDiagnostics)
+    final_text: str | None = None
 
 
 class InMemoryRunHistory:
@@ -385,9 +387,17 @@ class InMemoryRunHistory:
         if recovered_from_fragments is not None:
             record.finalization.recovered_from_fragments = bool(recovered_from_fragments)
         if invalid_final_text is not None:
+            record.finalization.invalid_final_text_full = _normalize_diagnostic_text_full(
+                invalid_final_text
+            )
             record.finalization.invalid_final_text = _normalize_diagnostic_text(
                 invalid_final_text
             )
+
+    def set_final_text(self, run_id: str, final_text: str | None) -> None:
+        record = self._items[run_id]
+        normalized = str(final_text or "").strip()
+        record.final_text = normalized or None
 
 
 def _normalize_diagnostic_items(items: list[str]) -> list[str]:
@@ -407,3 +417,8 @@ def _normalize_diagnostic_text(text: str | None) -> str | None:
     if len(normalized) <= FINALIZATION_DIAGNOSTIC_TEXT_LIMIT:
         return normalized
     return f"{normalized[: FINALIZATION_DIAGNOSTIC_TEXT_LIMIT - 1].rstrip()}…"
+
+
+def _normalize_diagnostic_text_full(text: str | None) -> str | None:
+    normalized = " ".join(str(text or "").split()).strip()
+    return normalized or None

@@ -1,0 +1,31 @@
+case_id = "memory_preference_applied_to_output_cn"
+suite_id = "memory_long_horizon"
+family = "memory_long_horizon"
+enabled = true
+required = true
+description = "长期偏好真正作用到最终输出"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "memory", "utility"]
+
+[[turns]]
+role = "user"
+content = "根据我的长期偏好，给我一条周报开场白。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "durable_preferences_cn.md"
+automation_fixture = "none"
+
+gate_components = ["utility_gain"]
+
+[component_weights]
+delayed_recall = 20
+utility_gain = 80
+
+
+[grader_case]
+recall_contains_all = ["结论"]
+utility_anchor_groups = [["结论：", "本周结论", "结论先行", "## 结论", "先给结论"]]
+utility_forbid_all = ["Background", "TODO", "先说细节", "细节先行"]
+max_memory_calls = 0

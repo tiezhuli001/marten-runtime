@@ -1,0 +1,42 @@
+case_id = "memory_delayed_recall_cross_session_cn"
+suite_id = "memory_long_horizon"
+family = "memory_long_horizon"
+enabled = true
+required = true
+description = "跨会话继续召回长期偏好"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "memory", "cross_session"]
+
+[[turns]]
+role = "user"
+content = "记住：技术方案默认用中文标题。"
+
+[[turns]]
+role = "user"
+content = "新开一个会话。"
+
+[[turns]]
+role = "user"
+content = "我在新会话里继续写技术方案，直接告诉我标题应该怎么写，并明确标题语言。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+gate_components = ["capture", "delayed_recall"]
+
+[component_weights]
+capture = 20
+delayed_recall = 80
+
+
+[grader_case]
+expected_memory_action = "replace"
+expected_section = "preferences"
+expected_content_contains = ["中文标题"]
+recall_contains_all = ["中文标题"]
+recall_anchor_groups = [["技术方案", "方案标题"], ["中文标题", "标题用中文", "中文来写标题"]]
+expected_session_transition = "session.new"
+max_memory_calls = 1

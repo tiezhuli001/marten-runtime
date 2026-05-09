@@ -1,23 +1,61 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 import re
 from typing import Literal
 
+from marten_runtime.memory.intent import (
+    has_explicit_memory_delete_intent,
+    has_explicit_memory_write_intent,
+)
 from marten_runtime.runtime.direct_rendering import (
     is_partial_fragment_aggregation,
     render_recovery_fragment,
     render_direct_tool_text,
     render_recovery_fragments_text,
 )
+from marten_runtime.runtime.finalization_contract_prompt import (
+    CurrentSessionIdentityClaimDraft,
+    FinalizationContractDraft,
+    LiveRuntimeContextClaimDraft,
+    LiveTimeClaimDraft,
+    MemoryMutationClaimDraft,
+    SessionSwitchClaimDraft,
+    SpawnSubagentAcceptanceClaimDraft,
+)
 from marten_runtime.runtime.llm_client import (
+    FinalizationEvidenceItem,
     FinalizationEvidenceLedger,
     ToolExchange,
     ToolFollowupFragment,
 )
 from marten_runtime.runtime.tool_followup_support import build_finalization_evidence_ledger
+from marten_runtime.runtime.tool_followup_support import (
+    is_intermediate_support_tool_result,
+)
+from marten_runtime.tools.builtins.runtime_tool import render_runtime_compaction_status_text
 
 FinalizationAssessment = Literal["accepted", "retryable_degraded", "unrecoverable"]
+
+@dataclass(frozen=True)
+class FinalizationContractRule:
+    contract_id: str
+    violation_checker: Callable[..., bool]
+
+
+@dataclass(frozen=True)
+class FinalizationContractSpec:
+    contract_id: str
+    claim_getter: Callable[[FinalizationContractDraft | None], object | None]
+    history_confirmer: Callable[[list[ToolExchange], object], bool]
+
+
+_MISSING_STRUCTURED_CONTRACT_RULE = FinalizationContractRule(
+    contract_id="structured_finalization_contract",
+    violation_checker=lambda *_args, **_kwargs: True,
+)
 
 
 @dataclass(frozen=True)
@@ -36,11 +74,21 @@ def is_generic_tool_failure_text(text: str) -> bool:
     }
 
 
-def derive_finalization_contract_flags(user_message: str) -> tuple[bool, bool]:
-    return (
-        _explicitly_requires_current_turn_result_coverage(user_message),
-        _explicitly_requires_round_trip_report(user_message),
-    )
+def derive_finalization_contract_flags(
+    *,
+    tool_history: list[ToolExchange],
+    model_request_count: int | None,
+    user_message: str = "",
+) -> tuple[bool, bool]:
+    del model_request_count, user_message
+    successful_tool_history = [
+        exchange
+        for exchange in tool_history
+        if _is_successful_tool_result(exchange.tool_result)
+    ]
+    requires_result_coverage = bool(successful_tool_history)
+    requires_round_trip_report = False
+    return requires_result_coverage, requires_round_trip_report
 
 
 def recover_successful_tool_followup_text(history: list[ToolExchange]) -> str:
@@ -91,6 +139,8 @@ def assess_finalization_text(
     user_message: str = "",
     model_request_count: int | None = None,
     finalization_evidence_ledger: FinalizationEvidenceLedger | None = None,
+    finalization_contract_draft: FinalizationContractDraft | None = None,
+    enforce_structured_contract: bool = False,
 ) -> FinalizationAssessment:
     return assess_finalization_text_with_details(
         history,
@@ -98,6 +148,8 @@ def assess_finalization_text(
         user_message=user_message,
         model_request_count=model_request_count,
         finalization_evidence_ledger=finalization_evidence_ledger,
+        finalization_contract_draft=finalization_contract_draft,
+        enforce_structured_contract=enforce_structured_contract,
     ).assessment
 
 
@@ -108,6 +160,8 @@ def assess_finalization_text_with_details(
     user_message: str = "",
     model_request_count: int | None = None,
     finalization_evidence_ledger: FinalizationEvidenceLedger | None = None,
+    finalization_contract_draft: FinalizationContractDraft | None = None,
+    enforce_structured_contract: bool = False,
 ) -> FinalizationAssessmentDetails:
     normalized_text = str(final_text or "").strip()
     resolved_ledger = _resolve_finalization_evidence_ledger(
@@ -115,6 +169,7 @@ def assess_finalization_text_with_details(
         user_message=user_message,
         model_request_count=model_request_count,
         finalization_evidence_ledger=finalization_evidence_ledger,
+        finalization_contract_draft=finalization_contract_draft,
     )
     diagnostic_required_evidence = tuple(
         _diagnostic_required_evidence(
@@ -126,26 +181,18 @@ def assess_finalization_text_with_details(
     missing_diagnostic_evidence = tuple(
         _missing_required_evidence(diagnostic_required_evidence, final_text)
     )
-    if violates_session_switch_contract(history, normalized_text):
+    if _first_violated_finalization_contract(
+        history,
+        normalized_text,
+        user_message=user_message,
+        finalization_contract_draft=finalization_contract_draft,
+        enforce_structured_contract=enforce_structured_contract,
+    ) is not None:
         return FinalizationAssessmentDetails(
             assessment=(
-                "retryable_degraded" if _safe_recovery_fragments(history) else "unrecoverable"
-            ),
-            required_evidence_items=diagnostic_required_evidence,
-            missing_evidence_items=missing_diagnostic_evidence,
-        )
-    if violates_current_session_identity_contract(history, normalized_text):
-        return FinalizationAssessmentDetails(
-            assessment=(
-                "retryable_degraded" if _safe_recovery_fragments(history) else "unrecoverable"
-            ),
-            required_evidence_items=diagnostic_required_evidence,
-            missing_evidence_items=missing_diagnostic_evidence,
-        )
-    if violates_spawn_subagent_acceptance_contract(history, normalized_text):
-        return FinalizationAssessmentDetails(
-            assessment=(
-                "retryable_degraded" if _safe_recovery_fragments(history) else "unrecoverable"
+                "retryable_degraded"
+                if history or _safe_recovery_fragments(history)
+                else "unrecoverable"
             ),
             required_evidence_items=diagnostic_required_evidence,
             missing_evidence_items=missing_diagnostic_evidence,
@@ -155,20 +202,23 @@ def assess_finalization_text_with_details(
         model_request_count=model_request_count,
         requires_round_trip_report=resolved_ledger.requires_round_trip_report,
     )
-    required_evidence = _required_finalization_evidence(
+    required_items = _required_finalization_items(
         resolved_ledger,
     )
-    missing_required_evidence = _missing_required_evidence(required_evidence, final_text)
-    has_multi_step_diagnostic_gap = (
-        len(diagnostic_required_evidence) >= 2
-        and 0 < len(missing_diagnostic_evidence) < len(diagnostic_required_evidence)
+    missing_required_items = _missing_required_evidence_items(
+        required_items,
+        final_text,
+    )
+    missing_required_evidence = tuple(
+        str(item.result_summary or "").strip()
+        for item in missing_required_items
+        if str(item.result_summary or "").strip()
     )
     is_retryable_degraded = (
         not normalized_text
         or is_generic_tool_failure_text(final_text)
         or is_partial_fragment_aggregation(fragments, final_text)
-        or has_multi_step_diagnostic_gap
-        or bool(missing_required_evidence)
+        or bool(missing_required_items)
     )
     if normalized_text and not is_retryable_degraded:
         return FinalizationAssessmentDetails(
@@ -192,6 +242,62 @@ def assess_finalization_text_with_details(
     )
 
 
+def _first_violated_finalization_contract(
+    history: list[ToolExchange],
+    final_text: str,
+    *,
+    user_message: str = "",
+    finalization_contract_draft: FinalizationContractDraft | None = None,
+    enforce_structured_contract: bool = False,
+) -> FinalizationContractRule | None:
+    normalized_text = " ".join(str(final_text or "").split())
+    if (
+        enforce_structured_contract
+        and normalized_text
+        and finalization_contract_draft is None
+    ):
+        return _MISSING_STRUCTURED_CONTRACT_RULE
+    for rule in _FINALIZATION_CONTRACT_RULES:
+        if rule.violation_checker(
+            history,
+            final_text,
+            user_message=user_message,
+            finalization_contract_draft=finalization_contract_draft,
+        ):
+            return rule
+    return None
+
+
+def _violates_finalization_contract_spec(
+    spec: FinalizationContractSpec,
+    history: list[ToolExchange],
+    final_text: str,
+    *,
+    user_message: str = "",
+    finalization_contract_draft: FinalizationContractDraft | None = None,
+) -> bool:
+    del final_text, user_message
+    claim = spec.claim_getter(finalization_contract_draft)
+    if claim is None:
+        return False
+    return not spec.history_confirmer(history, claim)
+
+
+def _build_finalization_contract_rule(
+    spec: FinalizationContractSpec,
+) -> FinalizationContractRule:
+    return FinalizationContractRule(
+        contract_id=spec.contract_id,
+        violation_checker=lambda history, final_text, *, user_message="", finalization_contract_draft=None: _violates_finalization_contract_spec(
+            spec,
+            history,
+            final_text,
+            user_message=user_message,
+            finalization_contract_draft=finalization_contract_draft,
+        ),
+    )
+
+
 def recover_tool_result_text(tool_history: list[ToolExchange]) -> str:
     if not tool_history:
         return ""
@@ -203,52 +309,20 @@ def recover_tool_result_text(tool_history: list[ToolExchange]) -> str:
     )
 
 
-def violates_session_switch_contract(
-    history: list[ToolExchange],
-    final_text: str,
-) -> bool:
-    normalized_text = " ".join(str(final_text or "").split())
-    if not normalized_text:
-        return False
-    if not _claims_session_switch_success(normalized_text):
-        return False
-    return not _history_confirms_session_switch(history, normalized_text)
-
-
 def is_confirmed_session_switch_reply(
     history: list[ToolExchange],
     final_text: str,
+    *,
+    finalization_contract_draft: FinalizationContractDraft | None = None,
 ) -> bool:
-    normalized_text = " ".join(str(final_text or "").split())
-    if not normalized_text:
+    claim = (
+        finalization_contract_draft.session_switch
+        if finalization_contract_draft is not None
+        else None
+    )
+    if claim is None:
         return False
-    if not _claims_session_switch_success(normalized_text):
-        return False
-    return _history_confirms_session_switch(history, normalized_text)
-
-
-def violates_spawn_subagent_acceptance_contract(
-    history: list[ToolExchange],
-    final_text: str,
-) -> bool:
-    normalized_text = " ".join(str(final_text or "").split())
-    if not normalized_text:
-        return False
-    if not _claims_spawn_subagent_acceptance(normalized_text):
-        return False
-    return not _history_confirms_spawn_subagent_acceptance(history, normalized_text)
-
-
-def violates_current_session_identity_contract(
-    history: list[ToolExchange],
-    final_text: str,
-) -> bool:
-    normalized_text = " ".join(str(final_text or "").split())
-    if not normalized_text:
-        return False
-    if not _claims_current_session_identity(normalized_text):
-        return False
-    return not _history_confirms_current_session_identity(history, normalized_text)
+    return _history_confirms_session_switch(history, claim)
 
 
 def _safe_recovery_fragments(
@@ -258,7 +332,9 @@ def _safe_recovery_fragments(
     requires_round_trip_report: bool | None = None,
 ) -> list[ToolFollowupFragment]:
     fragments: list[ToolFollowupFragment] = []
-    for item in history:
+    for index, item in enumerate(history):
+        if is_intermediate_support_tool_result(history, index):
+            continue
         fragment = item.recovery_fragment
         if fragment is None and _is_successful_tool_result(item.tool_result):
             text = render_direct_tool_text(
@@ -292,25 +368,103 @@ def _resolve_finalization_evidence_ledger(
     user_message: str,
     model_request_count: int | None,
     finalization_evidence_ledger: FinalizationEvidenceLedger | None,
+    finalization_contract_draft: FinalizationContractDraft | None = None,
 ) -> FinalizationEvidenceLedger:
-    if finalization_evidence_ledger is not None:
-        return finalization_evidence_ledger
-    return build_finalization_evidence_ledger(
+    if finalization_evidence_ledger is None:
+        requires_result_coverage, requires_round_trip_report = (
+            derive_finalization_contract_flags(
+                tool_history=history,
+                model_request_count=model_request_count,
+                user_message=user_message,
+            )
+        )
+    else:
+        requires_result_coverage = bool(
+            finalization_evidence_ledger.requires_result_coverage
+        )
+        requires_round_trip_report = bool(
+            finalization_evidence_ledger.requires_round_trip_report
+        )
+    base_ledger = finalization_evidence_ledger or build_finalization_evidence_ledger(
         user_message=user_message,
         tool_history=history,
         model_request_count=model_request_count,
-        requires_result_coverage=_explicitly_requires_current_turn_result_coverage(
-            user_message
-        ),
-        requires_round_trip_report=_explicitly_requires_round_trip_report(user_message),
+        requires_result_coverage=requires_result_coverage,
+        requires_round_trip_report=requires_round_trip_report,
+    )
+    return _apply_finalization_draft_to_evidence_ledger(
+        base_ledger,
+        finalization_contract_draft=finalization_contract_draft,
     )
 
 
-def _required_finalization_evidence(
+def _apply_finalization_draft_to_evidence_ledger(
     ledger: FinalizationEvidenceLedger,
-) -> list[str]:
+    *,
+    finalization_contract_draft: FinalizationContractDraft | None,
+) -> FinalizationEvidenceLedger:
+    if finalization_contract_draft is None:
+        return ledger
+    if _is_empty_finalization_contract_draft(finalization_contract_draft) and (
+        ledger.requires_result_coverage or ledger.requires_round_trip_report
+    ):
+        return ledger
+    requires_result_coverage = bool(finalization_contract_draft.requires_result_coverage)
+    requires_round_trip_report = bool(finalization_contract_draft.requires_round_trip_report)
+    if (
+        ledger.requires_result_coverage == requires_result_coverage
+        and ledger.requires_round_trip_report == requires_round_trip_report
+        and all(
+            item.required_for_user_request
+            == (
+                requires_result_coverage
+                if item.evidence_source == "tool_result"
+                else requires_round_trip_report
+            )
+            for item in ledger.items
+        )
+    ):
+        return ledger
+    items = [
+        item.model_copy(
+            update={
+                "required_for_user_request": (
+                    requires_result_coverage
+                    if item.evidence_source == "tool_result"
+                    else requires_round_trip_report
+                )
+            }
+        )
+        for item in ledger.items
+    ]
+    return ledger.model_copy(
+        update={
+            "requires_result_coverage": requires_result_coverage,
+            "requires_round_trip_report": requires_round_trip_report,
+            "items": items,
+        }
+    )
+
+
+def _is_empty_finalization_contract_draft(draft: FinalizationContractDraft) -> bool:
+    return (
+        not draft.requires_result_coverage
+        and not draft.requires_round_trip_report
+        and draft.live_time is None
+        and draft.live_runtime_context is None
+        and draft.session_switch is None
+        and draft.current_session_identity is None
+        and draft.spawn_subagent_acceptance is None
+        and draft.memory_write is None
+        and draft.memory_delete is None
+    )
+
+
+def _required_finalization_items(
+    ledger: FinalizationEvidenceLedger,
+) -> list[FinalizationEvidenceItem]:
     return [
-        str(item.result_summary or "").strip()
+        item
         for item in ledger.items
         if item.required_for_user_request and str(item.result_summary or "").strip()
     ]
@@ -335,34 +489,6 @@ def _diagnostic_required_evidence(
         required.append(normalized)
     return required
 
-
-def _explicitly_requires_current_turn_result_coverage(user_message: str) -> bool:
-    normalized = _normalize_requirement_text(user_message)
-    if not normalized:
-        return False
-    summary_terms = ("总结", "汇总", "概括", "归纳")
-    chain_terms = ("链路", "按顺序", "依次", "逐步", "每一步", "各步", "每个成功工具", "关键结果")
-    return any(term in normalized for term in summary_terms) and any(
-        term in normalized for term in chain_terms
-    )
-
-
-def _explicitly_requires_round_trip_report(user_message: str) -> bool:
-    normalized = _normalize_requirement_text(user_message)
-    if not normalized:
-        return False
-    return any(
-        term in normalized
-        for term in (
-            "往返",
-            "模型请求",
-            "工具调用",
-            "多次模型/工具",
-            "多轮",
-        )
-    )
-
-
 def _normalize_requirement_text(text: str) -> str:
     return " ".join(str(text or "").split()).strip().lower()
 
@@ -384,6 +510,22 @@ def _missing_required_evidence(
     ]
 
 
+def _missing_required_evidence_items(
+    required_items: list[FinalizationEvidenceItem] | tuple[FinalizationEvidenceItem, ...],
+    final_text: str,
+) -> list[FinalizationEvidenceItem]:
+    if not required_items:
+        return []
+    normalized_final_text = _normalize_requirement_text(final_text)
+    if not normalized_final_text:
+        return list(required_items)
+    return [
+        item
+        for item in required_items
+        if not _evidence_item_is_covered(item, normalized_final_text)
+    ]
+
+
 def _misses_required_evidence_coverage(
     required_evidence: list[str],
     final_text: str,
@@ -398,84 +540,35 @@ def _evidence_text_is_covered(
     rendered = _normalize_requirement_text(evidence_text)
     if not rendered:
         return True
-    if rendered in normalized_final_text:
+    return rendered in normalized_final_text
+
+
+def _evidence_item_is_covered(
+    item: FinalizationEvidenceItem,
+    normalized_final_text: str,
+) -> bool:
+    if _evidence_text_is_covered(item.result_summary, normalized_final_text):
         return True
-    anchors = _coverage_anchors(rendered)
-    if not anchors:
-        return any(alias in normalized_final_text for alias in _coverage_aliases(rendered))
-    if any(anchor in normalized_final_text for anchor in anchors):
-        return True
-    return any(alias in normalized_final_text for alias in _coverage_aliases(rendered))
+    coverage_tokens = [
+        _normalize_requirement_text(token)
+        for token in item.coverage_tokens
+        if _normalize_requirement_text(token)
+    ]
+    if coverage_tokens:
+        return any(
+            _coverage_token_is_present(token, normalized_final_text)
+            for token in coverage_tokens
+        )
+    return False
 
 
-_COVERAGE_TOKEN_RE = re.compile(
-    r"sess_[a-z0-9_-]+"
-    r"|[a-z][a-z0-9_./:-]{2,}"
-    r"|\d{4}-\d{2}-\d{2}"
-    r"|\d{1,2}:\d{2}(?::\d{2})?"
-    r"|\d+/\d+"
-    r"|\d+%"
-    r"|[\u4e00-\u9fff]{2,}"
-)
-_COVERAGE_STOPWORDS = {
-    "当前",
-    "现在",
-    "这轮",
-    "这次请求",
-    "已经",
-    "已按顺序完成",
-    "详情",
-    "显示",
-    "预计",
-    "占用",
-    "服务",
-    "工具",
-    "调用",
-    "结果",
-    "说明",
-    "总结",
-    "链路",
-    "本次请求共发生",
-    "次模型请求和",
-    "次工具调用",
-    "属于多次模型",
-}
-
-
-def _coverage_anchors(text: str) -> list[str]:
-    anchors: list[str] = []
-    for token in _COVERAGE_TOKEN_RE.findall(text):
-        normalized = token.strip().lower()
-        if len(normalized) < 2:
-            continue
-        if normalized in _COVERAGE_STOPWORDS:
-            continue
-        if normalized.isdigit() and len(normalized) < 2:
-            continue
-        anchors.append(normalized)
-    deduped: list[str] = []
-    for token in anchors:
-        if token in deduped:
-            continue
-        deduped.append(token)
-    return deduped
-
-
-def _coverage_aliases(text: str) -> list[str]:
-    aliases: list[str] = []
-    if any(term in text for term in ("北京时间", "当前时间", "utc", "iso_time")):
-        aliases.extend(["当前时间", "time"])
-    if any(term in text for term in ("上下文", "tokens", "窗口", "context_status")):
-        aliases.extend(["上下文状态", "当前上下文", "runtime", "context_status"])
-    if "mcp" in text:
-        aliases.extend(["mcp", "mcp 服务", "github mcp"])
-    deduped: list[str] = []
-    for token in aliases:
-        normalized = token.strip().lower()
-        if not normalized or normalized in deduped:
-            continue
-        deduped.append(normalized)
-    return deduped
+def _coverage_token_is_present(token: str, normalized_final_text: str) -> bool:
+    if not token:
+        return False
+    if re.search(r"[\u4e00-\u9fff]", token):
+        return token in normalized_final_text
+    pattern = re.compile(rf"(?<![a-z0-9_./:%-]){re.escape(token)}(?![a-z0-9_./:%-])")
+    return bool(pattern.search(normalized_final_text))
 
 
 def _is_successful_tool_result(tool_result: object) -> bool:
@@ -484,24 +577,11 @@ def _is_successful_tool_result(tool_result: object) -> bool:
     return tool_result.get("ok") is not False and tool_result.get("is_error") is not True
 
 
-def _claims_session_switch_success(text: str) -> bool:
-    return _parse_session_switch_claim(text) is not None
-
-
-def _claims_spawn_subagent_acceptance(text: str) -> bool:
-    return _parse_spawn_subagent_acceptance_claim(text) is not None
-
-
-def _claims_current_session_identity(text: str) -> bool:
-    return _parse_current_session_identity_claim(text) is not None
-
-
 def _history_confirms_session_switch(
     history: list[ToolExchange],
-    final_text: str,
+    claim: object,
 ) -> bool:
-    claim = _parse_session_switch_claim(final_text)
-    if claim is None:
+    if not isinstance(claim, SessionSwitchClaimDraft):
         return False
     for item in history:
         if item.tool_name != "session":
@@ -524,10 +604,10 @@ def _history_confirms_session_switch(
             or item.tool_payload.get("session_id")
             or ""
         ).strip()
-        claimed_session_id = str(claim.get("session_id") or "").strip()
+        claimed_session_id = str(claim.session_id or "").strip()
         if claimed_session_id and target_session_id and claimed_session_id != target_session_id:
             continue
-        claim_kind = str(claim.get("kind") or "").strip()
+        claim_kind = str(claim.kind or "").strip()
         if claim_kind == "new":
             if action == "new" and transition.get("binding_changed") is True:
                 return True
@@ -548,10 +628,9 @@ def _history_confirms_session_switch(
 
 def _history_confirms_spawn_subagent_acceptance(
     history: list[ToolExchange],
-    final_text: str,
+    claim: object,
 ) -> bool:
-    claim = _parse_spawn_subagent_acceptance_claim(final_text)
-    if claim is None:
+    if not isinstance(claim, SpawnSubagentAcceptanceClaimDraft):
         return False
     for item in history:
         if item.tool_name != "spawn_subagent":
@@ -564,11 +643,11 @@ def _history_confirms_spawn_subagent_acceptance(
         if str(tool_result.get("status") or "").strip() != "accepted":
             continue
         actual_queue_state = str(tool_result.get("queue_state") or "").strip() or "running"
-        claimed_queue_state = str(claim.get("queue_state") or "").strip()
+        claimed_queue_state = str(claim.queue_state or "").strip()
         if claimed_queue_state and claimed_queue_state != actual_queue_state:
             continue
         notify_on_finish = bool(item.tool_payload.get("notify_on_finish", True))
-        notify_phrase = str(claim.get("notify_phrase") or "").strip()
+        notify_phrase = str(claim.notify_phrase or "").strip()
         if notify_phrase == "after_start":
             if not notify_on_finish or actual_queue_state != "queued":
                 continue
@@ -581,12 +660,11 @@ def _history_confirms_spawn_subagent_acceptance(
 
 def _history_confirms_current_session_identity(
     history: list[ToolExchange],
-    final_text: str,
+    claim: object,
 ) -> bool:
-    claim = _parse_current_session_identity_claim(final_text)
-    if claim is None:
+    if not isinstance(claim, CurrentSessionIdentityClaimDraft):
         return False
-    claimed_session_id = str(claim.get("session_id") or "").strip()
+    claimed_session_id = str(claim.session_id or "").strip()
     if not claimed_session_id:
         return False
     for item in history:
@@ -612,77 +690,290 @@ def _history_confirms_current_session_identity(
     return False
 
 
-_SESSION_ID_RE = re.compile(r"`?(sess_[A-Za-z0-9_-]+)`?")
+def _history_confirms_memory_write(
+    history: list[ToolExchange],
+    claim: object,
+) -> bool:
+    if not isinstance(claim, MemoryMutationClaimDraft):
+        return False
+    for item in history:
+        if item.tool_name != "memory":
+            continue
+        if not _is_successful_tool_result(item.tool_result):
+            continue
+        action = str(item.tool_payload.get("action") or "").strip().lower()
+        if action not in {"append", "replace"}:
+            continue
+        if not _memory_tool_call_matches_request(item.tool_payload):
+            continue
+        if not _memory_claim_content_matches_tool(
+            claim,
+            confirmed_content=_confirmed_memory_content(item.tool_payload),
+        ):
+            continue
+        return True
+    return False
 
 
-def _extract_session_id(text: str) -> str | None:
-    match = _SESSION_ID_RE.search(str(text or ""))
-    if match is None:
-        return None
-    return str(match.group(1) or "").strip() or None
+def _history_confirms_memory_delete(
+    history: list[ToolExchange],
+    claim: object,
+) -> bool:
+    if not isinstance(claim, MemoryMutationClaimDraft):
+        return False
+    for item in history:
+        if item.tool_name != "memory":
+            continue
+        if not _is_successful_tool_result(item.tool_result):
+            continue
+        action = str(item.tool_payload.get("action") or "").strip().lower()
+        if action != "delete":
+            continue
+        if not _memory_tool_call_matches_request(item.tool_payload):
+            continue
+        if not _memory_claim_content_matches_tool(
+            claim,
+            confirmed_content=_confirmed_memory_content(item.tool_payload),
+        ):
+            continue
+        return True
+    return False
 
 
-def _parse_session_switch_claim(text: str) -> dict[str, str | None] | None:
-    normalized = " ".join(str(text or "").split())
-    if "当前已在会话" in normalized:
-        return {
-            "kind": "resume_noop",
-            "session_id": _extract_session_id(normalized),
-        }
-    if "已切换到新会话" in normalized:
-        return {
-            "kind": "new",
-            "session_id": _extract_session_id(normalized),
-        }
-    if (
-        "已恢复旧会话" in normalized
-        or "已恢复会话" in normalized
-        or "已恢复到会话" in normalized
-    ):
-        return {
-            "kind": "resume_switch",
-            "session_id": _extract_session_id(normalized),
-        }
-    if "已切换到已有会话" in normalized or "已切换到会话" in normalized:
-        return {
-            "kind": "resume_switch",
-            "session_id": _extract_session_id(normalized),
-        }
+def _history_confirms_current_time(
+    history: list[ToolExchange],
+    claim: object,
+) -> bool:
+    if not isinstance(claim, LiveTimeClaimDraft):
+        return False
+    observed = _latest_time_observation(history)
+    if observed is None:
+        return False
+    facets = set(claim.facets or [])
+    if not facets:
+        return False
+    if "time" in facets:
+        if claim.hour is None or claim.minute is None:
+            return False
+        if (claim.hour, claim.minute) != (observed.hour, observed.minute):
+            return False
+        if claim.second is not None and claim.second != observed.second:
+            return False
+        if claim.requires_second_precision and claim.second is None:
+            return False
+    if "date" in facets:
+        if claim.month is None or claim.day is None:
+            return False
+        if claim.year is not None and claim.year != observed.year:
+            return False
+        if (claim.month, claim.day) != (observed.month, observed.day):
+            return False
+    if "weekday" in facets:
+        if claim.weekday is None or claim.weekday != observed.weekday:
+            return False
+    return True
+
+
+def _history_confirms_runtime_context(
+    history: list[ToolExchange],
+    claim: object,
+) -> bool:
+    if not isinstance(claim, LiveRuntimeContextClaimDraft):
+        return False
+    observed = _latest_runtime_context_observation(history)
+    if observed is None:
+        return False
+    observed_values = {
+        "estimated_usage": observed.estimated_usage,
+        "effective_window": observed.effective_window,
+        "context_window": observed.context_window,
+        "usage_percent": observed.usage_percent,
+        "replay_budget": observed.replay_user_turns,
+        "remaining_context": max(observed.context_window - observed.estimated_usage, 0),
+        "remaining_effective": max(observed.effective_window - observed.estimated_usage, 0),
+    }
+    if claim.numeric_claims:
+        for numeric_claim in claim.numeric_claims:
+            if observed_values.get(numeric_claim.kind) != numeric_claim.value:
+                return False
+    if claim.status is not None and claim.status != observed.compaction_status:
+        return False
+    return bool(claim.numeric_claims or claim.status)
+
+
+def _memory_claim_content_matches_tool(
+    claim: MemoryMutationClaimDraft,
+    *,
+    confirmed_content: str | None,
+) -> bool:
+    claimed_content = str(claim.content or "").strip()
+    if not claimed_content or not confirmed_content:
+        return True
+    normalized_claimed = _normalize_memory_compare_text(claimed_content)
+    normalized_confirmed = _normalize_memory_compare_text(confirmed_content)
+    if not normalized_claimed or not normalized_confirmed:
+        return True
+    return normalized_claimed == normalized_confirmed
+
+
+@dataclass(frozen=True)
+class _ObservedCurrentTime:
+    year: int
+    month: int
+    day: int
+    hour: int
+    minute: int
+    second: int
+    weekday: int
+
+
+@dataclass(frozen=True)
+class _ObservedRuntimeContext:
+    estimated_usage: int
+    effective_window: int
+    context_window: int
+    usage_percent: int
+    replay_user_turns: int
+    recent_tool_outcome_summary_limit: int
+    compaction_status: str
+
+
+def _latest_time_observation(history: list[ToolExchange]) -> _ObservedCurrentTime | None:
+    for item in reversed(history):
+        if item.tool_name != "time" or not _is_successful_tool_result(item.tool_result):
+            continue
+        if not isinstance(item.tool_result, dict):
+            continue
+        iso_time = str(item.tool_result.get("iso_time") or "").strip()
+        if not iso_time:
+            continue
+        try:
+            current_time = datetime.fromisoformat(iso_time)
+        except ValueError:
+            continue
+        return _ObservedCurrentTime(
+            year=current_time.year,
+            month=current_time.month,
+            day=current_time.day,
+            hour=current_time.hour,
+            minute=current_time.minute,
+            second=current_time.second,
+            weekday=current_time.weekday(),
+        )
     return None
 
 
-def _parse_spawn_subagent_acceptance_claim(text: str) -> dict[str, str | None] | None:
-    normalized = " ".join(str(text or "").split())
-    if "已受理" not in normalized:
-        return None
-    if "子 agent" not in normalized and "后台执行" not in normalized and "进入队列" not in normalized:
-        return None
-    queue_state: str | None = None
-    if "进入队列" in normalized:
-        queue_state = "queued"
-    elif "后台执行" in normalized:
-        queue_state = "running"
-    notify_phrase: str | None = None
-    if "开始后会通知你结果" in normalized:
-        notify_phrase = "after_start"
-    elif "完成后会通知你结果" in normalized:
-        notify_phrase = "after_finish"
-    return {
-        "queue_state": queue_state,
-        "notify_phrase": notify_phrase,
-    }
+def _latest_runtime_context_observation(
+    history: list[ToolExchange],
+) -> _ObservedRuntimeContext | None:
+    for item in reversed(history):
+        if item.tool_name != "runtime" or not _is_successful_tool_result(item.tool_result):
+            continue
+        if not isinstance(item.tool_result, dict):
+            tool_result = {}
+        else:
+            tool_result = item.tool_result
+        action = str(item.tool_payload.get("action") or tool_result.get("action") or "").strip().lower()
+        if action != "context_status":
+            continue
+        next_request = dict(tool_result.get("next_request_estimate") or {})
+        effective_window = int(
+            next_request.get("effective_window_tokens") or tool_result.get("effective_window") or 0
+        )
+        context_window = int(
+            next_request.get("context_window_tokens") or tool_result.get("context_window") or 0
+        )
+        estimated_usage = int(
+            next_request.get("input_tokens_estimate") or tool_result.get("estimated_usage") or 0
+        )
+        usage_percent = int(tool_result.get("usage_percent") or 0)
+        replay_user_turns = int(tool_result.get("replay_user_turns") or 0)
+        recent_tool_outcome_summary_limit = int(
+            tool_result.get("recent_tool_outcome_summary_limit") or 0
+        )
+        compaction_status = _extract_runtime_status_from_result(tool_result)
+        return _ObservedRuntimeContext(
+            estimated_usage=estimated_usage,
+            effective_window=effective_window,
+            context_window=context_window,
+            usage_percent=usage_percent,
+            replay_user_turns=replay_user_turns,
+            recent_tool_outcome_summary_limit=recent_tool_outcome_summary_limit,
+            compaction_status=compaction_status,
+        )
+    return None
 
 
-def _parse_current_session_identity_claim(text: str) -> dict[str, str | None] | None:
-    normalized = " ".join(str(text or "").split())
-    if "当前会话" not in normalized:
-        return None
-    if "session_id" not in normalized and "会话 id" not in normalized and "会话id" not in normalized:
-        return None
-    session_id = _extract_session_id(normalized)
-    if not session_id:
-        return None
-    return {"session_id": session_id}
+def _extract_runtime_status_from_result(tool_result: dict[str, object]) -> str:
+    if str(tool_result.get("action") or "").strip() != "context_status":
+        return ""
+    return render_runtime_compaction_status_text(tool_result)
+
+
+def _memory_tool_call_matches_request(
+    tool_payload: dict[str, object],
+) -> bool:
+    actual_section = str(tool_payload.get("section") or "").strip().lower()
+    action = str(tool_payload.get("action") or "").strip().lower()
+    if action == "delete":
+        return bool(actual_section) and has_explicit_memory_delete_intent(tool_payload)
+    if action not in {"append", "replace"}:
+        return False
+    actual_content = str(tool_payload.get("content") or "").strip()
+    return bool(actual_section) and bool(actual_content) and has_explicit_memory_write_intent(tool_payload)
+
+
+def _confirmed_memory_content(
+    tool_payload: dict[str, object],
+) -> str | None:
+    actual_content = str(tool_payload.get("content") or "").strip()
+    return actual_content or None
+
+
+def _normalize_memory_compare_text(text: str) -> str:
+    return re.sub(r"[^\w\u4e00-\u9fff]+", "", str(text or "").lower())
+_FINALIZATION_CONTRACT_SPECS = (
+    FinalizationContractSpec(
+        "session_switch",
+        lambda draft: draft.session_switch if draft is not None else None,
+        _history_confirms_session_switch,
+    ),
+    FinalizationContractSpec(
+        "current_session_identity",
+        lambda draft: draft.current_session_identity if draft is not None else None,
+        _history_confirms_current_session_identity,
+    ),
+    FinalizationContractSpec(
+        "memory_write",
+        lambda draft: draft.memory_write if draft is not None else None,
+        _history_confirms_memory_write,
+    ),
+    FinalizationContractSpec(
+        "memory_delete",
+        lambda draft: draft.memory_delete if draft is not None else None,
+        _history_confirms_memory_delete,
+    ),
+    FinalizationContractSpec(
+        "live_time",
+        lambda draft: draft.live_time if draft is not None else None,
+        _history_confirms_current_time,
+    ),
+    FinalizationContractSpec(
+        "live_runtime_context",
+        lambda draft: draft.live_runtime_context if draft is not None else None,
+        _history_confirms_runtime_context,
+    ),
+    FinalizationContractSpec(
+        "spawn_subagent_acceptance",
+        lambda draft: draft.spawn_subagent_acceptance if draft is not None else None,
+        _history_confirms_spawn_subagent_acceptance,
+    ),
+)
+
+
+_FINALIZATION_CONTRACT_RULES = tuple(
+    _build_finalization_contract_rule(spec) for spec in _FINALIZATION_CONTRACT_SPECS
+)
 
 
 def _session_id_from_session_result(
@@ -728,23 +1019,48 @@ def _recover_text_from_ledger(
     history: list[ToolExchange],
     ledger: FinalizationEvidenceLedger,
 ) -> str:
+    round_trip_summary = _round_trip_summary_from_ledger(ledger)
     required_items = [
         item for item in ledger.items if item.required_for_user_request and str(item.result_summary or "").strip()
     ]
     if required_items:
-        return "\n\n".join(str(item.result_summary).strip() for item in required_items)
+        recovered = [str(item.result_summary).strip() for item in required_items]
+        if round_trip_summary and round_trip_summary not in recovered:
+            recovered.append(round_trip_summary)
+        return "\n\n".join(recovered)
     successful_items: list[str] = []
     for item in ledger.items:
         if item.evidence_source == "loop_meta":
-            if ledger.requires_round_trip_report and str(item.result_summary or "").strip():
-                successful_items.append(str(item.result_summary).strip())
+            continue
+        if is_intermediate_support_tool_result(history, item.ordinal - 1):
             continue
         if not _ledger_item_maps_to_successful_tool(item.ordinal, history):
             continue
         summary = str(item.result_summary or "").strip()
         if summary:
             successful_items.append(summary)
+    if round_trip_summary and round_trip_summary not in successful_items:
+        successful_items.append(round_trip_summary)
     return "\n\n".join(successful_items)
+
+
+def _round_trip_summary_from_ledger(ledger: FinalizationEvidenceLedger) -> str | None:
+    if not ledger.requires_round_trip_report:
+        return None
+    for item in ledger.items:
+        if item.evidence_source != "loop_meta":
+            continue
+        summary = str(item.result_summary or "").strip()
+        if summary:
+            return summary
+    fragment = _loop_meta_fragment(
+        model_request_count=ledger.model_request_count,
+        tool_call_count=ledger.tool_call_count,
+        requires_round_trip_report=True,
+    )
+    if fragment is None:
+        return None
+    return str(fragment.text or "").strip() or None
 
 
 def _ledger_item_maps_to_successful_tool(

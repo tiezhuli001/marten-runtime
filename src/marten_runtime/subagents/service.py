@@ -13,8 +13,23 @@ from marten_runtime.agents.specs import AgentSpec
 from marten_runtime.channels.feishu.delivery import FeishuDeliveryPayload
 from marten_runtime.channels.feishu.usage import build_usage_summary_from_history
 from marten_runtime.config.models_loader import resolve_model_profile
+from marten_runtime.runtime.llm_client import ToolExchange
+from marten_runtime.runtime.recovery_flow import (
+    assess_finalization_text_with_details,
+    derive_finalization_contract_flags,
+    is_generic_tool_failure_text,
+    recover_successful_tool_followup_text_with_meta,
+)
+from marten_runtime.runtime.tool_followup_support import (
+    build_finalization_evidence_ledger,
+)
 from marten_runtime.session.models import SessionMessage
+from marten_runtime.session.tool_outcome_summary import ToolOutcomeFact, ToolOutcomeSummary
 from marten_runtime.subagents.models import SUBAGENT_TERMINAL_STATUSES, SubagentTask
+from marten_runtime.subagents.repo_context import (
+    RepositoryContext,
+    render_repository_context_note,
+)
 from marten_runtime.subagents.tool_profiles import (
     PROFILE_ORDER,
     normalize_tool_profile_name,
@@ -142,6 +157,7 @@ class SubagentService:
         llm_client_factory=None,
         models_config=None,
         terminal_callback=None,
+        repository_context: RepositoryContext | None = None,
     ) -> None:
         self.session_store = session_store
         self.run_history = run_history
@@ -158,6 +174,7 @@ class SubagentService:
         self.llm_client_factory = llm_client_factory
         self.models_config = models_config
         self.terminal_callback = terminal_callback
+        self.repository_context = repository_context
         self._running_tasks: set[str] = set()
         self._background_tasks: dict[str, threading.Thread] = {}
         self._execution_threads: dict[str, threading.Thread] = {}
@@ -301,8 +318,6 @@ class SubagentService:
         task = self.store.get(task_id)
         if task.status != "running":
             return task
-        task = self.store.mark_succeeded(task_id)
-        self.store.set_terminal_payload(task_id, result_summary=summary)
         if task.include_parent_session_message:
             self.session_store.append_message(
                 task.parent_session_id,
@@ -310,6 +325,13 @@ class SubagentService:
                     f"subagent task completed: {task.label}\nsummary: {summary}"
                 ),
             )
+        task = self.store.mark_succeeded(task_id)
+        self.store.set_terminal_payload(task_id, result_summary=summary)
+        self._append_parent_tool_outcome_summary(
+            task,
+            status="succeeded",
+            text=summary,
+        )
         self._deliver_channel_notification(task, status="completed", text=summary)
         self._emit_terminal_callback(task)
 
@@ -319,6 +341,11 @@ class SubagentService:
             return
         task = self.store.mark_failed(task_id)
         self.store.set_terminal_payload(task_id, error_text=error_text)
+        self._append_parent_tool_outcome_summary(
+            task,
+            status="failed",
+            text=error_text,
+        )
         if task.include_parent_session_message:
             self.session_store.append_message(
                 task.parent_session_id,
@@ -346,12 +373,17 @@ class SubagentService:
         was_running = task.status == "running"
         self._signal_stop(task_id)
         self._invalidate_execution(task_id)
-        task = self.store.mark_timed_out(task_id)
         if task.include_parent_session_message:
             self.session_store.append_message(
                 task.parent_session_id,
                 SessionMessage.system(f"subagent task timed out: {task.label}"),
             )
+        task = self.store.mark_timed_out(task_id)
+        self._append_parent_tool_outcome_summary(
+            task,
+            status="timed_out",
+            text="subagent task timed out",
+        )
         self._deliver_channel_notification(task, status="timed_out", text="subagent task timed out")
         self._emit_terminal_callback(task)
         if not was_running:
@@ -376,6 +408,11 @@ class SubagentService:
         self._signal_stop(task_id)
         self._invalidate_execution(task_id)
         task = self.store.mark_cancelled(task_id)
+        self._append_parent_tool_outcome_summary(
+            task,
+            status="cancelled",
+            text="subagent task cancelled",
+        )
         if task.include_parent_session_message:
             self.session_store.append_message(
                 task.parent_session_id,
@@ -519,10 +556,17 @@ class SubagentService:
                 run_kwargs.update(self._runtime_assets_for_agent(agent))
             optional_kwargs = {
                 "session_store": self.session_store,
+                "on_run_started": lambda run_id, started_at: self._register_child_run_start(
+                    task.task_id,
+                    task.child_session_id,
+                    run_id,
+                    started_at,
+                ),
                 "stop_event": control.cancel_event if control is not None else None,
                 "deadline_monotonic": control.deadline_monotonic if control is not None else None,
                 "timeout_seconds_override": self._timeout_seconds_override(task.task_id),
             }
+            task_message = self._build_child_task_message(task.task_prompt)
             signature = inspect.signature(self.runtime_loop.run)
             accepts_kwargs = any(
                 parameter.kind == inspect.Parameter.VAR_KEYWORD
@@ -533,7 +577,7 @@ class SubagentService:
                     run_kwargs[key] = value
             events = self.runtime_loop.run(
                 task.child_session_id,
-                task.task_prompt,
+                task_message,
                 **run_kwargs,
             )
             if not self._is_execution_current(task_id, execution_token):
@@ -566,7 +610,15 @@ class SubagentService:
             terminal_event = events[-1]
             terminal_text = str(terminal_event.payload.get("text", "")).strip()
             if terminal_event.event_type == "final":
-                final_text = terminal_text or "subagent finished"
+                final_text = (
+                    self._preferred_child_result_summary(
+                        task=task,
+                        child_run=child_run,
+                        terminal_text=terminal_text,
+                    )
+                    or terminal_text
+                    or "subagent finished"
+                )
                 self.complete_task_success(task.task_id, final_text)
                 return
             if terminal_event.event_type == "error":
@@ -669,16 +721,174 @@ class SubagentService:
             return {}
         profile_name = getattr(agent, "model_profile", None)
         _, profile = resolve_model_profile(self.models_config, profile_name)
+        shared_llm = self.llm_client_factory.get(
+            profile_name,
+            default_client=getattr(self.runtime_loop, "llm", None),
+        )
+        create_compaction_client = getattr(
+            self.llm_client_factory,
+            "create_compaction_client",
+            None,
+        )
+        compact_llm = (
+            create_compaction_client(profile_name, shared_client=shared_llm)
+            if callable(create_compaction_client)
+            else shared_llm
+        )
         return {
-            "llm_client": self.llm_client_factory.get(
-                profile_name,
-                default_client=getattr(self.runtime_loop, "llm", None),
-            ),
+            "llm_client": shared_llm,
+            "compact_llm_client": compact_llm,
             "system_prompt": assets.system_prompt,
             "bootstrap_manifest_id": assets.manifest.bootstrap_manifest_id,
             "model_profile_name": profile_name,
             "tokenizer_family": profile.tokenizer_family,
         }
+
+    def _build_child_task_message(self, task_prompt: str) -> str:
+        base = str(task_prompt or "").strip()
+        repo_note = render_repository_context_note(self.repository_context)
+        if not repo_note:
+            return base
+        if not base:
+            return repo_note
+        return f"{base}\n\n{repo_note}"
+
+    def _preferred_child_result_summary(
+        self,
+        *,
+        task,
+        child_run,
+        terminal_text: str,
+    ) -> str:  # noqa: ANN001
+        normalized_terminal = " ".join(str(terminal_text or "").split()).strip()
+        if child_run is None:
+            return normalized_terminal
+        finalization = getattr(child_run, "finalization", None)
+        if finalization is None or finalization.recovered_from_fragments is not True:
+            return normalized_terminal
+        invalid_final_text = " ".join(
+            str(
+                getattr(finalization, "invalid_final_text_full", None)
+                or finalization.invalid_final_text
+                or ""
+            ).split()
+        ).strip()
+        if (
+            not invalid_final_text
+            or invalid_final_text == normalized_terminal
+            or is_generic_tool_failure_text(invalid_final_text)
+        ):
+            return normalized_terminal
+        tool_history = self._tool_history_from_child_run(child_run)
+        if not tool_history:
+            return invalid_final_text
+        requires_result_coverage, requires_round_trip_report = (
+            derive_finalization_contract_flags(
+                tool_history=tool_history,
+                model_request_count=getattr(child_run, "llm_request_count", None),
+                user_message=str(getattr(task, "task_prompt", "") or ""),
+            )
+        )
+        finalization_evidence_ledger = build_finalization_evidence_ledger(
+            user_message=str(getattr(task, "task_prompt", "") or ""),
+            tool_history=tool_history,
+            model_request_count=getattr(child_run, "llm_request_count", None),
+            requires_result_coverage=requires_result_coverage,
+            requires_round_trip_report=requires_round_trip_report,
+        )
+        invalid_final_details = assess_finalization_text_with_details(
+            tool_history,
+            invalid_final_text,
+            user_message=str(getattr(task, "task_prompt", "") or ""),
+            model_request_count=getattr(child_run, "llm_request_count", None),
+            finalization_evidence_ledger=finalization_evidence_ledger,
+        )
+        if invalid_final_details.assessment == "accepted":
+            return invalid_final_text
+        recovered_text = " ".join(
+            str(
+                recover_successful_tool_followup_text_with_meta(
+                    tool_history,
+                    model_request_count=getattr(child_run, "llm_request_count", None),
+                    finalization_evidence_ledger=finalization_evidence_ledger,
+                )
+                or ""
+            ).split()
+        ).strip()
+        if (
+            recovered_text
+            and recovered_text == normalized_terminal
+            and len(invalid_final_text) > len(normalized_terminal)
+        ):
+            return invalid_final_text
+        return normalized_terminal
+
+    def _register_child_run_start(
+        self,
+        task_id: str,
+        child_session_id: str,
+        run_id: str,
+        started_at: datetime,
+    ) -> None:
+        try:
+            self.store.attach_child_run(task_id, run_id)
+            self.session_store.mark_run(child_session_id, run_id, started_at)
+        except Exception:
+            logger.exception(
+                "failed to register child run start",
+                extra={
+                    "task_id": task_id,
+                    "child_session_id": child_session_id,
+                    "run_id": run_id,
+                },
+            )
+
+    def _tool_history_from_child_run(self, child_run) -> list[ToolExchange]:  # noqa: ANN001
+        history: list[ToolExchange] = []
+        for item in list(getattr(child_run, "tool_calls", []) or []):
+            if not isinstance(item, dict):
+                continue
+            history.append(
+                ToolExchange(
+                    tool_name=str(item.get("tool_name") or "").strip(),
+                    tool_payload=dict(item.get("tool_payload") or {}),
+                    tool_result=dict(item.get("tool_result") or {}),
+                )
+            )
+        return history
+
+    def _append_parent_tool_outcome_summary(
+        self,
+        task,
+        *,
+        status: str,
+        text: str,
+    ) -> None:  # noqa: ANN001
+        if not bool(getattr(task, "include_parent_session_message", True)):
+            return
+        label = str(getattr(task, "label", "") or "").strip() or "子任务"
+        normalized_text = " ".join(str(text or "").split()).strip()
+        if status == "succeeded":
+            summary_text = f"后台子任务《{label}》已完成。结论：{normalized_text or '任务已完成。'}"
+        elif status == "failed":
+            summary_text = f"后台子任务《{label}》执行失败。错误：{normalized_text or 'subagent failed'}"
+        elif status == "timed_out":
+            summary_text = f"后台子任务《{label}》已超时。"
+        elif status == "cancelled":
+            summary_text = f"后台子任务《{label}》已取消。"
+        else:
+            summary_text = f"后台子任务《{label}》状态更新：{normalized_text or status}"
+        summary = ToolOutcomeSummary.create(
+            run_id=str(getattr(task, "child_run_id", None) or task.parent_run_id or "run_unknown"),
+            source_kind="subagent",
+            summary_text=summary_text,
+            facts=[
+                ToolOutcomeFact.create("status", status),
+                ToolOutcomeFact.create("label", label, value_limit=120),
+            ],
+            tool_name="spawn_subagent",
+        )
+        self.session_store.append_tool_outcome_summary(task.parent_session_id, summary)
 
     def _deliver_channel_notification(self, task, *, status: str, text: str) -> None:  # noqa: ANN001
         if not task.notify_on_finish:

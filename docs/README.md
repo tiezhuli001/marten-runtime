@@ -58,10 +58,32 @@
 - 2026-04-09 branch-evolution 现在只保留一份归档说明：`docs/archive/branch-evolution/2026-04-09-fast-path-inventory-and-exit-strategy.md`
 - 2026-04-11 repo slimming 工作已压缩到 `docs/archive/plans/2026-04-11-repo-slimming-summary.md`
 - 2026-04-17 Langfuse observability design 保留在 `docs/2026-04-17-langfuse-observability-design.md`
+- 2026-04-30 主链评测基础能力设计保留在 `docs/2026-04-30-main-chain-eval-foundation-design.md`
+- 已完成的评测执行计划已归档到 `docs/archive/plans/2026-04-30-main-chain-eval-foundation-execution-plan.md` 与 `docs/archive/plans/2026-05-01-memory-subagent-eval-execution-plan.md`
 - 本地忽略的 `STATUS.md` 继续只承担分支执行看板角色
+
+## 离线评测入口
+
+- 背景设计：`docs/2026-04-30-main-chain-eval-foundation-design.md`
+- 过程归档：`docs/archive/plans/2026-04-30-main-chain-eval-foundation-execution-plan.md`
+- 专项归档：`docs/archive/plans/2026-05-01-memory-subagent-eval-execution-plan.md`
+- 命令入口：`PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite main_chain_core --mode scripted --profile openai_gpt_5_4`
+- 主链套件：`main_chain_core`
+- memory 专项套件：`memory_long_horizon`
+- subagent 专项套件：`subagent_task_progress`
+- memory compare 命令：`PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite memory_long_horizon --mode scripted --profile openai_gpt_5_4 --baseline latest_passed`
+- subagent compare 命令：`PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite subagent_task_progress --mode scripted --profile openai_gpt_5_4 --baseline latest_passed`
+- 默认历史库：`data/evals.sqlite3`
+- 默认报告目录：`reports/evals/`
+- 汇总 Markdown：`reports/evals/<eval_run_id>/summary.md`
+- 汇总 JSON：`reports/evals/<eval_run_id>/summary.json`
+- 汇总 HTML：`reports/evals/<eval_run_id>/summary.html`
+- 单 case 详情：`reports/evals/<eval_run_id>/cases/<case_id>.json`
+- 稳定性统计：汇总报告会额外展示最近 5 次同 suite/profile/mode + 同 `git_sha` / `config_fingerprint` / `suite_fingerprint` 的分数波动、组件波动、波动 case、锚点强度
 
 ## 当前状态
 
+- 离线评测已经进入当前运维基线，当前可稳定回放 `main_chain_core`、`memory_long_horizon`、`subagent_task_progress` 并生成 compare / stability 报告
 - 默认 runtime app 已经是 `main_agent`
 - Milestone A 的 agent runtime harness 已经落地
 - HTTP `/messages` 与 Feishu interactive ingress 已具备 same-conversation FIFO queueing

@@ -1,0 +1,47 @@
+case_id = "memory_replace_then_read_cn"
+suite_id = "main_chain_core"
+family = "memory_replace_read"
+enabled = true
+required = true
+description = "memory replace 后再读取"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "memory", "multi_turn"]
+
+[[turns]]
+role = "user"
+content = "更新记忆：以后回答尽量简洁。"
+
+[[turns]]
+role = "user"
+content = "读取当前偏好。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "user_preference_basic.md"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_all = ["简洁"]
+forbid_all = ["旧偏好"]
+
+[[expectations.tool_path.required_calls]]
+tool_name = "memory"
+min_calls = 1
+max_calls = 1
+
+[expectations.efficiency]
+max_llm_requests = 3
+max_tool_calls = 1
+
+[expectations.context]
+expect_compaction = false
+
+[expectations.diagnostics]
+expect_provider_ref = "openai"
+
+[weights]
+outcome = 60
+tool_path = 20
+efficiency = 15
+context = 5

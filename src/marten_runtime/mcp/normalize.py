@@ -46,10 +46,10 @@ def normalize_mcp_request(
             ),
         )
     )
+    inline_arguments = _collect_inline_arguments(normalized_payload)
+    if action == "call" and inline_arguments:
+        arguments = {**inline_arguments, **arguments}
     arguments = _normalize_tool_specific_arguments(tool_name, arguments)
-    if action == "call" and not arguments:
-        arguments = _collect_inline_arguments(normalized_payload)
-        arguments = _normalize_tool_specific_arguments(tool_name, arguments)
     if action == "call" and not server_id:
         server_id = _infer_server_id(server_map, tool_name)
     if action == "call" and not server_id:
@@ -87,8 +87,14 @@ def _normalize_action_alias(action: str, payload: dict) -> tuple[str, dict]:
     normalized_payload = dict(payload)
     if normalized_action in {"list", "detail", "call", ""}:
         return normalized_action, normalized_payload
-    if normalized_payload.get("tool_name") or normalized_payload.get("tool") or normalized_payload.get("name"):
-        return normalized_action, normalized_payload
+    explicit_tool_name = _normalize_optional_text(
+        normalized_payload.get("tool_name")
+        or normalized_payload.get("tool")
+        or normalized_payload.get("name")
+    )
+    if explicit_tool_name:
+        normalized_payload["tool_name"] = explicit_tool_name
+        return "call", normalized_payload
     normalized_payload["tool"] = normalized_action
     return "call", normalized_payload
 
@@ -130,17 +136,29 @@ def _collect_inline_arguments(payload: dict) -> dict:
         "payload",
         "input",
         "args",
+        "finalize_response",
     }
     return {key: value for key, value in payload.items() if key not in control_keys}
 
 
 def _normalize_tool_specific_arguments(tool_name: str | None, arguments: dict) -> dict:
-    normalized = dict(arguments)
+    normalized = {
+        key: value
+        for key, value in dict(arguments).items()
+        if value is not None
+    }
     if "per_page" not in normalized and "perPage" in normalized:
         normalized["per_page"] = normalized.pop("perPage")
-    if tool_name == "search_repositories" and "query" not in normalized and "q" in normalized:
+    if (
+        isinstance(tool_name, str)
+        and tool_name.startswith("search_")
+        and "query" not in normalized
+        and "q" in normalized
+    ):
         normalized["query"] = normalized.pop("q")
-    if tool_name in {"list_commits", "get_commit"} and "owner" not in normalized:
+    if tool_name == "get_file_contents" and "ref" not in normalized and "branch" in normalized:
+        normalized["ref"] = normalized.pop("branch")
+    if tool_name in {"list_commits", "get_commit", "get_file_contents"} and "owner" not in normalized:
         repo_value = normalized.get("repo")
         if isinstance(repo_value, str) and "/" in repo_value:
             owner, repo = repo_value.split("/", 1)

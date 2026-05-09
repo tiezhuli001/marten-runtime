@@ -29,7 +29,7 @@ class _TraceFakeLangfuseClient:
 
 class TraceCorrelationTests(unittest.TestCase):
     def test_trace_endpoint_correlates_to_run_and_events(self) -> None:
-        with TestClient(build_test_app()) as client:
+        with TestClient(build_test_app(emit_explicit_empty_contract=True)) as client:
             response = client.post(
                 "/messages",
                 json={
@@ -48,7 +48,7 @@ class TraceCorrelationTests(unittest.TestCase):
         self.assertEqual(len(diagnostics["event_ids"]), 2)
 
     def test_trace_endpoint_preserves_run_and_event_lists_when_langfuse_refs_are_present(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         observer = build_langfuse_observer(
             env={
                 "LANGFUSE_PUBLIC_KEY": "pk-test",

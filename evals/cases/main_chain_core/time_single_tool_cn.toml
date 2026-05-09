@@ -1,0 +1,44 @@
+case_id = "time_single_tool_cn"
+suite_id = "main_chain_core"
+family = "single_tool"
+enabled = true
+required = true
+description = "time 工具一轮完成"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "builtin", "time", "finalize"]
+
+[[turns]]
+role = "user"
+content = "告诉我现在北京时间几点。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_all = ["北京时间"]
+contains_any = [":", "点"]
+forbid_all = ["无法访问"]
+
+[[expectations.tool_path.required_calls]]
+tool_name = "time"
+min_calls = 1
+max_calls = 1
+
+[expectations.efficiency]
+max_llm_requests = 1
+max_tool_calls = 1
+
+[expectations.context]
+expect_compaction = false
+
+[expectations.diagnostics]
+expect_provider_ref = "openai"
+
+[weights]
+outcome = 60
+tool_path = 25
+efficiency = 10
+context = 5

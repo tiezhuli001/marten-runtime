@@ -87,7 +87,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
             {"action": "context_status"},
             tool_context={
                 "run_id": run.run_id,
-                "model_profile": "minimax_m25",
+                "model_profile": "minimax_m2_7_highspeed",
                 "session_replay_user_turns": 8,
                 "compacted_context": CompactedContext(
                     compact_id="cmp_runtime",
@@ -118,7 +118,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["action"], "context_status")
-        self.assertEqual(result["model_profile"], "minimax_m25")
+        self.assertEqual(result["model_profile"], "minimax_m2_7_highspeed")
         self.assertEqual(result["context_window"], 1000)
         self.assertEqual(result["effective_window"], 900)
         self.assertEqual(result["latest_checkpoint"], "available")
@@ -144,7 +144,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
             {"action": "context_status"},
             tool_context={
                 "run_id": run.run_id,
-                "model_profile": "minimax_m25",
+                "model_profile": "minimax_m2_7_highspeed",
                 "current_request": LLMRequest(
                     session_id="sess_runtime_usage",
                     trace_id="trace_runtime_usage",
@@ -571,7 +571,7 @@ class RuntimeAndSkillToolTests(unittest.TestCase):
             {"action": "context_status"},
             tool_context={
                 "run_id": run.run_id,
-                "model_profile": "openai_gpt5",
+                "model_profile": "openai_gpt_5_4",
                 "compacted_context": CompactedContext(
                     compact_id="cmp_runtime_checkpoint_reuse",
                     session_id="sess_runtime_checkpoint_reuse",

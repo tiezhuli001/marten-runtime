@@ -23,6 +23,7 @@ from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
 from marten_runtime.skills.service import SkillRuntimeView, SkillService
 from marten_runtime.skills.snapshot import SkillSnapshot
 from tests.http_app_support import build_test_app
+from tests.support.finalization_contracts import contracted_final_reply
 from tests.support.scripted_llm import AuthFailingLLMClient, FailingLLMClient, OverloadedLLMClient
 
 
@@ -40,6 +41,10 @@ class GatewayContractTests(unittest.TestCase):
         "time",
     ]
 
+    @staticmethod
+    def _non_summary_requests(llm: ScriptedLLMClient) -> list:
+        return [request for request in llm.requests if request.request_kind != "session_summary"]
+
     def _assert_http_turn_keeps_family_tool_surface(
         self,
         *,
@@ -48,9 +53,9 @@ class GatewayContractTests(unittest.TestCase):
         body: str,
         final_text: str = "ok",
     ) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
-        llm = ScriptedLLMClient([LLMReply(final_text=final_text)])
+        llm = ScriptedLLMClient([contracted_final_reply(final_text)])
         runtime.runtime_loop.llm = llm
 
         with TestClient(app) as client:
@@ -66,7 +71,7 @@ class GatewayContractTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        available_tools = llm.requests[0].available_tools
+        available_tools = self._non_summary_requests(llm)[0].available_tools
         self.assertGreaterEqual(len(available_tools), 1)
         self.assertTrue(set(available_tools).issubset(set(self.FAMILY_TOOLS)))
 
@@ -77,11 +82,11 @@ class GatewayContractTests(unittest.TestCase):
         message_id: str,
         body: str,
     ) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         runtime.runtime_loop.llm = AuthFailingLLMClient()
-        runtime.llm_client_factory.cache_client("openai_gpt5", runtime.runtime_loop.llm)
-        runtime.llm_client_factory.cache_client("minimax_m25", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("openai_gpt_5_4", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", runtime.runtime_loop.llm)
         runtime.tool_registry.register(
             "mcp",
             lambda payload: {
@@ -118,7 +123,7 @@ class GatewayContractTests(unittest.TestCase):
         self.assertEqual(run_diag.json()["tool_calls"], [])
 
     def test_http_and_event_contracts_keep_required_fields(self) -> None:
-        with TestClient(build_test_app()) as client:
+        with TestClient(build_test_app(emit_explicit_empty_contract=True)) as client:
             message = client.post(
                 "/messages",
                 json={
@@ -139,7 +144,7 @@ class GatewayContractTests(unittest.TestCase):
         self.assertIn("text", message["events"][-1]["payload"])
 
     def test_recent_runs_endpoint_lists_latest_runs(self) -> None:
-        with TestClient(build_test_app()) as client:
+        with TestClient(build_test_app(emit_explicit_empty_contract=True)) as client:
             client.post(
                 "/messages",
                 json={
@@ -172,7 +177,7 @@ class GatewayContractTests(unittest.TestCase):
         self.assertIn("total_ms", body["items"][0]["timings"])
 
     def test_http_messages_can_query_runtime_context_status_through_family_tool(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         llm = ScriptedLLMClient(
             [
@@ -180,8 +185,8 @@ class GatewayContractTests(unittest.TestCase):
             ]
         )
         runtime.runtime_loop.llm = llm
-        runtime.llm_client_factory.cache_client("openai_gpt5", llm)
-        runtime.llm_client_factory.cache_client("minimax_m25", llm)
+        runtime.llm_client_factory.cache_client("openai_gpt_5_4", llm)
+        runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", llm)
 
         with TestClient(app) as client:
             response = client.post(
@@ -198,7 +203,7 @@ class GatewayContractTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         final_text = response.json()["events"][-1]["payload"]["text"]
         self.assertIn("当前上下文使用详情", final_text)
-        self.assertEqual(len(llm.requests), 1)
+        self.assertEqual(len(self._non_summary_requests(llm)), 1)
         run_id = response.json()["events"][-1]["run_id"]
         tool_call = runtime.run_history.get(run_id).tool_calls[0]
         self.assertEqual(tool_call["tool_name"], "runtime")
@@ -214,12 +219,12 @@ class GatewayContractTests(unittest.TestCase):
         )
 
     def test_http_messages_return_provider_specific_error_event_instead_of_500_when_llm_fails(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         runtime.runtime_loop.llm = FailingLLMClient()
-        runtime.llm_client_factory.cache_client("openai_gpt5", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("openai_gpt_5_4", runtime.runtime_loop.llm)
         runtime.llm_client_factory.cache_client("kimi_k2", runtime.runtime_loop.llm)
-        runtime.llm_client_factory.cache_client("minimax_m25", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", runtime.runtime_loop.llm)
 
         with TestClient(app) as client:
             response = client.post(
@@ -240,12 +245,12 @@ class GatewayContractTests(unittest.TestCase):
         self.assertEqual(body["events"][-1]["payload"]["text"], "暂时没有生成可见回复，请重试。")
 
     def test_http_messages_return_busy_text_when_provider_is_overloaded(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         runtime.runtime_loop.llm = OverloadedLLMClient()
-        runtime.llm_client_factory.cache_client("openai_gpt5", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("openai_gpt_5_4", runtime.runtime_loop.llm)
         runtime.llm_client_factory.cache_client("kimi_k2", runtime.runtime_loop.llm)
-        runtime.llm_client_factory.cache_client("minimax_m25", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", runtime.runtime_loop.llm)
 
         with TestClient(app) as client:
             response = client.post(
@@ -266,11 +271,11 @@ class GatewayContractTests(unittest.TestCase):
         self.assertEqual(body["events"][-1]["payload"]["text"], "当前模型服务繁忙，请稍后重试。")
 
     def test_http_messages_return_provider_auth_error_when_provider_auth_fails(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         runtime.runtime_loop.llm = AuthFailingLLMClient()
-        runtime.llm_client_factory.cache_client("openai_gpt5", runtime.runtime_loop.llm)
-        runtime.llm_client_factory.cache_client("minimax_m25", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("openai_gpt_5_4", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", runtime.runtime_loop.llm)
 
         with TestClient(app) as client:
             response = client.post(
@@ -312,11 +317,11 @@ class GatewayContractTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            app = build_test_app()
+            app = build_test_app(emit_explicit_empty_contract=True)
             runtime = app.state.runtime
             runtime.runtime_loop.llm = AuthFailingLLMClient()
-            runtime.llm_client_factory.cache_client("openai_gpt5", runtime.runtime_loop.llm)
-            runtime.llm_client_factory.cache_client("minimax_m25", runtime.runtime_loop.llm)
+            runtime.llm_client_factory.cache_client("openai_gpt_5_4", runtime.runtime_loop.llm)
+            runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", runtime.runtime_loop.llm)
             runtime.skill_service = SkillService([str(skills_root)])
 
             with TestClient(app) as client:
@@ -359,7 +364,7 @@ class GatewayContractTests(unittest.TestCase):
                 self._assert_http_provider_auth_error_for_message(**case)
 
     def test_http_overlap_is_queued_and_keeps_normal_response_contract(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         first_started = threading.Event()
         release_first = threading.Event()
@@ -445,7 +450,7 @@ class GatewayContractTests(unittest.TestCase):
         self.assertTrue(second_run.queue.waited_in_lane)
 
     def test_automations_endpoint_includes_paused_jobs(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         runtime.automation_store.save(
             AutomationJob(
@@ -474,7 +479,7 @@ class GatewayContractTests(unittest.TestCase):
         self.assertFalse(body["items"][0]["enabled"])
 
     def test_manual_automation_trigger_runs_through_runtime_path(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         delivered: list[dict[str, object]] = []
         expected_scheduled_for = (
@@ -521,7 +526,7 @@ class GatewayContractTests(unittest.TestCase):
     def test_manual_automation_trigger_preserves_durable_text_and_card_for_feishu_delivery(
         self,
     ) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         delivered: list[dict[str, object]] = []
 
@@ -593,7 +598,7 @@ class GatewayContractTests(unittest.TestCase):
         self.assertEqual(delivered[-1]["card"], final_event["payload"]["card"])
 
     def test_manual_automation_trigger_without_skill_id_does_not_500(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         runtime.automation_store.save(
             AutomationJob(
@@ -613,7 +618,7 @@ class GatewayContractTests(unittest.TestCase):
                 internal=False,
             )
         )
-        runtime.runtime_loop.llm = ScriptedLLMClient([LLMReply(final_text="实时链路验证通过。")])
+        runtime.runtime_loop.llm = ScriptedLLMClient([contracted_final_reply("实时链路验证通过。")])
 
         with TestClient(app) as client:
             response = client.post("/automations/plain_delivery/trigger")
@@ -622,7 +627,7 @@ class GatewayContractTests(unittest.TestCase):
         self.assertEqual(response.json()["events"][-1]["event_type"], "final")
 
     def test_manual_automation_trigger_for_canonical_github_digest_does_not_require_skill_file(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         runtime.automation_store.save(
             AutomationJob(
@@ -642,7 +647,7 @@ class GatewayContractTests(unittest.TestCase):
                 internal=False,
             )
         )
-        runtime.runtime_loop.llm = ScriptedLLMClient([LLMReply(final_text="兼容触发通过。")])
+        runtime.runtime_loop.llm = ScriptedLLMClient([contracted_final_reply("兼容触发通过。")])
         runtime.skill_service.build_runtime = lambda **_: SkillRuntimeView(  # type: ignore[method-assign]
             visible_skills=[],
             snapshot=SkillSnapshot(skill_snapshot_id="skill_empty"),
@@ -659,7 +664,7 @@ class GatewayContractTests(unittest.TestCase):
 
     def test_http_messages_can_query_and_delete_self_improve_candidates_through_runtime_path(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            app = build_test_app()
+            app = build_test_app(emit_explicit_empty_contract=True)
             runtime = app.state.runtime
             isolated_store = SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3")
             runtime.self_improve_store = isolated_store
@@ -700,12 +705,12 @@ class GatewayContractTests(unittest.TestCase):
                         tool_name="self_improve",
                         tool_payload={"action": "list_candidates", "agent_id": "main"},
                     ),
-                    LLMReply(final_text="当前有 1 条候选规则。"),
+                    contracted_final_reply("action=list_candidates, agent_id=main, count=1"),
                     LLMReply(
                         tool_name="self_improve",
                         tool_payload={"action": "delete_candidate", "candidate_id": "cand_1"},
                     ),
-                    LLMReply(final_text="已删除候选规则 cand_1。"),
+                    contracted_final_reply("action=delete_candidate, candidate_id=cand_1"),
                 ]
             )
 
@@ -754,12 +759,12 @@ class GatewayContractTests(unittest.TestCase):
             self.assertEqual(lessons[0].lesson_id, "lesson_1")
 
     def test_feishu_channel_messages_inject_feishu_always_on_skill_but_http_does_not(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         runtime.runtime_loop.llm = ScriptedLLMClient(
             [
-                LLMReply(final_text="feishu ok"),
-                LLMReply(final_text="http ok"),
+                contracted_final_reply("feishu ok"),
+                contracted_final_reply("http ok"),
             ]
         )
 
@@ -787,7 +792,36 @@ class GatewayContractTests(unittest.TestCase):
 
         self.assertEqual(feishu_response.status_code, 200)
         self.assertEqual(http_response.status_code, 200)
-        self.assertEqual(runtime.runtime_loop.llm.requests[0].always_on_skill_text is not None, True)
-        self.assertEqual(runtime.runtime_loop.llm.requests[1].always_on_skill_text, None)
-        self.assertIn("feishu_card", runtime.runtime_loop.llm.requests[0].channel_protocol_instruction_text or "")
-        self.assertIsNone(runtime.runtime_loop.llm.requests[1].channel_protocol_instruction_text)
+        non_summary_requests = self._non_summary_requests(runtime.runtime_loop.llm)
+        self.assertEqual(non_summary_requests[0].always_on_skill_text is not None, True)
+        self.assertEqual(non_summary_requests[1].always_on_skill_text, None)
+        self.assertIn("feishu_card", non_summary_requests[0].channel_protocol_instruction_text or "")
+        self.assertIsNone(non_summary_requests[1].channel_protocol_instruction_text)
+        self.assertIn("当前运行仓库上下文", non_summary_requests[1].repository_context_text or "")
+
+    def test_http_messages_inject_repository_context_into_non_summary_requests(self) -> None:
+        app = build_test_app(emit_explicit_empty_contract=True)
+        runtime = app.state.runtime
+        llm = ScriptedLLMClient([contracted_final_reply("ok")])
+        runtime.runtime_loop.llm = llm
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": "http-repo-context-check",
+                    "message_id": "msg-http-repo-context",
+                    "body": "后台看一下这个仓库最近提交都在改什么。",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        request = self._non_summary_requests(llm)[0]
+        self.assertIn("当前运行仓库上下文", request.repository_context_text or "")
+        self.assertIn("tiezhuli001/marten-runtime", request.repository_context_text or "")
+        self.assertIn(
+            "https://github.com/tiezhuli001/marten-runtime",
+            request.repository_context_text or "",
+        )

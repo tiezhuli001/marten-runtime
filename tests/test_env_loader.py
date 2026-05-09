@@ -48,7 +48,7 @@ class EnvLoaderTests(unittest.TestCase):
             with patch.dict(os.environ, {}, clear=True):
                 load_env_file(env_path)
                 client = build_llm_client(
-                    profile_name="minimax_m25",
+                    profile_name="minimax_m2_7_highspeed",
                     profile=profile,
                     providers_config=providers,
                     env=os.environ,

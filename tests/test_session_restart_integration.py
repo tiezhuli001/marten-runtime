@@ -11,6 +11,7 @@ from marten_runtime.session.models import SessionMessage
 from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.llm_client import DemoLLMClient, LLMReply, ScriptedLLMClient
 from tests.test_acceptance import _build_repo_backed_test_app, _write_test_repo
+from tests.support.finalization_contracts import contracted_final_reply
 
 
 class SessionRestartIntegrationTests(unittest.TestCase):
@@ -88,6 +89,7 @@ class SessionRestartIntegrationTests(unittest.TestCase):
                 provider_name="test-demo",
                 model_name="test-demo",
                 profile_name="test",
+                emit_explicit_empty_contract=True,
             )
             with TestClient(app_one) as client:
                 response = client.post(
@@ -124,7 +126,7 @@ class SessionRestartIntegrationTests(unittest.TestCase):
                     LLMReply(final_text="first durable reply"),
                 ]
             )
-            app_one.state.runtime.llm_client_factory.cache_client("minimax_m25", scripted_llm)
+            app_one.state.runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", scripted_llm)
             app_one.state.runtime.runtime_loop.llm = scripted_llm
             with TestClient(app_one) as client:
                 first = client.post(
@@ -178,6 +180,7 @@ class SessionRestartIntegrationTests(unittest.TestCase):
                 provider_name="test-demo",
                 model_name="test-demo",
                 profile_name="test",
+                emit_explicit_empty_contract=True,
             )
             with TestClient(app_one) as client:
                 client.post(
@@ -244,8 +247,8 @@ class SessionRestartIntegrationTests(unittest.TestCase):
             )
 
             app_two = _build_repo_backed_test_app(repo_root)
-            restored_llm = ScriptedLLMClient([LLMReply(final_text="after restart")])
-            app_two.state.runtime.llm_client_factory.cache_client("minimax_m25", restored_llm)
+            restored_llm = ScriptedLLMClient([contracted_final_reply("after restart")])
+            app_two.state.runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", restored_llm)
             app_two.state.runtime.runtime_loop.llm = restored_llm
             with TestClient(app_two) as client:
                 response = client.post(
@@ -260,10 +263,13 @@ class SessionRestartIntegrationTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("当前进展", restored_llm.requests[0].compact_summary_text or "")
-        self.assertIn("time 工具", restored_llm.requests[0].tool_outcome_summary_text or "")
+        interactive_request = next(
+            item for item in restored_llm.requests if item.request_kind == "interactive"
+        )
+        self.assertIn("当前进展", interactive_request.compact_summary_text or "")
+        self.assertIn("time 工具", interactive_request.tool_outcome_summary_text or "")
         self.assertEqual(
-            [item.content for item in restored_llm.requests[0].conversation_messages],
+            [item.content for item in interactive_request.conversation_messages],
             [entry for turn in range(3, 11) for entry in (f"u{turn}", f"a{turn}")],
         )
 
@@ -302,8 +308,8 @@ class SessionRestartIntegrationTests(unittest.TestCase):
 
             app_two = _build_repo_backed_test_app(repo_root)
             app_two.state.runtime.platform_config.runtime.session_replay_user_turns = 3
-            restored_llm = ScriptedLLMClient([LLMReply(final_text="after restart")])
-            app_two.state.runtime.llm_client_factory.cache_client("minimax_m25", restored_llm)
+            restored_llm = ScriptedLLMClient([contracted_final_reply("after restart")])
+            app_two.state.runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", restored_llm)
             app_two.state.runtime.runtime_loop.llm = restored_llm
             with TestClient(app_two) as client:
                 response = client.post(
@@ -318,13 +324,16 @@ class SessionRestartIntegrationTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 200)
+        interactive_request = next(
+            item for item in restored_llm.requests if item.request_kind == "interactive"
+        )
         self.assertEqual(
-            [item.content for item in restored_llm.requests[0].conversation_messages],
+            [item.content for item in interactive_request.conversation_messages],
             ["u2", "a2", "u3", "a3", "u4", "a4"],
         )
-        self.assertIn("u1", restored_llm.requests[0].compact_summary_text or "")
-        self.assertIn("a1", restored_llm.requests[0].compact_summary_text or "")
-        self.assertNotIn("u2", restored_llm.requests[0].compact_summary_text or "")
+        self.assertIn("u1", interactive_request.compact_summary_text or "")
+        self.assertIn("a1", interactive_request.compact_summary_text or "")
+        self.assertNotIn("u2", interactive_request.compact_summary_text or "")
 
 
 if __name__ == "__main__":

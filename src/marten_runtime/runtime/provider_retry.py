@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import random
 from typing import TypeVar
 
+import httpx
+
 from marten_runtime.runtime.cooperative_stop import interruptible_sleep, raise_if_interrupted
 
 T = TypeVar("T")
@@ -86,6 +88,28 @@ def with_retry(
 def normalize_provider_error(exc: Exception) -> ProviderTransportError:
     if isinstance(exc, ProviderTransportError):
         return exc
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = int(exc.response.status_code) if exc.response is not None else 0
+        detail = str(exc) or f"http status {status_code}"
+        if status_code in {401, 403}:
+            return ProviderTransportError("PROVIDER_AUTH_ERROR", detail)
+        if status_code == 429:
+            return ProviderTransportError("PROVIDER_RATE_LIMITED", detail, retryable=True)
+        if status_code in {502, 503, 504, 529}:
+            return ProviderTransportError(
+                "PROVIDER_UPSTREAM_UNAVAILABLE",
+                detail,
+                retryable=True,
+            )
+        return ProviderTransportError("PROVIDER_HTTP_ERROR", detail)
+    if isinstance(exc, httpx.TimeoutException):
+        return ProviderTransportError("PROVIDER_TIMEOUT", str(exc) or "provider timeout", retryable=True)
+    if isinstance(exc, httpx.HTTPError):
+        return ProviderTransportError(
+            "PROVIDER_TRANSPORT_ERROR",
+            str(exc) or "provider transport error",
+            retryable=True,
+        )
     if isinstance(exc, TimeoutError):
         return ProviderTransportError("PROVIDER_TIMEOUT", str(exc) or "provider timeout", retryable=True)
     if isinstance(exc, OSError):

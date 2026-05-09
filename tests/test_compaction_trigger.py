@@ -1,7 +1,7 @@
 import unittest
 
 from marten_runtime.config.models_loader import ModelProfile
-from marten_runtime.runtime.llm_client import LLMRequest, estimate_request_tokens
+from marten_runtime.runtime.llm_client import LLMRequest
 from marten_runtime.session.compaction_trigger import (
     CompactionDecision,
     build_compaction_settings,
@@ -22,11 +22,18 @@ class CompactionTriggerTests(unittest.TestCase):
             tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1"),
         )
         settings = build_compaction_settings(
-            ModelProfile(provider="openai", model="gpt-4.1", context_window_tokens=1000, reserve_output_tokens=100)
+            ModelProfile(
+                provider_ref="openai",
+                model="gpt-4.1",
+                context_window_tokens=1000,
+                reserve_output_tokens=100,
+            )
         )
 
+        self.assertLess(100, settings.advisory_threshold)
+
         decision = decide_compaction(
-            estimated_tokens=estimate_request_tokens(request),
+            estimated_tokens=100,
             settings=settings,
             has_follow_up_work=False,
         )
@@ -36,7 +43,7 @@ class CompactionTriggerTests(unittest.TestCase):
     def test_decision_returns_proactive_compact_when_ratio_and_followup_match(self) -> None:
         settings = build_compaction_settings(
             ModelProfile(
-                provider="openai",
+                provider_ref="openai",
                 model="gpt-4.1",
                 context_window_tokens=1000,
                 reserve_output_tokens=100,
@@ -56,7 +63,7 @@ class CompactionTriggerTests(unittest.TestCase):
     def test_decision_returns_advisory_without_followup_even_above_threshold(self) -> None:
         settings = build_compaction_settings(
             ModelProfile(
-                provider="openai",
+                provider_ref="openai",
                 model="gpt-4.1",
                 context_window_tokens=1000,
                 reserve_output_tokens=100,
@@ -73,7 +80,9 @@ class CompactionTriggerTests(unittest.TestCase):
         self.assertEqual(decision, CompactionDecision.ADVISORY)
 
     def test_decision_uses_unknown_model_fallback_window(self) -> None:
-        settings = build_compaction_settings(ModelProfile(provider="openai", model="gpt-4.1"))
+        settings = build_compaction_settings(
+            ModelProfile(provider_ref="openai", model="gpt-4.1")
+        )
 
         self.assertEqual(settings.context_window_tokens, 200000)
         self.assertEqual(settings.reserve_output_tokens, 16000)
@@ -83,7 +92,7 @@ class CompactionTriggerTests(unittest.TestCase):
     def test_build_compaction_settings_preserves_explicit_zero_reserve_output_tokens(self) -> None:
         settings = build_compaction_settings(
             ModelProfile(
-                provider="openai",
+                provider_ref="openai",
                 model="gpt-4.1",
                 context_window_tokens=80,
                 reserve_output_tokens=0,

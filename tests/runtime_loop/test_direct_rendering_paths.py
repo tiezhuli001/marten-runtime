@@ -8,6 +8,7 @@ from unittest.mock import patch
 from marten_runtime.agents.specs import AgentSpec
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
+from marten_runtime.runtime.llm_message_support import build_openai_messages
 from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.runtime.usage_models import NormalizedUsage
 from marten_runtime.self_improve.models import LessonCandidate, SystemLesson
@@ -26,6 +27,7 @@ from marten_runtime.skills.service import SkillService
 from marten_runtime.skills.snapshot import SkillSnapshot
 from marten_runtime.session.models import SessionMessage
 from tests.support.domain_builders import build_self_improve_adapter
+from tests.support.finalization_contracts import contracted_final_reply
 from tests.support.session_store_fixtures import temporary_sqlite_session_store
 from tests.support.scripted_llm import ConcurrentInterleavingLLMClient, ObservedLLMClient
 
@@ -93,7 +95,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         tools = ToolRegistry()
         tools.register("time", run_time_tool)
         history = InMemoryRunHistory()
-        llm = ScriptedLLMClient([LLMReply(final_text="done")])
+        llm = ScriptedLLMClient([contracted_final_reply("done")])
         runtime = RuntimeLoop(llm, tools, history)
         agent = AgentSpec(
             agent_id="coding",
@@ -118,7 +120,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
     def test_plain_message_returns_progress_then_final(self) -> None:
         tools = ToolRegistry()
         history = InMemoryRunHistory()
-        llm = ScriptedLLMClient([LLMReply(final_text="hello")])
+        llm = ScriptedLLMClient([contracted_final_reply("hello")])
         runtime = RuntimeLoop(llm, tools, history)
 
         with patch(
@@ -152,7 +154,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
     def test_runtime_passes_system_prompt_to_llm_request(self) -> None:
         tools = ToolRegistry()
         history = InMemoryRunHistory()
-        llm = ScriptedLLMClient([LLMReply(final_text="hello")])
+        llm = ScriptedLLMClient([contracted_final_reply("hello")])
         runtime = RuntimeLoop(llm, tools, history)
 
         runtime.run(
@@ -167,7 +169,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
     def test_runtime_replays_session_history_into_llm_request_context(self) -> None:
         tools = ToolRegistry()
         history = InMemoryRunHistory()
-        llm = ScriptedLLMClient([LLMReply(final_text="hello again")])
+        llm = ScriptedLLMClient([contracted_final_reply("hello again")])
         runtime = RuntimeLoop(llm, tools, history)
 
         runtime.run(
@@ -247,8 +249,10 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
                         tool_name="session",
                         tool_payload={"action": "resume", "session_id": target.session_id},
                     ),
-                    LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
-                    LLMReply(final_text="已切换并查看完成"),
+                    LLMReply(
+                        tool_name="runtime",
+                        tool_payload={"action": "context_status", "finalize_response": True},
+                    ),
                 ]
             )
             runtime = RuntimeLoop(llm, tools, history)
@@ -305,7 +309,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
     ) -> None:
         tools = ToolRegistry()
         history = InMemoryRunHistory()
-        llm = ScriptedLLMClient([LLMReply(final_text="hello again")])
+        llm = ScriptedLLMClient([contracted_final_reply("hello again")])
         runtime = RuntimeLoop(llm, tools, history)
 
         runtime.run(
@@ -337,12 +341,21 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
 
     def test_runtime_uses_structured_tool_call_and_agent_tool_contract(self) -> None:
         tools = ToolRegistry()
-        tools.register("time", run_time_tool)
+        tools.register(
+            "time",
+            lambda payload: {
+                "timezone": str(payload.get("timezone") or "UTC"),
+                "iso_time": "2026-04-20T04:30:00+00:00",
+            },
+        )
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
-                LLMReply(tool_name="time", tool_payload={"timezone": "UTC"}),
-                LLMReply(final_text="time=ok"),
+                LLMReply(
+                    tool_name="time",
+                    tool_payload={"timezone": "UTC", "finalize_response": True},
+                ),
+                contracted_final_reply("现在是UTC 2026年4月20日 04:30"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -369,7 +382,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
         self.assertEqual(events[0].run_id, events[1].run_id)
-        self.assertEqual(events[1].payload["text"], "time=ok")
+        self.assertEqual(events[1].payload["text"], "现在是UTC 2026年4月20日 04:30")
         self.assertEqual(llm.requests[0].available_tools, ["time"])
         self.assertIn("time", llm.requests[0].tool_snapshot.builtin_tools)
         run = history.get(events[0].run_id)
@@ -385,12 +398,18 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         self,
     ) -> None:
         tools = ToolRegistry()
-        tools.register("time", run_time_tool)
+        tools.register(
+            "time",
+            lambda payload: {
+                "timezone": str(payload.get("timezone") or "UTC"),
+                "iso_time": "2026-04-20T04:30:00+00:00",
+            },
+        )
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="time", tool_payload={}),
-                LLMReply(final_text="现在是测试时间"),
+                contracted_final_reply("现在是UTC 2026年4月20日 04:30"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -410,7 +429,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
         self.assertEqual(len(llm.requests), 2)
-        self.assertEqual(events[-1].payload["text"], "现在是测试时间")
+        self.assertEqual(events[-1].payload["text"], "现在是UTC 2026年4月20日 04:30")
         run = history.get(events[-1].run_id)
         self.assertEqual(run.llm_request_count, 2)
         self.assertEqual(run.tool_calls[0]["tool_name"], "time")
@@ -420,17 +439,21 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         self,
     ) -> None:
         tools = ToolRegistry()
-        tools.register("time", run_time_tool)
+        tools.register(
+            "time",
+            lambda payload: {
+                "timezone": str(payload.get("timezone") or "UTC"),
+                "iso_time": "2026-04-20T04:30:00+00:00",
+            },
+        )
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="time", tool_payload={"timezone": "UTC"}),
-                LLMReply(
-                    final_text=(
-                        "现在是 UTC 时间\n\n```tool_episode_summary\n"
-                        '{"summary":"上一轮调用了 time 工具获取当前时间。","facts":[],"volatile":true,"keep_next_turn":false,"refresh_hint":"若再次询问当前时间，应重新调用工具。"}'
-                        "\n```"
-                    )
+                contracted_final_reply(
+                    "现在是UTC 2026年4月20日 04:30\n\n```tool_episode_summary\n"
+                    '{"summary":"上一轮调用了 time 工具获取当前时间。","facts":[],"volatile":true,"keep_next_turn":false,"refresh_hint":"若再次询问当前时间，应重新调用工具。"}'
+                    "\n```"
                 ),
             ]
         )
@@ -450,7 +473,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         )
 
         run = history.get(events[-1].run_id)
-        self.assertEqual(events[-1].payload["text"], "现在是 UTC 时间")
+        self.assertEqual(events[-1].payload["text"], "现在是UTC 2026年4月20日 04:30")
         self.assertEqual(len(llm.requests), 2)
         self.assertEqual(run.llm_request_count, 2)
         self.assertEqual(len(run.tool_outcome_summaries), 1)
@@ -510,6 +533,113 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         self.assertEqual(run.finalization.required_evidence_count, 1)
         self.assertEqual(run.tool_calls[0]["tool_name"], "spawn_subagent")
 
+    def test_runtime_direct_renders_spawn_subagent_acceptance_when_model_finalizes_compaction_continuation(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        tools.register(
+            "spawn_subagent",
+            lambda payload: {
+                "ok": True,
+                "status": "accepted",
+                "task_id": "task_spawn_continuation",
+                "child_session_id": "sess_child_continuation",
+                "effective_tool_profile": "standard",
+                "queue_state": "running",
+            },
+        )
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="spawn_subagent",
+                    tool_payload={
+                        "task": "继续推进日报同步告警排查",
+                        "label": "alert-followup",
+                        "tool_profile": "standard",
+                        "notify_on_finish": True,
+                        "finalize_response": True,
+                    },
+                ),
+                contracted_final_reply("压缩后继续日报同步告警排查，先补失败摘要。"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["spawn_subagent"],
+        )
+
+        events = runtime.run(
+            session_id="sess_spawn_continuation",
+            message="在压缩后的上下文里继续执行。",
+            trace_id="trace_spawn_continuation",
+            agent=agent,
+        )
+
+        run = history.get(events[-1].run_id)
+        self.assertEqual(events[-1].payload["text"], "已受理，子 agent 正在后台执行，完成后会通知你结果。")
+        self.assertEqual(len(llm.requests), 1)
+        self.assertEqual(run.llm_request_count, 1)
+        self.assertEqual(run.tool_calls[0]["tool_name"], "spawn_subagent")
+
+    def test_runtime_direct_renders_spawn_subagent_acceptance_when_model_finalizes_status_followup(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        tools.register(
+            "spawn_subagent",
+            lambda payload: {
+                "ok": True,
+                "status": "accepted",
+                "task_id": "task_spawn_status_followup",
+                "child_session_id": "sess_child_status_followup",
+                "effective_tool_profile": "standard",
+                "queue_state": "running",
+            },
+        )
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="spawn_subagent",
+                    tool_payload={
+                        "task": "重新梳理仓库结构",
+                        "label": "repo-structure",
+                        "tool_profile": "standard",
+                        "notify_on_finish": True,
+                        "finalize_response": True,
+                    },
+                ),
+                contracted_final_reply("子任务已梳理仓库结构，结论是当前可用 MCP 服务共 0 个。"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["spawn_subagent"],
+        )
+
+        events = runtime.run(
+            session_id="sess_spawn_status_followup",
+            message="子任务完成了吗？直接给我一句中文摘要，明确它梳理的对象和结论。",
+            trace_id="trace_spawn_status_followup",
+            agent=agent,
+        )
+
+        run = history.get(events[-1].run_id)
+        self.assertEqual(
+            events[-1].payload["text"],
+            "已受理，子 agent 正在后台执行，完成后会通知你结果。",
+        )
+        self.assertEqual(len(llm.requests), 1)
+        self.assertEqual(run.llm_request_count, 1)
+        self.assertEqual(run.tool_calls[0]["tool_name"], "spawn_subagent")
+
     def test_runtime_can_load_skill_body_via_skill_tool(self) -> None:
         with TemporaryDirectory() as tmpdir:
             skills_root = Path(tmpdir) / "skills"
@@ -543,7 +673,9 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
                         tool_name="skill",
                         tool_payload={"action": "load", "skill_id": "repo_helper"},
                     ),
-                    LLMReply(final_text="ok"),
+                    contracted_final_reply(
+                        "action=load, body=Read repository files before proposing edits., description=inspect repositories"
+                    ),
                 ]
             )
             runtime = RuntimeLoop(llm, tools, history)
@@ -572,6 +704,14 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
             self.assertIn(
                 "Read repository files before proposing edits.",
                 llm.requests[1].tool_history[0].tool_result["body"],
+            )
+            followup_messages = build_openai_messages(llm.requests[1])
+            self.assertTrue(
+                any(
+                    "省略字段名和原始正文包装" in str(message.get("content") or "")
+                    for message in followup_messages
+                    if message.get("role") == "system"
+                )
             )
 
     def test_runtime_can_use_self_improve_candidate_tools_without_affecting_active_lessons(
@@ -622,7 +762,9 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
                             "candidate_id": "cand_1",
                         },
                     ),
-                    LLMReply(final_text="已删除这个候选规则。"),
+                    contracted_final_reply(
+                        "action=list_candidates, agent_id=main, count=1; action=delete_candidate, candidate_id=cand_1"
+                    ),
                 ]
             )
             runtime = RuntimeLoop(llm, tools, history)
@@ -643,7 +785,10 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
             active_lessons = store.list_active_lessons(agent_id="main")
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
-        self.assertEqual(events[-1].payload["text"], "已删除这个候选规则。")
+        self.assertEqual(
+            events[-1].payload["text"],
+            "action=list_candidates, agent_id=main, count=1; action=delete_candidate, candidate_id=cand_1",
+        )
         self.assertEqual(remaining_candidates, [])
         self.assertEqual(len(active_lessons), 1)
         self.assertEqual(active_lessons[0].lesson_id, "lesson_1")

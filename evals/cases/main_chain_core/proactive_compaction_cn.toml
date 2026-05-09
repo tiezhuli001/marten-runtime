@@ -1,0 +1,33 @@
+case_id = "proactive_compaction_cn"
+suite_id = "main_chain_core"
+family = "context_compaction"
+enabled = true
+required = true
+description = "上下文压力达到阈值时主动压缩"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "compaction", "proactive"]
+
+[[turns]]
+role = "user"
+content = "在压缩后的上下文里继续执行。"
+
+[setup]
+session_history_fixture = "context_pressure_long_thread.md"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_any = ["压缩后", "日报同步", "告警排查"]
+
+[expectations.context]
+expect_compaction = true
+
+[expectations.diagnostics]
+expect_provider_ref = "openai"
+
+[weights]
+outcome = 60
+tool_path = 0
+efficiency = 0
+context = 40

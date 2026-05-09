@@ -1,0 +1,37 @@
+case_id = "subagent_duplicate_dispatch_penalty_cn"
+suite_id = "subagent_task_progress"
+family = "subagent_task_progress"
+enabled = true
+required = true
+description = "跟进已受理子任务时保持单次派发"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "subagent", "duplicate"]
+gate_components = ["parent_integration", "duplicate_dispatch_penalty"]
+
+[[turns]]
+role = "user"
+content = "把 README 结构放到后台看一下。"
+
+[[turns]]
+role = "user"
+content = "继续跟进刚才那个后台任务，直接告诉我已有结果。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+delegation_quality = 20
+child_completion = 20
+parent_integration = 20
+duplicate_dispatch_penalty = 40
+
+
+[grader_case]
+expected_spawn_count = 1
+await_child_completion = true
+integration_contains_all = ["README", "快速开始"]
+max_spawn_count = 1
+timeout_ms = 120000

@@ -1,6 +1,8 @@
 import threading
 import unittest
 
+import httpx
+
 from marten_runtime.runtime.provider_retry import ProviderTransportError, RetryPolicy, with_retry
 
 
@@ -59,6 +61,27 @@ class ProviderRetryTests(unittest.TestCase):
 
             self.assertEqual(result, "ok")
             self.assertEqual(attempts["count"], 3)
+
+    def test_retry_retries_httpx_status_error_from_stream_transport(self) -> None:
+        attempts = {"count": 0}
+
+        def flaky_status() -> str:
+            attempts["count"] += 1
+            if attempts["count"] < 3:
+                raise httpx.HTTPStatusError(
+                    "Server error '502 Bad Gateway' for url 'https://example.com/responses'",
+                    request=httpx.Request("POST", "https://example.com/responses"),
+                    response=httpx.Response(502, text="bad gateway"),
+                )
+            return "ok"
+
+        result = with_retry(
+            flaky_status,
+            policy=RetryPolicy(max_attempts=3, base_backoff_seconds=0),
+        )
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(attempts["count"], 3)
 
     def test_retry_does_not_retry_forbidden_failures(self) -> None:
         attempts = {"count": 0}

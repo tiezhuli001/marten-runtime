@@ -14,7 +14,7 @@ from marten_runtime.interfaces.http.runtime_diagnostics import (
 
 class HTTPRuntimeDiagnosticsTests(unittest.TestCase):
     def test_resolve_runtime_server_surface_prefers_request_base_url(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         request = Mock()
         request.base_url = "https://example.com/runtime/"
@@ -27,7 +27,7 @@ class HTTPRuntimeDiagnosticsTests(unittest.TestCase):
         self.assertEqual(surface["configured_host"], runtime.platform_config.server.host)
 
     def test_serialize_runtime_diagnostics_preserves_server_and_channel_fields(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         request = Mock()
         request.base_url = "http://127.0.0.1:9000/"
@@ -52,7 +52,7 @@ class HTTPRuntimeDiagnosticsTests(unittest.TestCase):
         self.assertNotIn("test-key", str(body["providers"]))
 
     def test_serialize_runtime_diagnostics_exposes_effective_provider_base_url(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         runtime.env["OPENAI_API_BASE"] = "https://openai-proxy.example/v1"
         request = Mock()
@@ -68,7 +68,7 @@ class HTTPRuntimeDiagnosticsTests(unittest.TestCase):
         self.assertEqual(openai_provider["effective_base_url"], "https://openai-proxy.example/v1")
 
     def test_serialize_runtime_diagnostics_exposes_restore_contract_defaults(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         request = Mock()
         request.base_url = "http://127.0.0.1:9000/"
@@ -82,7 +82,7 @@ class HTTPRuntimeDiagnosticsTests(unittest.TestCase):
         self.assertEqual(body["sessions"]["recent_tool_outcome_summary_limit"], 3)
 
     def test_serialize_runtime_diagnostics_includes_latest_session_transition(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         request = Mock()
         request.base_url = "http://127.0.0.1:9000/"
@@ -137,7 +137,7 @@ class HTTPRuntimeDiagnosticsTests(unittest.TestCase):
         self.assertNotIn("test-key", str(body["latest_session_transition"]))
 
     def test_serialize_runtime_diagnostics_includes_compaction_worker_status(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         request = Mock()
         request.base_url = "http://127.0.0.1:9000/"
@@ -180,7 +180,7 @@ class HTTPRuntimeDiagnosticsTests(unittest.TestCase):
         self.assertNotIn("test-key", str(body["compaction_worker"]))
 
     def test_run_diagnostics_endpoint_exposes_bounded_finalization_fields(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         record = runtime.run_history.start(
             session_id="sess_diag_finalization",

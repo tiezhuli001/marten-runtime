@@ -9,7 +9,8 @@ from marten_runtime.interfaces.http.bootstrap_runtime import (
     CachedLLMClientFactory,
     build_http_runtime,
 )
-from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
+from marten_runtime.runtime.llm_client import LLMReply, LLMRequest, ScriptedLLMClient
+from marten_runtime.runtime.provider_retry import ProviderTransportError
 from marten_runtime.session.compaction_worker import SessionCompactionWorker
 from marten_runtime.session.models import SessionMessage
 from tests.support.session_store_fixtures import temporary_sqlite_session_store
@@ -18,6 +19,39 @@ from tests.support.session_store_fixtures import temporary_sqlite_session_store
 class _FailingLLM:
     def complete(self, request):  # noqa: ANN001
         raise RuntimeError("compact failed")
+
+
+class _RetryableProviderFailingLLM:
+    provider_name = "openai"
+    model_name = "gpt-4.1"
+    profile_name = "openai_gpt_5_4"
+
+    def complete(self, request):  # noqa: ANN001
+        raise ProviderTransportError(
+            "PROVIDER_UPSTREAM_UNAVAILABLE",
+            "provider_http_error:502:bad gateway",
+            retryable=True,
+        )
+
+
+class _SuccessfulLLM:
+    def __init__(
+        self,
+        *,
+        provider_name: str,
+        model_name: str,
+        profile_name: str,
+        final_text: str,
+    ) -> None:
+        self.provider_name = provider_name
+        self.model_name = model_name
+        self.profile_name = profile_name
+        self.final_text = final_text
+        self.requests = []
+
+    def complete(self, request):  # noqa: ANN001
+        self.requests.append(request)
+        return LLMReply(final_text=self.final_text)
 
 
 class _FakeFactory:
@@ -84,7 +118,7 @@ class SessionCompactionWorkerTests(unittest.TestCase):
             preserved_tail_user_turns=1,
             source_message_range=[0, 2],
             snapshot_message_count=len(store.get(session.session_id).history),
-            compaction_profile_name="minimax_m25",
+            compaction_profile_name="minimax_m2_7_highspeed",
         )
         shared_client = ScriptedLLMClient([LLMReply(final_text="shared should stay idle")])
         isolated_client = ScriptedLLMClient([LLMReply(final_text="当前进展：已压缩。")])
@@ -92,7 +126,7 @@ class SessionCompactionWorkerTests(unittest.TestCase):
         worker = SessionCompactionWorker(
             session_store=store,
             llm_client_factory=factory,
-            profile_name="openai_gpt5",
+            profile_name="openai_gpt_5_4",
         )
 
         processed = worker.run_once()
@@ -106,7 +140,7 @@ class SessionCompactionWorkerTests(unittest.TestCase):
         self.assertTrue(job["write_applied"])
         self.assertEqual(len(isolated_client.requests), 1)
         self.assertEqual(len(shared_client.requests), 0)
-        self.assertEqual(factory.isolated_requests, ["minimax_m25"])
+        self.assertEqual(factory.isolated_requests, ["minimax_m2_7_highspeed"])
 
     def test_worker_run_once_uses_enqueued_snapshot_instead_of_later_messages(self) -> None:
         store = self._store()
@@ -134,7 +168,7 @@ class SessionCompactionWorkerTests(unittest.TestCase):
         worker = SessionCompactionWorker(
             session_store=store,
             llm_client_factory=_FakeFactory(isolated_client),
-            profile_name="openai_gpt5",
+            profile_name="openai_gpt_5_4",
         )
 
         processed = worker.run_once()
@@ -172,7 +206,7 @@ class SessionCompactionWorkerTests(unittest.TestCase):
         worker = SessionCompactionWorker(
             session_store=store,
             llm_client_factory=_FakeFactory(_FailingLLM()),
-            profile_name="openai_gpt5",
+            profile_name="openai_gpt_5_4",
         )
 
         processed = worker.run_once()
@@ -186,9 +220,9 @@ class SessionCompactionWorkerTests(unittest.TestCase):
     def test_cached_llm_client_factory_create_isolated_builds_new_client(self) -> None:
         factory = CachedLLMClientFactory(
             models_config=SimpleNamespace(
-                default_profile="openai_gpt5",
+                default_profile="openai_gpt_5_4",
                 profiles={
-                    "openai_gpt5": SimpleNamespace(
+                    "openai_gpt_5_4": SimpleNamespace(
                         provider_ref="openai",
                         model="gpt-4.1",
                         tokenizer_family="openai_o200k",
@@ -197,20 +231,155 @@ class SessionCompactionWorkerTests(unittest.TestCase):
             ),
             providers_config=SimpleNamespace(providers={}),
             env={"OPENAI_API_KEY": "test-key"},
-            primary_profile_name="openai_gpt5",
+            primary_profile_name="openai_gpt_5_4",
         )
         shared = object()
-        isolated = object()
-        factory.cache_client("openai_gpt5", shared)
+        isolated = _SuccessfulLLM(
+            provider_name="openai",
+            model_name="gpt-4.1",
+            profile_name="openai_gpt_5_4",
+            final_text="isolated-ok",
+        )
+        factory.cache_client("openai_gpt_5_4", shared)
         with patch(
             "marten_runtime.interfaces.http.bootstrap_runtime.build_llm_client",
             return_value=isolated,
         ) as mocked_build:
-            created = factory.create_isolated("openai_gpt5")
+            created = factory.create_isolated("openai_gpt_5_4")
+            reply = created.complete(
+                LLMRequest(
+                    session_id="sess_isolated",
+                    trace_id="trace_isolated",
+                    message="hi",
+                    agent_id="compaction",
+                    app_id="compaction",
+                )
+            )
 
-        self.assertIs(created, isolated)
+        self.assertEqual(reply.final_text, "isolated-ok")
+        self.assertIsNot(created, isolated)
         self.assertIsNot(created, shared)
         self.assertEqual(mocked_build.call_count, 1)
+
+    def test_cached_llm_client_factory_create_isolated_honors_fallback_profiles(self) -> None:
+        factory = CachedLLMClientFactory(
+            models_config=SimpleNamespace(
+                default_profile="openai_gpt_5_4",
+                profiles={
+                    "openai_gpt_5_4": SimpleNamespace(
+                        provider_ref="openai",
+                        model="gpt-4.1",
+                        tokenizer_family="openai_o200k",
+                        fallback_profiles=["minimax_m2_7_highspeed"],
+                    ),
+                    "minimax_m2_7_highspeed": SimpleNamespace(
+                        provider_ref="minimax",
+                        model="MiniMax-M2.5",
+                        tokenizer_family="openai_o200k",
+                        fallback_profiles=[],
+                    ),
+                },
+            ),
+            providers_config=SimpleNamespace(providers={}),
+            env={"OPENAI_API_KEY": "test-key", "MINIMAX_API_KEY": "test-key"},
+            primary_profile_name="openai_gpt_5_4",
+        )
+        failing = _RetryableProviderFailingLLM()
+        fallback = _SuccessfulLLM(
+            provider_name="minimax",
+            model_name="MiniMax-M2.5",
+            profile_name="minimax_m2_7_highspeed",
+            final_text="当前进展：已压缩。",
+        )
+        shared = object()
+        factory.cache_client("openai_gpt_5_4", shared)
+
+        def fake_build_llm_client(*, profile_name, profile, providers_config, env):  # noqa: ANN001
+            del profile, providers_config, env
+            if profile_name == "openai_gpt_5_4":
+                return failing
+            if profile_name == "minimax_m2_7_highspeed":
+                return fallback
+            raise AssertionError(profile_name)
+
+        with patch(
+            "marten_runtime.interfaces.http.bootstrap_runtime.build_llm_client",
+            side_effect=fake_build_llm_client,
+        ):
+            created = factory.create_isolated("openai_gpt_5_4")
+            reply = created.complete(
+                LLMRequest(
+                    session_id="sess_compaction",
+                    trace_id="trace_compaction",
+                    message="请生成交接摘要。",
+                    agent_id="compaction",
+                    app_id="compaction",
+                )
+            )
+
+        self.assertEqual(reply.final_text, "当前进展：已压缩。")
+        self.assertEqual(len(fallback.requests), 1)
+
+    def test_create_compaction_client_reuses_shared_client_without_fallback(self) -> None:
+        factory = CachedLLMClientFactory(
+            models_config=SimpleNamespace(
+                default_profile="minimax_m2_7_highspeed",
+                profiles={
+                    "minimax_m2_7_highspeed": SimpleNamespace(
+                        provider_ref="minimax",
+                        model="MiniMax-M2.5",
+                        tokenizer_family="openai_o200k",
+                        fallback_profiles=[],
+                    )
+                },
+            ),
+            providers_config=SimpleNamespace(providers={}),
+            env={"MINIMAX_API_KEY": "test-key"},
+            primary_profile_name="minimax_m2_7_highspeed",
+        )
+        shared = object()
+
+        created = factory.create_compaction_client(
+            "minimax_m2_7_highspeed",
+            shared_client=shared,
+        )
+
+        self.assertIs(created, shared)
+
+    def test_create_compaction_client_uses_isolated_when_profile_has_fallback(self) -> None:
+        factory = CachedLLMClientFactory(
+            models_config=SimpleNamespace(
+                default_profile="openai_gpt_5_4",
+                profiles={
+                    "openai_gpt_5_4": SimpleNamespace(
+                        provider_ref="openai",
+                        model="gpt-4.1",
+                        tokenizer_family="openai_o200k",
+                        fallback_profiles=["minimax_m2_7_highspeed"],
+                    ),
+                    "minimax_m2_7_highspeed": SimpleNamespace(
+                        provider_ref="minimax",
+                        model="MiniMax-M2.5",
+                        tokenizer_family="openai_o200k",
+                        fallback_profiles=[],
+                    ),
+                },
+            ),
+            providers_config=SimpleNamespace(providers={}),
+            env={"OPENAI_API_KEY": "test-key", "MINIMAX_API_KEY": "test-key"},
+            primary_profile_name="openai_gpt_5_4",
+        )
+        shared = object()
+        isolated = object()
+
+        with patch.object(factory, "create_isolated", return_value=isolated) as mocked:
+            created = factory.create_compaction_client(
+                "openai_gpt_5_4",
+                shared_client=shared,
+            )
+
+        self.assertIs(created, isolated)
+        mocked.assert_called_once_with("openai_gpt_5_4")
 
     def test_build_http_runtime_attaches_and_starts_compaction_worker(self) -> None:
         with patch(

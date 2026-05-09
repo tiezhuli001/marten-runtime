@@ -1,0 +1,38 @@
+case_id = "subagent_multi_child_progress_cn"
+suite_id = "subagent_task_progress"
+family = "subagent_task_progress"
+enabled = true
+required = true
+description = "同一父任务下多个子任务协同推进"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "subagent", "multi_child"]
+gate_components = ["child_completion", "parent_integration", "duplicate_dispatch_penalty"]
+
+[[turns]]
+role = "user"
+content = "把这个任务拆成两个子任务：一个看最近提交，一个看 README 结构，完成后我再来问你。"
+
+[[turns]]
+role = "user"
+content = "把两个子任务的结果合并告诉我，明确最近提交部分和 README 结构部分各自的结论。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+delegation_quality = 20
+child_progress = 20
+child_completion = 20
+parent_integration = 20
+duplicate_dispatch_penalty = 20
+
+
+[grader_case]
+expected_spawn_count = 2
+await_child_completion = true
+integration_contains_all = ["最近提交", "README"]
+integration_anchor_groups = [["最近提交", "近期提交"], ["README", "README结构", "README 结构"], ["快速开始", "离线评测", "仓库结构"]]
+timeout_ms = 120000

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from datetime import datetime, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -15,11 +14,14 @@ from marten_runtime.channels.feishu.rendering import (
 from marten_runtime.channels.output_normalization import normalize_terminal_output
 from marten_runtime.config.models_loader import resolve_model_profile
 from marten_runtime.gateway.models import InboundEnvelope
-from marten_runtime.runtime.llm_client import ToolExchange
-from marten_runtime.runtime.recovery_flow import is_confirmed_session_switch_reply
+from marten_runtime.runtime.direct_rendering import render_direct_tool_text
 from marten_runtime.session.compaction_trigger import build_compaction_settings
 from marten_runtime.session.models import SessionMessage
-from marten_runtime.session.title_summary import build_session_title_summary
+from marten_runtime.session.title_summary import (
+    build_session_title_summary,
+    default_session_catalog_metadata,
+    session_catalog_metadata_needs_refresh,
+)
 from marten_runtime.skills.models import SkillSpec
 from marten_runtime.skills.selector import select_activated_skills
 from marten_runtime.tools.builtins.automation_tool import (
@@ -158,6 +160,9 @@ def _process_inbound_envelope(
         events=events,
         job_ids=[],
         channel_id=envelope.channel_id,
+        app_id=routed_agent.app_id,
+        agent_id=routed_agent.agent_id,
+        model_profile_name=getattr(routed_agent, "model_profile", None),
         suppress_assistant_history=same_session_resume_noop,
     )
 
@@ -228,6 +233,9 @@ def _process_automation_dispatch(
         events=events,
         job_ids=[dispatch.automation_id],
         channel_id=dispatch.delivery_channel,
+        app_id=routed_agent.app_id,
+        agent_id=routed_agent.agent_id,
+        model_profile_name=getattr(routed_agent, "model_profile", None),
     )
     response.update(
         {
@@ -331,7 +339,10 @@ def _run_turn(
             session_id, limit=3
         ),
         compacted_context=state.session_store.get(session_id).latest_compacted_context,
-        compact_llm_client=resolved_llm,
+        compact_llm_client=state.llm_client_factory.create_compaction_client(
+            resolved_profile_name,
+            shared_client=resolved_llm,
+        ),
         on_compacted=lambda item: state.session_store.set_compacted_context(
             session_id, item
         ),
@@ -347,6 +358,7 @@ def _run_turn(
             else None
         ),
         memory_text=state.memory_service.render_prompt_memory(user_id or ""),
+        repository_context_text=state.repository_context_note,
         compact_settings=build_compaction_settings(profile),
         session_replay_user_turns=state.platform_config.runtime.session_replay_user_turns,
         request_kind=request_kind,
@@ -368,6 +380,9 @@ def _finalize_session_turn(
     events: list,
     job_ids: list[str],
     channel_id: str,
+    app_id: str,
+    agent_id: str,
+    model_profile_name: str | None,
     suppress_assistant_history: bool = False,
 ) -> dict[str, object]:
     persisted_session_id = active_session_id or session_id
@@ -428,6 +443,14 @@ def _finalize_session_turn(
         "event_ids": [event.event_id for event in events],
         "external_refs": external_refs,
     }
+    _refresh_session_catalog_metadata_after_turn(
+        state=state,
+        session_id=persisted_session_id,
+        trace_id=trace_id,
+        app_id=app_id,
+        agent_id=agent_id,
+        model_profile_name=model_profile_name,
+    )
     return {
         "status": "accepted",
         "session_id": session_id,
@@ -502,38 +525,74 @@ def _is_pure_session_switch_control_reply(run, terminal_text: str) -> bool:  # n
     action = str(tool_result.get("action") or "").strip()
     if action not in {"new", "resume"}:
         return False
-    if not is_confirmed_session_switch_reply(
-        [
-            ToolExchange(
-                tool_name="session",
-                tool_payload=tool_call.get("tool_payload") or {},
-                tool_result=tool_result,
-            )
-        ],
-        terminal_text,
+    tool_payload = tool_call.get("tool_payload") or {}
+    if not isinstance(tool_payload, dict):
+        return False
+    rendered = str(
+        render_direct_tool_text("session", tool_result, tool_payload=tool_payload) or ""
+    ).strip()
+    if not rendered:
+        return False
+    normalized_terminal = _normalize_session_switch_control_text(terminal_text)
+    if not normalized_terminal:
+        return False
+    candidates = {
+        _normalize_session_switch_control_text(rendered),
+        _normalize_session_switch_control_text(rendered.splitlines()[0]),
+    }
+    return normalized_terminal in {item for item in candidates if item}
+
+
+def _normalize_session_switch_control_text(text: str) -> str:
+    return " ".join(str(text or "").split()).strip().rstrip("。.!！")
+
+
+def _build_session_title_summary_source(session) -> str:  # noqa: ANN001
+    user_messages = [
+        str(item.content or "").strip()
+        for item in session.history
+        if item.role == "user" and str(item.content or "").strip()
+    ]
+    return "\n".join(user_messages[-3:])
+
+
+def _refresh_session_catalog_metadata_after_turn(
+    *,
+    state: HTTPRuntimeState,
+    session_id: str,
+    trace_id: str,
+    app_id: str,
+    agent_id: str,
+    model_profile_name: str | None,
+) -> None:
+    session = state.session_store.get(session_id)
+    if not session_catalog_metadata_needs_refresh(
+        title=session.session_title,
+        preview=session.session_preview,
     ):
-        return False
-    return _is_pure_session_switch_control_text(terminal_text)
-
-
-_SESSION_SWITCH_CONTROL_TEXT_RE = re.compile(
-    r"^(?:"
-    r"当前已在会话\s+`?sess_[A-Za-z0-9_-]+`?"
-    r"|已切换到新会话(?:\s+`?sess_[A-Za-z0-9_-]+`?)?"
-    r"|已切换到已有会话(?:\s+`?sess_[A-Za-z0-9_-]+`?)?"
-    r"|已切换到会话(?:\s+`?sess_[A-Za-z0-9_-]+`?)?"
-    r"|已恢复旧会话(?:\s+`?sess_[A-Za-z0-9_-]+`?)?"
-    r"|已恢复会话(?:\s+`?sess_[A-Za-z0-9_-]+`?)?"
-    r"|已恢复到会话(?:\s+`?sess_[A-Za-z0-9_-]+`?)?"
-    r")[。.!！]?$"
-)
-
-
-def _is_pure_session_switch_control_text(text: str) -> bool:
-    normalized = " ".join(str(text or "").split()).strip()
-    if not normalized:
-        return False
-    return _SESSION_SWITCH_CONTROL_TEXT_RE.fullmatch(normalized) is not None
+        return
+    user_message_count = sum(1 for item in session.history if item.role == "user")
+    if user_message_count < 2:
+        return
+    llm_client = state.llm_client_factory.create_session_summary_client(
+        model_profile_name,
+        default_client=state.runtime_loop.llm,
+    )
+    title, preview = build_session_title_summary(
+        llm_client=llm_client,
+        session_id=session_id,
+        trace_id=trace_id,
+        app_id=app_id,
+        agent_id=agent_id,
+        user_message=_build_session_title_summary_source(session),
+    )
+    state.session_store.set_catalog_metadata(
+        session_id,
+        user_id=session.user_id,
+        agent_id=agent_id,
+        session_title=title,
+        session_preview=preview,
+    )
 
 
 def _ensure_session_catalog_metadata(
@@ -548,6 +607,20 @@ def _ensure_session_catalog_metadata(
     user_message: str,
 ) -> None:
     session = state.session_store.get(session_id)
+    needs_refresh = session_catalog_metadata_needs_refresh(
+        title=session.session_title,
+        preview=session.session_preview,
+    )
+    if not needs_refresh:
+        if session.user_id != user_id or session.agent_id != agent_id:
+            state.session_store.set_catalog_metadata(
+                session_id,
+                user_id=user_id,
+                agent_id=agent_id,
+                session_title=session.session_title,
+                session_preview=session.session_preview,
+            )
+        return
     if session.session_title:
         if session.user_id != user_id or session.agent_id != agent_id:
             state.session_store.set_catalog_metadata(
@@ -558,18 +631,7 @@ def _ensure_session_catalog_metadata(
                 session_preview=session.session_preview,
             )
         return
-    llm_client = state.llm_client_factory.get(
-        model_profile_name,
-        default_client=state.runtime_loop.llm,
-    )
-    title, preview = build_session_title_summary(
-        llm_client=llm_client,
-        session_id=session_id,
-        trace_id=trace_id,
-        app_id=app_id,
-        agent_id=agent_id,
-        user_message=user_message,
-    )
+    title, preview = default_session_catalog_metadata()
     state.session_store.set_catalog_metadata(
         session_id,
         user_id=user_id,

@@ -61,8 +61,13 @@ from marten_runtime.runtime.capabilities import (
 )
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.lanes import ConversationLaneManager
+from marten_runtime.runtime.llm_failover import (
+    next_fallback_profile,
+    should_failover,
+)
 from marten_runtime.runtime.llm_client import build_llm_client
 from marten_runtime.runtime.loop import RuntimeLoop
+from marten_runtime.runtime.provider_retry import normalize_provider_error
 from marten_runtime.self_improve.recorder import SelfImproveRecorder
 from marten_runtime.self_improve.review_dispatcher import SelfImproveReviewDispatcher
 from marten_runtime.self_improve.service import SelfImproveService, make_default_judge
@@ -71,10 +76,83 @@ from marten_runtime.session.compaction_worker import SessionCompactionWorker
 from marten_runtime.session.store import SessionStore
 from marten_runtime.skills.service import SkillService
 from marten_runtime.subagents.service import SubagentService
+from marten_runtime.subagents.repo_context import (
+    render_repository_context_note,
+    resolve_repository_context,
+)
 from marten_runtime.tools.builtins.mcp_tool import build_mcp_capability_catalog
 from marten_runtime.tools.registry import ToolRegistry
 
 TraceIndex = dict[str, dict[str, list[str] | dict[str, str | None]]]
+
+
+class IsolatedFailoverLLMClient:
+    def __init__(
+        self,
+        *,
+        profile_name: str,
+        models_config: ModelsConfig,
+        providers_config: ProvidersConfig,
+        env: Mapping[str, str],
+    ) -> None:
+        self._initial_profile_name = profile_name
+        self._models_config = models_config
+        self._providers_config = providers_config
+        self._env = dict(env)
+        self._client_cache: dict[str, object] = {}
+        _, profile = resolve_model_profile(models_config, profile_name)
+        self.profile_name = profile_name
+        self.provider_name = profile.provider_ref
+        self.model_name = profile.model
+
+    def _get_or_build_client(self, profile_name: str) -> tuple[str, object]:
+        resolved_name, profile = resolve_model_profile(self._models_config, profile_name)
+        client = self._client_cache.get(resolved_name)
+        if client is None:
+            client = build_llm_client(
+                profile_name=resolved_name,
+                profile=profile,
+                providers_config=self._providers_config,
+                env=self._env,
+            )
+            self._client_cache[resolved_name] = client
+        return resolved_name, client
+
+    def complete(self, request):  # noqa: ANN001
+        active_name, active_profile = resolve_model_profile(
+            self._models_config,
+            self._initial_profile_name,
+        )
+        attempted_profiles = [active_name]
+        failover_candidates = list(getattr(active_profile, "fallback_profiles", []) or [])
+        while True:
+            active_name, client = self._get_or_build_client(active_name)
+            active_profile = self._models_config.profiles[active_name]
+            self.profile_name = active_name
+            self.provider_name = getattr(client, "provider_name", active_profile.provider_ref)
+            self.model_name = getattr(client, "model_name", active_profile.model)
+            try:
+                return client.complete(request)
+            except Exception as exc:  # noqa: BLE001
+                normalized = normalize_provider_error(exc)
+                if not should_failover(normalized.error_code, "llm_first"):
+                    raise normalized
+                fallback_name = next_fallback_profile(
+                    active_name,
+                    failover_candidates,
+                    attempted_profiles,
+                )
+                if fallback_name is None:
+                    raise normalized
+                attempted_profiles.append(fallback_name)
+                _, fallback_profile = resolve_model_profile(
+                    self._models_config,
+                    fallback_name,
+                )
+                for candidate in getattr(fallback_profile, "fallback_profiles", []) or []:
+                    if candidate not in failover_candidates:
+                        failover_candidates.append(candidate)
+                active_name = fallback_name
 
 
 class CachedLLMClientFactory:
@@ -125,12 +203,35 @@ class CachedLLMClientFactory:
 
     def create_isolated(self, profile_name: str | None) -> object:
         resolved_name, profile = resolve_model_profile(self.models_config, profile_name)
-        return build_llm_client(
+        del profile
+        return IsolatedFailoverLLMClient(
             profile_name=resolved_name,
-            profile=profile,
+            models_config=self.models_config,
             providers_config=self.providers_config,
             env=self.env,
         )
+
+    def create_session_summary_client(
+        self,
+        profile_name: str | None,
+        *,
+        default_client: object | None = None,
+    ) -> object:
+        return self.get(profile_name, default_client=default_client)
+
+    def create_compaction_client(
+        self,
+        profile_name: str | None,
+        *,
+        shared_client: object | None = None,
+    ) -> object:
+        resolved_name, profile = resolve_model_profile(self.models_config, profile_name)
+        fallback_profiles = list(getattr(profile, "fallback_profiles", []) or [])
+        if fallback_profiles:
+            return self.create_isolated(resolved_name)
+        if shared_client is not None:
+            return shared_client
+        return self.get(resolved_name)
 
 
 @dataclass
@@ -170,6 +271,7 @@ class HTTPRuntimeState:
     app_runtimes: dict[str, AppRuntimeAssets]
     llm_client_factory: CachedLLMClientFactory
     langfuse_observer: LangfuseObserver
+    repository_context_note: str | None = None
     trace_index: TraceIndex = field(default_factory=dict)
     latest_session_transition: dict[str, object] | None = None
     compaction_worker: SessionCompactionWorker | None = None
@@ -275,6 +377,10 @@ def build_http_runtime(
         app_runtimes=app_runtimes,
         llm_client_factory=llm_client_factory,
         models_config=models_config,
+        repository_context=resolve_repository_context(
+            resolved_repo_root,
+            env=resolved_env,
+        ),
     )
     review_dispatcher = SelfImproveReviewDispatcher(
         store=self_improve_store,
@@ -297,6 +403,10 @@ def build_http_runtime(
         ),
     )
     feishu_receipts = InMemoryReceiptStore()
+    repository_context = resolve_repository_context(
+        resolved_repo_root,
+        env=resolved_env,
+    )
     state = HTTPRuntimeState(
         repo_root=resolved_repo_root,
         env=resolved_env,
@@ -333,6 +443,7 @@ def build_http_runtime(
         app_runtimes=app_runtimes,
         llm_client_factory=llm_client_factory,
         langfuse_observer=langfuse_observer,
+        repository_context_note=render_repository_context_note(repository_context),
     )
     state.compaction_worker = SessionCompactionWorker(
         session_store=session_store,

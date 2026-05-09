@@ -1,28 +1,141 @@
-# Architecture Changelog
+# 架构变更日志
 
-This file is the append-only architecture evolution log for `marten-runtime`.
+这份文档是 `marten-runtime` 的追加式架构演进日志。
 
-Use it to answer:
+用它回答四个问题：
 
-- what architecture changed
-- why the change happened
-- which ADR or design doc is now authoritative
-- what verification proved the new baseline
+- 架构改了什么
+- 为什么会改
+- 当前应该以哪份 ADR 或设计文档为准
+- 哪些验证证明了新的基线
 
-Do not use this file for day-to-day task tracking. Local branch continuity belongs in the compact `STATUS.md`.
+这份文档不承担日常任务跟踪。分支级连续性继续放在精简版 `STATUS.md`。
 
-Historical verification commands in older entries may still reference pre-2026-04-11 mega-file test modules such as `tests.test_feishu` or `tests.test_runtime_loop`. For current runnable verification entrypoints, follow the active README / docs index / slimming plans instead of replaying those historical command blocks verbatim.
+较早条目里的历史验证命令，可能还引用 2026-04-11 之前的大型测试模块，例如 `tests.test_feishu` 或 `tests.test_runtime_loop`。当前可直接运行的验证入口，以活跃的 README、文档索引和精简计划为准。
 
-For this repository, `ARCHITECTURE_CHANGELOG.md` is the primary carrier of architecture timeline truth. Historical design or execution docs should be summarized here before they are archived or removed.
+对这个仓库来说，`ARCHITECTURE_CHANGELOG.md` 是架构时间线真相的主载体。历史设计文档和执行文档在归档或移除前，都应先把长期结论吸收到这里。
 
-## Source Of Truth Rules
+## 真相来源规则
 
-- Stable architectural decisions live in `docs/architecture/adr/`.
-- Time-ordered architecture evolution is recorded here.
-- Detailed execution continuity may still exist in local `STATUS.md`, but `STATUS.md` is not a repository source of truth.
-- If a change updates the runtime boundary, default capability surface, or long-lived subsystem role, add an entry here.
+- 稳定架构决策放在 `docs/architecture/adr/`。
+- 按时间顺序的架构演进记录放在这里。
+- 更细的执行连续性可以保留在本地 `STATUS.md`，但 `STATUS.md` 不承担仓库真相文档角色。
+- 任何会改变 runtime 边界、默认能力面、长期子系统职责的改动，都应追加一条记录。
 
-## Entries
+## 条目
+
+### 2026-05-02: eval 子系统按职责拆分，执行器与报告层收敛成薄编排面
+
+- 变化：
+  - `src/marten_runtime/evals/executor.py` 只保留 suite 编排、workspace 生命周期和 HTTP 回放驱动，脚本化 LLM、case state seed、repo scaffold copy、subagent 诊断、run metadata 已分别拆到 `scripted_runtime.py`、`case_state.py`、`workspace.py`、`subagent_diagnostics.py`、`run_metadata.py`
+  - `src/marten_runtime/evals/family_graders/common.py` 收敛了 blocked result、component-family gate 汇总、anchor group 归一化、文本证据判断，`memory_long_horizon` 与 `subagent_task_progress` 不再各自复制这套逻辑
+  - `src/marten_runtime/evals/report.py` 现在只负责 JSON/case artifact 落盘与 renderer 组装，Markdown 与 HTML 渲染分别落到 `report_markdown.py` 与 `report_html.py`
+  - `scripts/run_eval.py` 改为直接依赖 `run_metadata.py`，不再引用 `executor.py` 的私有函数语义
+- 原因：
+  - 评测体系已经成为长期子系统，继续把 runner、fixture、diagnostics、renderer 全挤在单文件里，会提高后续加 case、调 grader、看报告时的修改冲突和理解成本
+  - 这次收敛只动离线评测与诊断层，runtime 主链、LLM-first 工具选择边界、线上请求语义继续保持不变
+  - 模块边界清楚之后，后续做稳定性统计、专项 grader、报告展示时可以继续沿现有分层扩展，而不用反复切大文件
+- 真相来源：
+  - `src/marten_runtime/evals/executor.py`
+  - `src/marten_runtime/evals/family_graders/common.py`
+  - `src/marten_runtime/evals/run_metadata.py`
+  - `src/marten_runtime/evals/workspace.py`
+  - `src/marten_runtime/evals/case_state.py`
+  - `src/marten_runtime/evals/scripted_runtime.py`
+  - `src/marten_runtime/evals/subagent_diagnostics.py`
+  - `src/marten_runtime/evals/report.py`
+  - `src/marten_runtime/evals/report_markdown.py`
+  - `src/marten_runtime/evals/report_html.py`
+  - `scripts/run_eval.py`
+- 验证：
+  - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.evals.test_models tests.evals.test_loader tests.evals.test_store tests.evals.test_compare tests.evals.test_report tests.evals.test_executor tests.evals.test_run_eval_script tests.evals.test_suite_manifests tests.evals.test_grader_registry tests.evals.test_graders tests.evals.test_memory_family_grader tests.evals.test_subagent_family_grader`
+  - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_acceptance.AcceptanceTests.test_langfuse_full_chain_covers_plain_builtin_and_mcp_turns tests.test_acceptance.AcceptanceTests.test_http_runtime_switches_llm_client_by_selected_agent_model_profile tests.test_acceptance.AcceptanceTests.test_http_session_new_keeps_next_turn_routed_to_current_active_agent tests.test_acceptance.AcceptanceTests.test_http_session_resume_switches_immediately_and_completes_source_compaction_in_background tests.test_subagent_integration.SubagentHTTPIntegrationTests.test_http_simulated_feishu_message_path_skips_external_child_delivery tests.test_subagent_integration.SubagentHTTPIntegrationTests.test_feishu_websocket_parent_ack_is_delivered_before_child_completion_notification tests.test_subagent_integration.SubagentHTTPIntegrationTests.test_http_message_path_spawns_child_and_observes_completion tests.runtime_loop.test_direct_rendering_paths.RuntimeLoopDirectRenderingPathTests.test_runtime_can_load_skill_body_via_skill_tool tests.test_gateway.GatewayTests.test_http_messages_endpoint_returns_progress_and_final_events tests.feishu.test_rendering.FeishuRenderingTests.test_render_final_reply_card_uses_session_switch_title_and_appends_footer tests.feishu.test_rendering.FeishuRenderingTests.test_render_final_reply_card_appends_usage_footer_when_summary_present tests.feishu.test_rendering.FeishuRenderingTests.test_render_final_reply_card_derives_time_title_for_current_time_reply tests.feishu.test_rendering.FeishuRenderingTests.test_render_final_reply_card_structures_subagent_system_completion_message`
+  - `PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite main_chain_core --mode scripted --profile openai_gpt_5_4 --baseline latest_passed --db-path /tmp/marten_eval_refactor_20260502-174615.sqlite3 --report-root /tmp/marten_eval_refactor_reports_20260502-174615`
+  - `PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite memory_long_horizon --mode scripted --profile openai_gpt_5_4 --baseline latest_passed --db-path /tmp/marten_eval_refactor_20260502-174615.sqlite3 --report-root /tmp/marten_eval_refactor_reports_20260502-174615`
+  - `PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite subagent_task_progress --mode scripted --profile openai_gpt_5_4 --baseline latest_passed --db-path /tmp/marten_eval_refactor_20260502-174615.sqlite3 --report-root /tmp/marten_eval_refactor_reports_20260502-174615`
+  - `PYTHONPATH=src .venv/bin/python -m compileall -q src tests`
+  - `git diff --check`
+
+### 2026-05-02: 离线评测补上稳定性统计层、grader 抗波动能力、case 锚点强度
+
+- 变化：
+  - `scripts/run_eval.py` 在现有 baseline compare 之外，额外汇总最近 5 次同 suite/profile/mode + 同 `git_sha` / `config_fingerprint` / `suite_fingerprint` 的稳定性窗口
+  - `src/marten_runtime/evals/models.py`、`store.py`、`compare.py`、`report.py` 新增稳定性统计模型、历史 run 查询、波动 case / 组件汇总、Markdown / JSON / HTML 可视化
+  - `memory_long_horizon` 与 `subagent_task_progress` grader 支持 anchor groups + 组合证据命中，降低措辞轻微变化对分数的扰动
+  - 波动较高的 memory / subagent case 补上更具体的中文任务锚点与 `integration_anchor_groups` / `recall_anchor_groups`
+- 原因：
+  - 评测分数需要具备时间维度的可比性，单次 run 对单次 baseline 的差值还不足以判断“这次改动是否稳定提升”
+  - live 观测已经暴露出 family grader 对轻微改写过敏，专项评测需要更稳的评分边界
+  - case 语义锚点越具体，越容易把波动收敛在真实产品差异，而不是随机措辞差异
+- 真相来源：
+  - `scripts/run_eval.py`
+  - `src/marten_runtime/evals/models.py`
+  - `src/marten_runtime/evals/store.py`
+  - `src/marten_runtime/evals/compare.py`
+  - `src/marten_runtime/evals/report.py`
+  - `src/marten_runtime/evals/family_graders/memory_long_horizon.py`
+  - `src/marten_runtime/evals/family_graders/subagent_task_progress.py`
+  - `evals/cases/memory_long_horizon/`
+  - `evals/cases/subagent_task_progress/`
+- 验证：
+  - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.evals.test_models tests.evals.test_loader tests.evals.test_store tests.evals.test_compare tests.evals.test_report tests.evals.test_executor tests.evals.test_run_eval_script tests.evals.test_suite_manifests tests.evals.test_grader_registry tests.evals.test_memory_family_grader tests.evals.test_subagent_family_grader`
+  - `PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite main_chain_core --mode scripted --profile openai_gpt_5_4 --baseline latest_passed`
+  - `PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite memory_long_horizon --mode scripted --profile openai_gpt_5_4 --baseline latest_passed`
+  - `PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite subagent_task_progress --mode scripted --profile openai_gpt_5_4 --baseline latest_passed`
+
+### 2026-05-01: memory / subagent 专项评测并入统一离线评测框架
+
+- 变化：
+  - 在现有 `scripts/run_eval.py`、SQLite store、compare、Markdown / JSON / HTML 报告面之上，新增 `memory_long_horizon` 与 `subagent_task_progress` 两个专项套件
+  - 新增 `grader_id` 路由、`grader registry`、suite 级 `required_dependencies` 阻塞判定、suite 级 `component_summary`
+  - 新增 `src/marten_runtime/evals/family_graders/`，把主链评分、长期记忆评分、子代理推进评分保持在同一离线框架下
+  - executor 继续复用现有 HTTP app / diagnostics，并在子代理专项里补采 parent session、subagent task、child run、child session 证据
+- 原因：
+  - 主链基础评测已经可用，下一步最有价值的是把“长期记忆是否真的带来收益”和“子代理是否真的推进了任务”变成可比较分数
+  - 统一 runner / store / compare / report 可以保持评测体系薄而稳定，避免出现第二套专项框架
+  - 评分差异放在离线 harness，可以继续保持 runtime 热路径和 LLM-first 边界稳定
+- 真相来源：
+  - `docs/archive/plans/2026-05-01-memory-subagent-eval-execution-plan.md`
+  - `scripts/run_eval.py`
+  - `src/marten_runtime/evals/grader_registry.py`
+  - `src/marten_runtime/evals/family_graders/`
+  - `src/marten_runtime/evals/executor.py`
+  - `src/marten_runtime/evals/compare.py`
+  - `src/marten_runtime/evals/report.py`
+  - `evals/suites/memory_long_horizon.toml`
+  - `evals/suites/subagent_task_progress.toml`
+- 验证：
+  - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.evals.test_models tests.evals.test_loader tests.evals.test_store tests.evals.test_compare tests.evals.test_report tests.evals.test_executor tests.evals.test_run_eval_script tests.evals.test_suite_manifests tests.evals.test_grader_registry tests.evals.test_memory_family_grader tests.evals.test_subagent_family_grader`
+  - `PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite main_chain_core --mode scripted --profile openai_gpt_5_4 --baseline latest_passed`
+  - `PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite memory_long_horizon --mode scripted --profile openai_gpt_5_4 --baseline latest_passed`
+  - `PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite subagent_task_progress --mode scripted --profile openai_gpt_5_4 --baseline latest_passed`
+  - `PYTHONPATH=src .venv/bin/python -m compileall -q src tests`
+  - `git diff --check`
+
+### 2026-04-30: 主链评测基础能力进入离线运维面
+
+- 变化：
+  - 新增离线评测入口 `scripts/run_eval.py`，通过现有 `/sessions`、`/messages`、`/diagnostics/run/{run_id}`、`/diagnostics/trace/{trace_id}` 驱动主链回放
+  - 新增 `src/marten_runtime/evals/` 基础层，负责 case / suite 加载、执行、评分、SQLite 历史存储、baseline 对比、Markdown / JSON 报告
+  - 新增 `evals/suites/` 与 `evals/cases/`，当前套件固定为 `main_chain_core`、`main_chain_mcp`、`main_chain_subagent`
+  - `main_chain_core` 成为默认黄金任务基线；`main_chain_mcp`、`main_chain_subagent` 继续受外部依赖门控
+- 原因：
+  - 仓库已有测试层和 tracing 层，缺的是一条能证明“更好用”是否真的提升的评测层
+  - 评测继续放在离线运维面，可以复用真实 runtime 证据，同时保持 runtime 热路径边界稳定
+  - 主链质量的下一阶段重点是 prompt、capability 描述、上下文治理、工具路径与会话连续性的可比较回放
+- 真相来源：
+  - `docs/2026-04-30-main-chain-eval-foundation-design.md`
+  - `docs/archive/plans/2026-04-30-main-chain-eval-foundation-execution-plan.md`
+  - `scripts/run_eval.py`
+  - `src/marten_runtime/evals/`
+  - `evals/suites/`
+- 验证：
+  - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.evals.test_models tests.evals.test_loader tests.evals.test_store tests.evals.test_report tests.evals.test_graders tests.evals.test_executor tests.evals.test_compare tests.evals.test_run_eval_script tests.evals.test_suite_manifests`
+  - `PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite main_chain_core --mode scripted --profile openai_gpt_5_4`
+  - `PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite main_chain_core --mode scripted --profile openai_gpt_5_4 --baseline latest_passed`
+  - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_http_runtime_diagnostics tests.contracts.test_runtime_contracts tests.runtime_loop.test_context_status_and_usage tests.test_acceptance`
+  - `PYTHONPATH=src .venv/bin/python -m compileall -q src tests`
+  - `git diff --check`
 
 ### 2026-04-28: Legacy `assistant` Runtime-Agent Alias Was Removed From The Registry Surface
 

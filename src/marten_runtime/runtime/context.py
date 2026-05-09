@@ -12,7 +12,6 @@ from marten_runtime.session.tool_outcome_summary import ToolOutcomeSummary, rend
 from marten_runtime.skills.snapshot import SkillSnapshot
 from marten_runtime.tools.registry import ToolSnapshot
 
-
 class RuntimeMessage(BaseModel):
     role: str
     content: str
@@ -24,6 +23,7 @@ class RuntimeContext(BaseModel):
     compact_summary_text: str | None = None
     tool_outcome_summary_text: str | None = None
     memory_text: str | None = None
+    repository_context_text: str | None = None
     working_context: dict[str, object] = Field(default_factory=dict)
     working_context_text: str | None = None
     skill_snapshot: SkillSnapshot = Field(
@@ -64,7 +64,7 @@ def _build_rebased_compact_summary_text(
     lines: list[str] = []
     recent_user_turns = [message.content.strip() for message in older_messages if message.role == "user"][-3:]
     recent_assistant_summaries = [
-        _summarize_assistant_message(message.content)
+        message.content.strip()
         for message in older_messages
         if message.role == "assistant" and str(message.content).strip()
     ][-3:]
@@ -92,6 +92,11 @@ def _build_rebased_compact_summary_text(
     return "\n".join(["补充说明（扩大 replay 窗口后仍由摘要承接的更早前缀）：", *lines])
 
 
+def _uses_context_pressure_tail_only(compacted_context: CompactedContext) -> bool:
+    trigger_kind = str(compacted_context.trigger_kind or "").strip().lower()
+    return trigger_kind.startswith("context_pressure")
+
+
 def assemble_runtime_context(
     *,
     session_id: str,
@@ -110,6 +115,7 @@ def assemble_runtime_context(
     compacted_context: CompactedContext | None = None,
     recent_tool_outcome_summaries: list[ToolOutcomeSummary | dict[str, object]] | None = None,
     memory_text: str | None = None,
+    repository_context_text: str | None = None,
 ) -> RuntimeContext:
     all_messages = session_messages or []
     replay_source = all_messages
@@ -125,19 +131,25 @@ def assemble_runtime_context(
             ),
         )
         replay_source = all_messages[compact_end:]
+        replay = []
         preserved_tail_user_turns = (
             compacted_context.preserved_tail_user_turns
             if isinstance(compacted_context.preserved_tail_user_turns, int)
             and compacted_context.preserved_tail_user_turns > 0
             else None
         )
-        desired_user_turns = max(
-            replay_user_turns,
-            preserved_tail_user_turns or replay_user_turns,
+        desired_user_turns = (
+            preserved_tail_user_turns or replay_user_turns
+            if _uses_context_pressure_tail_only(compacted_context)
+            else max(
+                replay_user_turns,
+                preserved_tail_user_turns or replay_user_turns,
+            )
         )
         summary_text = compacted_context.summary_text.strip() or None
         if (
-            preserved_tail_user_turns is not None
+            not _uses_context_pressure_tail_only(compacted_context)
+            and preserved_tail_user_turns is not None
             and replay_user_turns > preserved_tail_user_turns
         ):
             replay = replay_session_messages(
@@ -155,7 +167,7 @@ def assemble_runtime_context(
                     replay_source = all_messages[replay_start:]
                 else:
                     replay_source = all_messages[compact_end:]
-        else:
+        if not replay:
             replay = replay_session_messages(
                 replay_source,
                 current_message=current_message,
@@ -172,17 +184,33 @@ def assemble_runtime_context(
             current_message=current_message,
             user_turns=replay_user_turns,
         )
-    context_source_messages = replay_source if compacted_context is not None else all_messages
-    derived = _derive_context_inputs(context_source_messages, replay, current_message)
+    if compacted_context is not None:
+        derived = {
+            "recent_user_messages": [],
+            "recent_assistant_messages": [],
+            "recent_results": [],
+        }
+    else:
+        derived = _derive_context_inputs(all_messages, replay, current_message)
     tool_outcome_summary_text = render_tool_outcome_summary_block(recent_tool_outcome_summaries)
     snapshot = compact_context(
         session_id=session_id,
         active_goal=current_message,
-        user_constraints=derived["user_constraints"],
-        open_todos=derived["open_todos"],
-        recent_decisions=derived["recent_decisions"],
+        recent_user_messages=derived["recent_user_messages"],
+        recent_assistant_messages=derived["recent_assistant_messages"],
+        user_constraints=[],
+        open_todos=(
+            [str(item).strip() for item in compacted_context.open_todos if str(item).strip()][:3]
+            if compacted_context is not None
+            else []
+        ),
+        recent_decisions=[],
         recent_results=derived["recent_results"],
-        pending_risks=derived["pending_risks"],
+        pending_risks=(
+            [str(item).strip() for item in compacted_context.pending_risks if str(item).strip()][:3]
+            if compacted_context is not None
+            else []
+        ),
         source_message_range=[max(0, len(all_messages) - len(replay)), len(all_messages)],
     )
     working_context = rehydrate_context(snapshot)
@@ -195,8 +223,9 @@ def assemble_runtime_context(
         compact_summary_text=compact_summary_text,
         tool_outcome_summary_text=tool_outcome_summary_text,
         memory_text=memory_text,
+        repository_context_text=repository_context_text,
         working_context=working_context,
-        working_context_text=_render_working_context(working_context),
+        working_context_text=None,
         skill_snapshot=skill_snapshot or SkillSnapshot(skill_snapshot_id="skill_default"),
         activated_skill_ids=list(activated_skill_ids or []),
         skill_heads_text=skill_heads_text,
@@ -209,61 +238,19 @@ def assemble_runtime_context(
     )
 
 
-def _render_working_context(working_context: dict[str, object]) -> str | None:
-    if not working_context:
-        return None
-    lines: list[str] = []
-    active_goal = str(working_context.get("active_goal", "")).strip()
-    if active_goal:
-        lines.extend(["当前目标:", f"- {active_goal}"])
-    _append_section(lines, "用户约束", working_context.get("user_constraints"))
-    _append_section(lines, "最近决策", working_context.get("recent_decisions"))
-    _append_section(lines, "关键结果", working_context.get("recent_results"))
-    _append_section(lines, "未完成事项", working_context.get("open_todos"))
-    _append_section(lines, "风险/注意点", working_context.get("pending_risks"))
-    continuation_hint = str(working_context.get("continuation_hint", "")).strip()
-    if continuation_hint and continuation_hint != active_goal:
-        lines.extend(["继续提示:", f"- {continuation_hint}"])
-    if not lines:
-        return None
-    return "\n".join(lines)
 
-
-def _append_section(lines: list[str], title: str, items: object) -> None:
-    if not isinstance(items, list):
-        return
-    rendered = [str(item).strip() for item in items if str(item).strip()]
-    if not rendered:
-        return
-    lines.append(f"{title}:")
-    lines.extend(f"- {item}" for item in rendered)
 def _derive_context_inputs(
     session_messages: list[SessionMessage],
     replay: list[SessionMessage],
     current_message: str,
 ) -> dict[str, list[str]]:
-    user_messages = [message.content.strip() for message in session_messages if message.role == "user"]
-    assistant_messages = [message.content.strip() for message in session_messages if message.role == "assistant"]
+    del session_messages
+    user_messages = _recent_user_context_messages(replay, current_message=current_message)
+    replay_assistant_messages = _recent_assistant_context_messages(replay)
     return {
-        "user_constraints": _dedupe_preserve_order(
-            [message for message in user_messages if _looks_like_constraint(message)]
-        )[-3:],
-        "open_todos": _dedupe_preserve_order(
-            [message for message in user_messages + assistant_messages if _looks_like_todo(message)]
-        )[-3:],
-        "recent_decisions": _dedupe_preserve_order(
-            [_summarize_assistant_message(message.content) for message in replay if message.role == "assistant"]
-        )[-3:],
-        "recent_results": _dedupe_preserve_order(
-            [
-                summary
-                for summary in (_extract_result_summary(message) for message in assistant_messages)
-                if summary
-            ]
-        )[-3:],
-        "pending_risks": _dedupe_preserve_order(
-            [message for message in user_messages + assistant_messages if _looks_like_risk(message)]
-        )[-3:],
+        "recent_user_messages": user_messages,
+        "recent_assistant_messages": replay_assistant_messages,
+        "recent_results": [],
     }
 
 
@@ -279,35 +266,24 @@ def _dedupe_preserve_order(items: list[str]) -> list[str]:
     return result
 
 
-def _looks_like_constraint(content: str) -> bool:
-    lowered = content.lower()
-    keywords = ("请始终", "始终", "不要", "必须", "记住", "always", "must", "never", "do not", "don't")
-    return any(keyword in content or keyword in lowered for keyword in keywords)
+def _recent_user_context_messages(
+    session_messages: list[SessionMessage],
+    *,
+    current_message: str,
+) -> list[str]:
+    user_messages = [
+        message.content.strip()
+        for message in session_messages
+        if message.role == "user" and str(message.content).strip()
+    ]
+    if user_messages and user_messages[-1] == str(current_message).strip():
+        user_messages = user_messages[:-1]
+    return user_messages
 
 
-def _looks_like_todo(content: str) -> bool:
-    lowered = content.lower()
-    keywords = ("todo", "待办", "下一步", "接下来", "remaining", "follow-up")
-    return any(keyword in lowered or keyword in content for keyword in keywords)
-
-
-def _looks_like_risk(content: str) -> bool:
-    lowered = content.lower()
-    keywords = ("风险", "注意", "warning", "risk", "blocker")
-    return any(keyword in lowered or keyword in content for keyword in keywords)
-
-
-def _summarize_assistant_message(content: str) -> str:
-    result_summary = _extract_result_summary(content)
-    if result_summary:
-        return result_summary
-    normalized = " ".join(content.split())
-    return normalized[:160]
-
-
-def _extract_result_summary(content: str) -> str | None:
-    for marker in ("结论:", "结果:", "已定位", "已完成", "resolved:", "found:"):
-        if marker in content:
-            summary = content.split(marker, 1)[1] if marker.endswith(":") else content[content.index(marker) :]
-            return " ".join(summary.split())[:200]
-    return None
+def _recent_assistant_context_messages(session_messages: list[SessionMessage]) -> list[str]:
+    return [
+        message.content.strip()
+        for message in session_messages
+        if message.role == "assistant" and str(message.content).strip()
+    ]

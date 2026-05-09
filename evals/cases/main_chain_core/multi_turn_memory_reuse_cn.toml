@@ -1,0 +1,46 @@
+case_id = "multi_turn_memory_reuse_cn"
+suite_id = "main_chain_core"
+family = "memory_reuse"
+enabled = true
+required = true
+description = "写入记忆后在下一轮复用"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "memory", "reuse"]
+
+[[turns]]
+role = "user"
+content = "记住：以后始终用中文回复。"
+
+[[turns]]
+role = "user"
+content = "继续当前任务，并说明你记住了什么。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_all = ["中文回复"]
+
+[[expectations.tool_path.required_calls]]
+tool_name = "memory"
+min_calls = 1
+max_calls = 1
+
+[expectations.efficiency]
+max_llm_requests = 3
+max_tool_calls = 1
+
+[expectations.context]
+expect_compaction = false
+
+[expectations.diagnostics]
+expect_provider_ref = "openai"
+
+[weights]
+outcome = 60
+tool_path = 20
+efficiency = 15
+context = 5

@@ -1,0 +1,36 @@
+case_id = "subagent_followup_uses_child_result_cn"
+suite_id = "subagent_task_progress"
+family = "subagent_task_progress"
+enabled = true
+required = true
+description = "后续回答能吸收子任务结果"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "subagent", "followup"]
+gate_components = ["child_completion", "parent_integration"]
+
+[[turns]]
+role = "user"
+content = "后台看一下最近提交都在改什么。"
+
+[[turns]]
+role = "user"
+content = "直接告诉我你吸收后的结论，明确最近提交主要在改什么。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+delegation_quality = 20
+child_completion = 30
+parent_integration = 50
+
+
+[grader_case]
+expected_spawn_count = 1
+await_child_completion = true
+integration_contains_all = ["提交"]
+integration_anchor_groups = [["提交", "commit"], ["docs", "文档"], ["provider", "基线"]]
+timeout_ms = 120000

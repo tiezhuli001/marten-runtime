@@ -10,7 +10,7 @@ from tests.http_app_support import build_test_app
 
 class FeishuRuntimeServicesTests(unittest.TestCase):
     def test_build_feishu_delivery_client_preserves_retry_policy(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
 
         client = build_feishu_delivery_client(
@@ -28,7 +28,7 @@ class FeishuRuntimeServicesTests(unittest.TestCase):
         )
 
     def test_build_feishu_websocket_service_preserves_channel_routing_config(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
 
         service = build_feishu_websocket_service(

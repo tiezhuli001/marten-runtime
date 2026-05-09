@@ -59,7 +59,7 @@
 
 ### 3. 最小配置
 
-当前提交态默认 runtime 使用 `default_profile = "openai_gpt5"`。
+当前提交态默认 runtime 使用 `default_profile = "openai_gpt_5_4"`。
 
 最短路径是：
 
@@ -171,12 +171,14 @@ OPENAI_API_KEY=
 
 如果你想切到别的 provider 或模型，在本地 `config/models.toml` 里切换 `default_profile`，或重定义它指向的 profile。
 
+提交态示例 profile id 统一采用 `provider + model` 的 slug，例如 `openai_gpt_5_4`、`minimax_m2_7_highspeed`。runtime 只读取 `provider_ref`、`model`、`fallback_profiles`，不会解析 profile id 语义。
+
 示例：
 
 ```toml
-default_profile = "openai_gpt5"
+default_profile = "openai_gpt_5_4"
 
-[profiles.openai_gpt5]
+[profiles.openai_gpt_5_4]
 provider_ref = "openai"
 model = "gpt-5.4"
 tokenizer_family = "openai_o200k"
@@ -338,9 +340,9 @@ curl -sS http://127.0.0.1:8000/diagnostics/runtime
 当前提交态默认 OpenAI 路径对应的本地 `config/models.toml` 例子：
 
 ```toml
-default_profile = "openai_gpt5"
+default_profile = "openai_gpt_5_4"
 
-[profiles.openai_gpt5]
+[profiles.openai_gpt_5_4]
 provider_ref = "openai"
 model = "gpt-5.4"
 tokenizer_family = "openai_o200k"
@@ -350,11 +352,11 @@ supports_provider_usage = true
 MiniMax 路径例子：
 
 ```toml
-default_profile = "minimax_m25"
+default_profile = "minimax_m2_7_highspeed"
 
-[profiles.minimax_m25]
+[profiles.minimax_m2_7_highspeed]
 provider_ref = "minimax"
-model = "MiniMax-M2.5"
+model = "MiniMax-M2.7-highspeed"
 tokenizer_family = "openai_o200k"
 supports_provider_usage = true
 ```

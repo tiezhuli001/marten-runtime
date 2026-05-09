@@ -1,0 +1,43 @@
+case_id = "tool_followup_to_final_cn"
+suite_id = "main_chain_core"
+family = "tool_followup"
+enabled = true
+required = true
+description = "先调 tool 再由模型收束最终答案"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "time", "followup"]
+
+[[turns]]
+role = "user"
+content = "先获取北京时间，再给我一句最终答案。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_all = ["北京时间"]
+contains_any = [":", "点"]
+
+[[expectations.tool_path.required_calls]]
+tool_name = "time"
+min_calls = 1
+max_calls = 1
+
+[expectations.efficiency]
+max_llm_requests = 2
+max_tool_calls = 1
+
+[expectations.context]
+expect_compaction = false
+
+[expectations.diagnostics]
+expect_provider_ref = "openai"
+
+[weights]
+outcome = 60
+tool_path = 20
+efficiency = 15
+context = 5

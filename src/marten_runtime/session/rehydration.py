@@ -4,6 +4,8 @@ from marten_runtime.session.compaction import ContextSnapshot
 def rehydrate_context(snapshot: ContextSnapshot) -> dict:
     return {
         "active_goal": snapshot.active_goal,
+        "recent_user_messages": snapshot.recent_user_messages,
+        "recent_assistant_messages": snapshot.recent_assistant_messages,
         "user_constraints": snapshot.user_constraints,
         "recent_files": snapshot.recent_files,
         "open_todos": snapshot.open_todos,

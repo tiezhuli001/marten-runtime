@@ -3,6 +3,16 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from marten_runtime.agents.specs import AgentSpec
+from marten_runtime.runtime.finalization_contract_prompt import (
+    CurrentSessionIdentityClaimDraft,
+    FinalizationContractDraft,
+    LiveRuntimeContextClaimDraft,
+    LiveTimeClaimDraft,
+    MemoryMutationClaimDraft,
+    RuntimeNumericClaimDraft,
+    SessionSwitchClaimDraft,
+    SpawnSubagentAcceptanceClaimDraft,
+)
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.runtime.llm_message_support import build_openai_messages
@@ -13,6 +23,7 @@ from marten_runtime.self_improve.recorder import SelfImproveRecorder
 from marten_runtime.tools.builtins.time_tool import run_time_tool
 from marten_runtime.tools.registry import ToolRegistry
 from tests.support.domain_builders import build_self_improve_adapter
+from tests.support.finalization_contracts import contracted_final_reply, plain_final_reply
 from tests.support.scripted_llm import (
     BrokenInternalLLMClient,
     BrokenToolLLMClient,
@@ -20,6 +31,150 @@ from tests.support.scripted_llm import (
     FirstSuccessThenDisallowedToolLLMClient,
     FirstSuccessThenFailingLLMClient,
 )
+
+
+def _fixed_time_tool(payload: dict) -> dict:
+    timezone = str(payload.get("timezone") or "UTC").strip() or "UTC"
+    if timezone in {"Asia/Shanghai", "PRC", "+08:00"}:
+        return {
+            "timezone": timezone,
+            "iso_time": "2026-04-20T12:30:00+08:00",
+        }
+    if timezone.upper() == "UTC":
+        return {
+            "timezone": timezone,
+            "iso_time": "2026-04-20T04:30:00+00:00",
+        }
+    return run_time_tool(payload)
+
+
+def _session_switch_reply(final_text: str, *, kind: str, session_id: str | None = None) -> LLMReply:
+    return contracted_final_reply(
+        final_text,
+        finalization_contract_draft=FinalizationContractDraft(
+            session_switch=SessionSwitchClaimDraft(kind=kind, session_id=session_id)
+        ),
+    )
+
+
+def _current_session_reply(final_text: str, *, session_id: str) -> LLMReply:
+    return contracted_final_reply(
+        final_text,
+        finalization_contract_draft=FinalizationContractDraft(
+            current_session_identity=CurrentSessionIdentityClaimDraft(session_id=session_id)
+        ),
+    )
+
+
+def _spawn_reply(
+    final_text: str,
+    *,
+    queue_state: str | None = None,
+    notify_phrase: str | None = None,
+) -> LLMReply:
+    return contracted_final_reply(
+        final_text,
+        finalization_contract_draft=FinalizationContractDraft(
+            spawn_subagent_acceptance=SpawnSubagentAcceptanceClaimDraft(
+                queue_state=queue_state,
+                notify_phrase=notify_phrase,
+            )
+        ),
+    )
+
+
+def _live_time_reply(
+    final_text: str,
+    *,
+    facets: list[str],
+    year: int | None = None,
+    month: int | None = None,
+    day: int | None = None,
+    weekday: int | None = None,
+    hour: int | None = None,
+    minute: int | None = None,
+    second: int | None = None,
+    requires_second_precision: bool = False,
+) -> LLMReply:
+    return contracted_final_reply(
+        final_text,
+        finalization_contract_draft=FinalizationContractDraft(
+            live_time=LiveTimeClaimDraft(
+                facets=facets,
+                year=year,
+                month=month,
+                day=day,
+                weekday=weekday,
+                hour=hour,
+                minute=minute,
+                second=second,
+                requires_second_precision=requires_second_precision,
+            )
+        ),
+    )
+
+
+def _live_runtime_reply(
+    final_text: str,
+    *,
+    numeric_claims: list[tuple[str, int]] | None = None,
+    status: str | None = None,
+    requires_result_coverage: bool = False,
+    requires_round_trip_report: bool = False,
+) -> LLMReply:
+    return contracted_final_reply(
+        final_text,
+        finalization_contract_draft=FinalizationContractDraft(
+            requires_result_coverage=requires_result_coverage,
+            requires_round_trip_report=requires_round_trip_report,
+            live_runtime_context=LiveRuntimeContextClaimDraft(
+                numeric_claims=[
+                    RuntimeNumericClaimDraft(kind=kind, value=value)
+                    for kind, value in (numeric_claims or [])
+                ],
+                status=status,
+            )
+            if (numeric_claims or status is not None)
+            else None,
+        ),
+    )
+
+
+def _coverage_reply(
+    final_text: str,
+    *,
+    requires_result_coverage: bool = True,
+    requires_round_trip_report: bool = False,
+    live_time: LiveTimeClaimDraft | None = None,
+    live_runtime_context: LiveRuntimeContextClaimDraft | None = None,
+) -> LLMReply:
+    return contracted_final_reply(
+        final_text,
+        finalization_contract_draft=FinalizationContractDraft(
+            requires_result_coverage=requires_result_coverage,
+            requires_round_trip_report=requires_round_trip_report,
+            live_time=live_time,
+            live_runtime_context=live_runtime_context,
+        ),
+    )
+
+
+def _memory_write_reply(final_text: str, *, content: str | None = None) -> LLMReply:
+    return contracted_final_reply(
+        final_text,
+        finalization_contract_draft=FinalizationContractDraft(
+            memory_write=MemoryMutationClaimDraft(content=content)
+        ),
+    )
+
+
+def _memory_delete_reply(final_text: str, *, content: str | None = None) -> LLMReply:
+    return contracted_final_reply(
+        final_text,
+        finalization_contract_draft=FinalizationContractDraft(
+            memory_delete=MemoryMutationClaimDraft(content=content)
+        ),
+    )
 
 
 class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
@@ -40,9 +195,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="mock_search", tool_payload={"query": "codex"}),
-                LLMReply(
-                    final_text=(
-                        "done\n\n```tool_episode_summary\n"
+                contracted_final_reply(
+                    (
+                        "branch=main, issue_count=12, repo=openai/codex\n\n```tool_episode_summary\n"
                         '{"summary":"上一轮通过 mock_search 查询了 openai/codex，确认默认分支为 main。",'
                         '"facts":[{"key":"repo","value":"openai/codex"},{"key":"branch","value":"main"}],'
                         '"volatile":false,"keep_next_turn":true,"refresh_hint":""}'
@@ -76,12 +231,12 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self,
     ) -> None:
         tools = ToolRegistry()
-        tools.register("time", run_time_tool)
+        tools.register("time", _fixed_time_tool)
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="time", tool_payload={"timezone": "UTC"}),
-                LLMReply(final_text="现在是 UTC 时间"),
+                contracted_final_reply("现在是UTC 2026年4月20日 04:30"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -121,9 +276,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="mock_search", tool_payload={"query": "easy-agent"}),
-                LLMReply(
-                    final_text=(
-                        "已完成检查\n\n```tool_episode_summary\n"
+                contracted_final_reply(
+                    (
+                        "default_branch=main, full_name=CloudWide851/easy-agent, url=https://github.com/CloudWide851/easy-agent\n\n```tool_episode_summary\n"
                         '{"summary":"已完成检查该仓库。","facts":[],"volatile":false,"keep_next_turn":true,"refresh_hint":""}'
                         "\n```"
                     )
@@ -173,9 +328,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="mcp", tool_payload={"action": "call"}),
-                LLMReply(
-                    final_text=(
-                        "已完成检查\n\n```tool_episode_summary\n"
+                contracted_final_reply(
+                    (
+                        '{"items":[{"full_name":"CloudWide851/easy-agent","default_branch":"main"}]}\n\n```tool_episode_summary\n'
                         '{"summary":"上一轮通过 github MCP 查看了 easy-agent，并确认默认分支为 main。",'
                         '"facts":[{"key":"full_name","value":"CloudWide851/easy-agent"},{"key":"default_branch","value":"main"}],'
                         '"volatile":false,"keep_next_turn":true,"refresh_hint":""}'
@@ -222,9 +377,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="mock_search", tool_payload={"query": "easy-agent"}),
-                LLMReply(
-                    final_text=(
-                        "已完成检查\n\n```tool_episode_summary\n"
+                contracted_final_reply(
+                    (
+                        "default_branch=main, full_name=CloudWide851/easy-agent, url=https://github.com/CloudWide851/easy-agent\n\n```tool_episode_summary\n"
                         '{"summary":"已完成检查该仓库。","facts":[{"key":"full_name","value":"CloudWide851/easy-agent"}],"volatile":false,"keep_next_turn":true,"refresh_hint":""}'
                         "\n```"
                     )
@@ -275,9 +430,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="mock_search", tool_payload={"query": "easy-agent"}),
-                LLMReply(
-                    final_text=(
-                        "已完成检查\n\n```tool_episode_summary\n"
+                contracted_final_reply(
+                    (
+                        "default_branch=main, full_name=CloudWide851/easy-agent, url=https://github.com/CloudWide851/easy-agent\n\n```tool_episode_summary\n"
                         '{"summary":"已完成检查该仓库。","facts":[{"key":"full_name","value":"CloudWide851/easy-agent"}],"volatile":true,"keep_next_turn":false,"refresh_hint":""}'
                         "\n```"
                     )
@@ -315,14 +470,14 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self,
     ) -> None:
         tools = ToolRegistry()
-        tools.register("time", run_time_tool)
+        tools.register("time", _fixed_time_tool)
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="time", tool_payload={"timezone": "UTC"}),
-                LLMReply(
-                    final_text=(
-                        "现在是 UTC 时间\n\n```tool_episode_summary\n"
+                contracted_final_reply(
+                    (
+                        "现在是UTC 2026年4月20日 04:30\n\n```tool_episode_summary\n"
                         '{"summary":"调用了 time 工具并拿到了时间","facts":[],"volatile":false,"keep_next_turn":true,"refresh_hint":""}'
                         "\n```"
                     )
@@ -367,9 +522,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="mock_search", tool_payload={"query": "easy-agent"}),
-                LLMReply(
-                    final_text=(
-                        "已完成检查\n\n```tool_episode_summary\n"
+                contracted_final_reply(
+                    (
+                        "default_branch=main, full_name=CloudWide851/easy-agent\n\n```tool_episode_summary\n"
                         '{"summary":"已完成检查该仓库。","facts":[],"volatile":false,"keep_next_turn":false,"refresh_hint":""}'
                         "\n```"
                     )
@@ -409,9 +564,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="mcp", tool_payload={"action": "call"}),
-                LLMReply(
-                    final_text=(
-                        "已完成检查\n\n```tool_episode_summary\n"
+                contracted_final_reply(
+                    (
+                        '{"items":[{"full_name":"CloudWide851/easy-agent","default_branch":"main","html_url":"https://github.com/CloudWide851/easy-agent"}]}\n\n```tool_episode_summary\n'
                         '{"summary":"已完成检查该仓库。","facts":[],"volatile":false,"keep_next_turn":true,"refresh_hint":""}'
                         "\n```"
                     )
@@ -482,7 +637,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
     ) -> None:
         tools = ToolRegistry()
         history = InMemoryRunHistory()
-        llm = ScriptedLLMClient([LLMReply(final_text="done")])
+        llm = ScriptedLLMClient([contracted_final_reply("done")])
         runtime = RuntimeLoop(llm, tools, history)
 
         runtime.run(
@@ -514,7 +669,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
     ) -> None:
         tools = ToolRegistry()
         history = InMemoryRunHistory()
-        llm = ScriptedLLMClient([LLMReply(final_text="当前只回答这一轮。")])
+        llm = ScriptedLLMClient([contracted_final_reply("当前只回答这一轮。")])
         runtime = RuntimeLoop(llm, tools, history)
 
         runtime.run(
@@ -569,7 +724,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="mcp", tool_payload={"action": "list"}),
-                LLMReply(final_text="当前可用 MCP 服务共 1 个。"),
+                contracted_final_reply("当前可用 MCP 服务共 1 个。"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -592,7 +747,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
 
     def test_runtime_supports_multi_step_tool_loop_before_final(self) -> None:
         tools = ToolRegistry()
-        tools.register("time", run_time_tool)
+        tools.register("time", _fixed_time_tool)
         tools.register(
             "mock_search", lambda payload: {"result_text": f"search:{payload['query']}"}
         )
@@ -603,7 +758,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                 LLMReply(
                     tool_name="mock_search", tool_payload={"query": "utc follow-up"}
                 ),
-                LLMReply(final_text="done"),
+                contracted_final_reply(
+                    "当前是 UTC 04:30，补充搜索结果：search:utc follow-up。"
+                ),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -622,7 +779,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
-        self.assertEqual(events[-1].payload["text"], "done")
+        self.assertEqual(events[-1].payload["text"], "当前是 UTC 04:30，补充搜索结果：search:utc follow-up。")
         self.assertEqual(len(llm.requests), 3)
         self.assertEqual(llm.requests[1].tool_history[0].tool_name, "time")
         self.assertEqual(llm.requests[2].tool_history[1].tool_name, "mock_search")
@@ -633,7 +790,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self,
     ) -> None:
         tools = ToolRegistry()
-        tools.register("time", run_time_tool)
+        tools.register("time", _fixed_time_tool)
         tools.register(
             "runtime",
             lambda payload: {
@@ -686,13 +843,30 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                 LLMReply(tool_name="time", tool_payload={"timezone": "Asia/Shanghai"}),
                 LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
                 LLMReply(tool_name="mcp", tool_payload={"action": "list"}),
-                LLMReply(
+                _coverage_reply(
                     final_text=(
                         "现在是北京时间 2026年4月20日 12:30。\n\n"
-                        "当前上下文使用详情：当前估算占用 1200/184000 tokens（1%）。\n\n"
-                        "当前可用 MCP 服务共 1 个。\n\n"
-                        "本次请求发生了多次模型/工具往返。"
-                    )
+                        "当前上下文使用详情：当前估算占用 1234/184000 tokens（1%）。\n\n"
+                        "当前可用 MCP 服务共 1 个。\n- 1. github（38 个工具）\n\n"
+                        "本次请求共发生 4 次模型请求和 3 次工具调用，属于多次模型/工具往返。"
+                    ),
+                    requires_result_coverage=True,
+                    requires_round_trip_report=True,
+                    live_time=LiveTimeClaimDraft(
+                        facets=["time", "date"],
+                        year=2026,
+                        month=4,
+                        day=20,
+                        hour=12,
+                        minute=30,
+                    ),
+                    live_runtime_context=LiveRuntimeContextClaimDraft(
+                        numeric_claims=[
+                            RuntimeNumericClaimDraft(kind="estimated_usage", value=1234),
+                            RuntimeNumericClaimDraft(kind="effective_window", value=184000),
+                            RuntimeNumericClaimDraft(kind="usage_percent", value=1),
+                        ]
+                    ),
                 ),
             ]
         )
@@ -728,7 +902,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self,
     ) -> None:
         tools = ToolRegistry()
-        tools.register("time", run_time_tool)
+        tools.register("time", _fixed_time_tool)
         tools.register(
             "runtime",
             lambda payload: {
@@ -781,10 +955,12 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                 LLMReply(tool_name="time", tool_payload={"timezone": "Asia/Shanghai"}),
                 LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
                 LLMReply(tool_name="mcp", tool_payload={"action": "list"}),
-                LLMReply(
-                    final_text="当前可用 MCP 服务共 1 个。\n- 1. github（38 个工具，状态 discovered）"
+                _coverage_reply(
+                    "当前可用 MCP 服务共 1 个。\n- 1. github（38 个工具，状态 discovered）",
+                    requires_result_coverage=True,
+                    requires_round_trip_report=True,
                 ),
-                LLMReply(final_text="工具执行失败，请重试。"),
+                contracted_final_reply("工具执行失败，请重试。"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -817,7 +993,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self,
     ) -> None:
         tools = ToolRegistry()
-        tools.register("time", run_time_tool)
+        tools.register("time", _fixed_time_tool)
         tools.register(
             "runtime",
             lambda payload: {
@@ -848,8 +1024,12 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                 LLMReply(tool_name="time", tool_payload={"timezone": "Asia/Shanghai"}),
                 LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
                 LLMReply(tool_name="mcp", tool_payload={"action": "list"}),
-                LLMReply(final_text="已按顺序完成，且这次请求明确发生了多次模型/工具往返。"),
-                LLMReply(final_text="工具执行失败，请重试。"),
+                _coverage_reply(
+                    "已按顺序完成，且这次请求明确发生了多次模型/工具往返。",
+                    requires_result_coverage=True,
+                    requires_round_trip_report=True,
+                ),
+                contracted_final_reply("工具执行失败，请重试。"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -906,12 +1086,12 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self,
     ) -> None:
         tools = ToolRegistry()
-        tools.register("time", run_time_tool)
+        tools.register("time", _fixed_time_tool)
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="time", tool_payload={"timezone": "Asia/Shanghai"}),
-                LLMReply(final_text="现在是北京时间 2026-04-20 12:30，这轮查询已经完成。"),
+                contracted_final_reply("现在是北京时间 2026-04-20 12:30，这轮查询已经完成。"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -944,13 +1124,13 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self,
     ) -> None:
         tools = ToolRegistry()
-        tools.register("time", run_time_tool)
+        tools.register("time", _fixed_time_tool)
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="time", tool_payload={"timezone": "Asia/Shanghai"}),
-                LLMReply(final_text="工具执行失败，请重试。"),
-                LLMReply(final_text="现在是北京时间 2026-04-20 12:30，我已经基于现有结果完成回答。"),
+                contracted_final_reply("工具执行失败，请重试。"),
+                contracted_final_reply("现在是北京时间 2026-04-20 12:30，我已经基于现有结果完成回答。"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -980,6 +1160,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self.assertEqual(llm.requests[-1].available_tools, [])
         self.assertEqual(llm.requests[-1].requested_tool_name, None)
         self.assertEqual(llm.requests[-1].tool_result, None)
+        self.assertEqual(llm.requests[-1].invalid_final_text, "工具执行失败，请重试。")
         self.assertIsNotNone(llm.requests[1].finalization_evidence_ledger)
         self.assertEqual(llm.requests[1].finalization_evidence_ledger.tool_call_count, 1)
         self.assertIsNotNone(llm.requests[-1].finalization_evidence_ledger)
@@ -993,11 +1174,125 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self.assertEqual(run.finalization.missing_evidence_items, [])
         self.assertEqual(run.finalization.invalid_final_text, "工具执行失败，请重试。")
 
+    def test_runtime_finalization_retry_reuses_prior_grounded_mcp_summary(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        readme_summary = (
+            "已查看 `tiezhuli001/marten-runtime` 默认分支的 `README.md`。"
+            "主要章节包括快速开始、离线评测、仓库结构。"
+        )
+        final_retry_summary = (
+            f"{readme_summary} 本次请求共发生 3 次模型请求和 1 次工具调用，属于多次模型/工具往返。"
+        )
+
+        class RetryCarriesPriorSummaryLLM:
+            provider_name = "scripted"
+            model_name = "scripted-local"
+
+            def __init__(self) -> None:
+                self.requests = []
+
+            def complete(self, request):  # noqa: ANN001
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    return LLMReply(
+                        tool_name="mcp",
+                        tool_payload={
+                            "action": "call",
+                            "server_id": "github",
+                            "tool_name": "get_file_contents",
+                            "arguments": {
+                                "owner": "tiezhuli001",
+                                "repo": "marten-runtime",
+                                "path": "README.md",
+                            },
+                        },
+                    )
+                if len(self.requests) == 2:
+                    return _coverage_reply(
+                        readme_summary,
+                        requires_result_coverage=True,
+                        requires_round_trip_report=True,
+                    )
+                return contracted_final_reply(
+                    (
+                        f"{request.invalid_final_text} 本次请求共发生 3 次模型请求和 1 次工具调用，属于多次模型/工具往返。"
+                        if request.invalid_final_text
+                        else "当前可用 MCP 服务共 1 个。"
+                    )
+                )
+
+        llm = RetryCarriesPriorSummaryLLM()
+        runtime = RuntimeLoop(llm, tools, history)
+        tools.register(
+            "mcp",
+            lambda payload: {
+                "ok": True,
+                "action": "call",
+                "server_id": "github",
+                "tool_name": "get_file_contents",
+                "arguments": dict(payload.get("arguments") or {}),
+                "payload": {
+                    "owner": "tiezhuli001",
+                    "repo": "marten-runtime",
+                    "path": "README.md",
+                },
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "successfully downloaded text file (SHA: deadbeef)",
+                    },
+                    {
+                        "type": "resource",
+                        "resource": {
+                            "uri": "repo://tiezhuli001/marten-runtime/sha/deadbeef/contents/README.md",
+                            "mimeType": "text/plain; charset=utf-8",
+                            "text": (
+                                "# marten-runtime\n\n"
+                                "## 快速开始\n\n"
+                                "## 离线评测\n\n"
+                                "## 仓库结构\n"
+                            ),
+                        },
+                    },
+                ],
+                "result_text": "successfully downloaded text file (SHA: deadbeef)",
+            },
+        )
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["mcp"],
+        )
+
+        events = runtime.run(
+            session_id="sess_retry_prior_mcp_summary",
+            message="查看当前任务所指仓库的 README 结构，概括主要章节与组织方式，保留可复述摘要。",
+            trace_id="trace_retry_prior_mcp_summary",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], final_retry_summary)
+        self.assertEqual(
+            [request.request_kind for request in llm.requests],
+            ["interactive", "interactive", "finalization_retry"],
+        )
+        self.assertEqual(llm.requests[-1].invalid_final_text, readme_summary)
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.llm_request_count, 3)
+        self.assertEqual(run.finalization.assessment, "accepted")
+        self.assertEqual(run.finalization.request_kind, "finalization_retry")
+        self.assertEqual(run.finalization.invalid_final_text, readme_summary)
+
     def test_runtime_falls_back_to_recovery_fragments_when_retry_still_degrades(
         self,
     ) -> None:
         tools = ToolRegistry()
-        tools.register("time", run_time_tool)
+        tools.register("time", _fixed_time_tool)
         tools.register(
             "runtime",
             lambda payload: {
@@ -1050,10 +1345,10 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                 LLMReply(tool_name="time", tool_payload={"timezone": "Asia/Shanghai"}),
                 LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
                 LLMReply(tool_name="mcp", tool_payload={"action": "list"}),
-                LLMReply(
-                    final_text="当前可用 MCP 服务共 1 个。\n- 1. github（38 个工具，状态 discovered）"
+                contracted_final_reply(
+                    "当前可用 MCP 服务共 1 个。\n- 1. github（38 个工具，状态 discovered）"
                 ),
-                LLMReply(final_text="工具执行失败，请重试。"),
+                contracted_final_reply("工具执行失败，请重试。"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -1105,12 +1400,12 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self,
     ) -> None:
         tools = ToolRegistry()
-        tools.register("time", run_time_tool)
+        tools.register("time", _fixed_time_tool)
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="time", tool_payload={"timezone": "Asia/Shanghai"}),
-                LLMReply(final_text="工具执行失败，请重试。"),
+                contracted_final_reply("工具执行失败，请重试。"),
                 LLMReply(tool_name="time", tool_payload={"timezone": "UTC"}),
             ]
         )
@@ -1131,9 +1426,167 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
         self.assertIn("现在是北京时间", events[-1].payload["text"])
+
+    def test_runtime_uses_finalization_retry_before_compaction_tool_loop_limit_error(
+        self,
+    ) -> None:
+        class ToolLoopThenAnchoredRetryLLM:
+            provider_name = "scripted"
+            model_name = "tool-loop-then-retry"
+
+            def __init__(self) -> None:
+                self.requests = []
+
+            def complete(self, request):  # noqa: ANN001
+                self.requests.append(request)
+                if request.request_kind == "finalization_retry":
+                    return contracted_final_reply("继续日报同步告警排查，先补失败摘要。")
+                return LLMReply(
+                    tool_name="mcp",
+                    tool_payload={"action": "list", "finalize_response": False},
+                )
+
+        tools = ToolRegistry()
+        tools.register(
+            "mcp",
+            lambda payload: {
+                "ok": True,
+                "action": payload.get("action", "list"),
+                "servers": [{"server_id": "github", "tool_count": 38, "state": "discovered"}],
+                "result_text": '{"servers":[{"server_id":"github","tool_count":38,"state":"discovered"}]}',
+            },
+        )
+        history = InMemoryRunHistory()
+        llm = ToolLoopThenAnchoredRetryLLM()
+        runtime = RuntimeLoop(llm, tools, history)
+        runtime.max_tool_rounds = 1
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["mcp"],
+        )
+
+        events = runtime.run(
+            session_id="sess_compaction_tool_loop_retry",
+            message="在压缩后的上下文里继续执行。",
+            trace_id="trace_compaction_tool_loop_retry",
+            agent=agent,
+            compacted_context=CompactedContext(
+                compact_id="cmp_compaction_tool_loop_retry",
+                session_id="sess_compaction_tool_loop_retry",
+                summary_text=(
+                    "当前任务：日报同步告警排查。\n"
+                    "当前未完成事项：补失败摘要、核对卡片渲染差异、写出下一步动作。\n"
+                    "继续时直接沿着这三步推进，不要要求用户重复任务名。"
+                ),
+                source_message_range=[0, 40],
+                preserved_tail_user_turns=1,
+                trigger_kind="context_pressure_proactive",
+            ),
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "继续日报同步告警排查，先补失败摘要。")
+        self.assertEqual(
+            [request.request_kind for request in llm.requests],
+            ["interactive", "finalization_retry"],
+        )
+        self.assertIn("日报同步告警排查", llm.requests[-1].compact_summary_text or "")
+        self.assertIsNotNone(llm.requests[-1].finalization_evidence_ledger)
+        self.assertFalse(
+            llm.requests[-1].finalization_evidence_ledger.requires_result_coverage
+        )
+        self.assertFalse(
+            any(
+                item.required_for_user_request
+                for item in llm.requests[-1].finalization_evidence_ledger.items
+            )
+        )
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.status, "succeeded")
+        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["mcp"])
+        self.assertEqual(run.finalization.request_kind, "finalization_retry")
+        self.assertTrue(run.finalization.retry_triggered)
+        self.assertFalse(run.finalization.recovered_from_fragments)
+
+    def test_runtime_recovers_grounded_mcp_text_when_followup_contract_claim_is_wrong(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="mcp",
+                    tool_payload={
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "list_commits",
+                        "arguments": {
+                            "owner": "tiezhuli001",
+                            "repo": "marten-runtime",
+                            "per_page": 1,
+                        },
+                    },
+                ),
+                _live_runtime_reply(
+                    "仓库最近一次提交是 2026-04-20 12:30。",
+                    numeric_claims=[("effective_window", 184000)],
+                ),
+                contracted_final_reply("工具执行失败，请重试。"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        tools.register(
+            "mcp",
+            lambda payload: {
+                "ok": True,
+                "action": "call",
+                "server_id": "github",
+                "tool_name": "list_commits",
+                "arguments": dict(payload.get("arguments") or {}),
+                "payload": dict(payload.get("arguments") or {}),
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            '[{"sha":"deadbeef","commit":{"message":"fix compaction","author":{"date":"2026-04-20T04:30:00Z"}}}]'
+                        ),
+                    }
+                ],
+                "result_text": (
+                    '[{"sha":"deadbeef","commit":{"message":"fix compaction","author":{"date":"2026-04-20T04:30:00Z"}}}]'
+                ),
+            },
+        )
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["mcp"],
+        )
+
+        events = runtime.run(
+            session_id="sess_mcp_wrong_contract_recovery",
+            message="查询 tiezhuli001/marten-runtime 最近一次提交。",
+            trace_id="trace_mcp_wrong_contract_recovery",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertIn("最近一次提交是", events[-1].payload["text"])
+        self.assertEqual(
+            [request.request_kind for request in llm.requests],
+            ["interactive", "interactive", "finalization_retry"],
+        )
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.finalization.assessment, "retryable_degraded")
+        self.assertTrue(run.finalization.retry_triggered)
+        self.assertTrue(run.finalization.recovered_from_fragments)
         run = history.get(events[-1].run_id)
         self.assertEqual(run.llm_request_count, 3)
-        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["time"])
+        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["mcp"])
 
     def test_runtime_routes_session_list_through_followup_llm_without_finalize_response(
         self,
@@ -1143,8 +1596,8 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="session", tool_payload={"action": "list"}),
-                LLMReply(
-                    final_text=(
+                contracted_final_reply(
+                    (
                         "当前有 1 个可见会话。\n\n"
                         "| 序号 | 标题 | 状态 | 消息数 | 创建时间 | session_id |\n"
                         "| --- | --- | --- | --- | --- | --- |\n"
@@ -1269,8 +1722,16 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
-                LLMReply(final_text="已切换到会话 `sess_dcce8f9c`。"),
-                LLMReply(final_text="已切换到会话 `sess_dcce8f9c`。"),
+                _session_switch_reply(
+                    "已切换到会话 `sess_dcce8f9c`。",
+                    kind="resume_switch",
+                    session_id="sess_dcce8f9c",
+                ),
+                _session_switch_reply(
+                    "已切换到会话 `sess_dcce8f9c`。",
+                    kind="resume_switch",
+                    session_id="sess_dcce8f9c",
+                ),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -1326,7 +1787,11 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
-                LLMReply(final_text="已切换到会话 `sess_dcce8f9c`。"),
+                _session_switch_reply(
+                    "已切换到会话 `sess_dcce8f9c`。",
+                    kind="resume_switch",
+                    session_id="sess_dcce8f9c",
+                ),
                 LLMReply(
                     tool_name="session",
                     tool_payload={
@@ -1392,7 +1857,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
-                LLMReply(final_text="当前会话 id 是 sess_fake123。"),
+                _current_session_reply("当前会话 id 是 sess_fake123。", session_id="sess_fake123"),
                 LLMReply(
                     tool_name="session",
                     tool_payload={
@@ -1443,6 +1908,665 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self.assertEqual(run.contract_repair_outcome, "tool_call")
         self.assertEqual(run.contract_repair_selected_tool, "session")
 
+    def test_runtime_keeps_bare_current_session_id_reply_in_llm_path(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("sess_fake123")])
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["session"],
+        )
+
+        events = runtime.run(
+            session_id="sess_current_real",
+            message="告诉我当前会话 id",
+            trace_id="trace_bare_current_session_id_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "sess_fake123")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_keeps_bare_mixed_current_session_reply_in_llm_path(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("sess_fake123")])
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["session"],
+        )
+
+        events = runtime.run(
+            session_id="sess_current_real",
+            message="告诉我当前会话 id，并解释 current session id 字段",
+            trace_id="trace_mixed_current_session_id_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "sess_fake123")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_repairs_session_family_paraphrases_with_contract_repair(self) -> None:
+        cases = (
+            (
+                "what session am i in?",
+                "sess_fake123",
+                "session",
+                lambda payload: {
+                    "action": "show",
+                    "session": {
+                        "session_id": "sess_current_real",
+                        "session_title": "当前会话",
+                        "session_preview": "当前绑定会话详情。",
+                    },
+                },
+                {"action": "show", "finalize_response": True},
+            ),
+            (
+                "what session is this?",
+                "sess_fake123",
+                "session",
+                lambda payload: {
+                    "action": "show",
+                    "session": {
+                        "session_id": "sess_current_real",
+                        "session_title": "当前会话",
+                        "session_preview": "当前绑定会话详情。",
+                    },
+                },
+                {"action": "show", "finalize_response": True},
+            ),
+            (
+                "what's my current session?",
+                "sess_fake123",
+                "session",
+                lambda payload: {
+                    "action": "show",
+                    "session": {
+                        "session_id": "sess_current_real",
+                        "session_title": "当前会话",
+                        "session_preview": "当前绑定会话详情。",
+                    },
+                },
+                {"action": "show", "finalize_response": True},
+            ),
+            (
+                "what is my session id?",
+                "sess_fake123",
+                "session",
+                lambda payload: {
+                    "action": "show",
+                    "session": {
+                        "session_id": "sess_current_real",
+                        "session_title": "当前会话",
+                        "session_preview": "当前绑定会话详情。",
+                    },
+                },
+                {"action": "show", "finalize_response": True},
+            ),
+            (
+                "what's this session?",
+                "sess_fake123",
+                "session",
+                lambda payload: {
+                    "action": "show",
+                    "session": {
+                        "session_id": "sess_current_real",
+                        "session_title": "当前会话",
+                        "session_preview": "当前绑定会话详情。",
+                    },
+                },
+                {"action": "show", "finalize_response": True},
+            ),
+            (
+                "which chat session is this?",
+                "sess_fake123",
+                "session",
+                lambda payload: {
+                    "action": "show",
+                    "session": {
+                        "session_id": "sess_current_real",
+                        "session_title": "当前会话",
+                        "session_preview": "当前绑定会话详情。",
+                    },
+                },
+                {"action": "show", "finalize_response": True},
+            ),
+            (
+                "当前 session id 是什么？",
+                "sess_fake123",
+                "session",
+                lambda payload: {
+                    "action": "show",
+                    "session": {
+                        "session_id": "sess_current_real",
+                        "session_title": "当前会话",
+                        "session_preview": "当前绑定会话详情。",
+                    },
+                },
+                {"action": "show", "finalize_response": True},
+            ),
+            (
+                "which session am i currently in?",
+                "sess_fake123",
+                "session",
+                lambda payload: {
+                    "action": "show",
+                    "session": {
+                        "session_id": "sess_current_real",
+                        "session_title": "当前会话",
+                        "session_preview": "当前绑定会话详情。",
+                    },
+                },
+                {"action": "show", "finalize_response": True},
+            ),
+            (
+                "当前在哪个 session？",
+                "sess_fake123",
+                "session",
+                lambda payload: {
+                    "action": "show",
+                    "session": {
+                        "session_id": "sess_current_real",
+                        "session_title": "当前会话",
+                        "session_preview": "当前绑定会话详情。",
+                    },
+                },
+                {"action": "show", "finalize_response": True},
+            ),
+            (
+                "create another session.",
+                "Switched to a new session sess_demo123.",
+                "session",
+                lambda payload: {
+                    "action": "new",
+                    "transition": {
+                        "mode": "new_session",
+                        "binding_changed": True,
+                        "source_session_id": "sess_current",
+                        "target_session_id": "sess_new_real",
+                    },
+                    "session": {"session_id": "sess_new_real"},
+                },
+                {"action": "new", "finalize_response": True},
+            ),
+            (
+                "start a new session.",
+                "Switched to a new session sess_demo123.",
+                "session",
+                lambda payload: {
+                    "action": "new",
+                    "transition": {
+                        "mode": "new_session",
+                        "binding_changed": True,
+                        "source_session_id": "sess_current",
+                        "target_session_id": "sess_new_real",
+                    },
+                    "session": {"session_id": "sess_new_real"},
+                },
+                {"action": "new", "finalize_response": True},
+            ),
+            (
+                "create a session.",
+                "sess_fake123",
+                "session",
+                lambda payload: {
+                    "action": "new",
+                    "transition": {
+                        "mode": "new_session",
+                        "binding_changed": True,
+                        "source_session_id": "sess_current",
+                        "target_session_id": "sess_new_real",
+                    },
+                    "session": {"session_id": "sess_new_real"},
+                },
+                {"action": "new", "finalize_response": True},
+            ),
+            (
+                "create a session.",
+                "Accepted, the subagent will run in the background.",
+                "session",
+                lambda payload: {
+                    "action": "new",
+                    "transition": {
+                        "mode": "new_session",
+                        "binding_changed": True,
+                        "source_session_id": "sess_current",
+                        "target_session_id": "sess_new_real",
+                    },
+                    "session": {"session_id": "sess_new_real"},
+                },
+                {"action": "new", "finalize_response": True},
+            ),
+            (
+                "create a session.",
+                "Switched to a new session sess_demo123.",
+                "session",
+                lambda payload: {
+                    "action": "new",
+                    "transition": {
+                        "mode": "new_session",
+                        "binding_changed": True,
+                        "source_session_id": "sess_current",
+                        "target_session_id": "sess_new_real",
+                    },
+                    "session": {"session_id": "sess_new_real"},
+                },
+                {"action": "new", "finalize_response": True},
+            ),
+            (
+                "open a fresh session.",
+                "Switched to a new session sess_demo123.",
+                "session",
+                lambda payload: {
+                    "action": "new",
+                    "transition": {
+                        "mode": "new_session",
+                        "binding_changed": True,
+                        "source_session_id": "sess_current",
+                        "target_session_id": "sess_new_real",
+                    },
+                    "session": {"session_id": "sess_new_real"},
+                },
+                {"action": "new", "finalize_response": True},
+            ),
+            (
+                "open another chat session.",
+                "Switched to a new session sess_demo123.",
+                "session",
+                lambda payload: {
+                    "action": "new",
+                    "transition": {
+                        "mode": "new_session",
+                        "binding_changed": True,
+                        "source_session_id": "sess_current",
+                        "target_session_id": "sess_new_real",
+                    },
+                    "session": {"session_id": "sess_new_real"},
+                },
+                {"action": "new", "finalize_response": True},
+            ),
+            (
+                "spin up a subagent.",
+                "Accepted, the subagent will run in the background.",
+                "spawn_subagent",
+                lambda payload: {
+                    "ok": True,
+                    "status": "accepted",
+                    "task_id": "task_spawn_ack",
+                    "child_session_id": "sess_child_ack",
+                    "queue_state": "running",
+                },
+                {
+                    "task": "collect facts",
+                    "label": "subagent-test",
+                    "tool_profile": "standard",
+                    "notify_on_finish": True,
+                    "finalize_response": True,
+                },
+            ),
+            (
+                "create a subagent.",
+                "Accepted, the subagent will run in the background.",
+                "spawn_subagent",
+                lambda payload: {
+                    "ok": True,
+                    "status": "accepted",
+                    "task_id": "task_spawn_ack",
+                    "child_session_id": "sess_child_ack",
+                    "queue_state": "running",
+                },
+                {
+                    "task": "collect facts",
+                    "label": "subagent-test",
+                    "tool_profile": "standard",
+                    "notify_on_finish": True,
+                    "finalize_response": True,
+                },
+            ),
+            (
+                "open a subagent.",
+                "Accepted, the subagent will run in the background.",
+                "spawn_subagent",
+                lambda payload: {
+                    "ok": True,
+                    "status": "accepted",
+                    "task_id": "task_spawn_ack",
+                    "child_session_id": "sess_child_ack",
+                    "queue_state": "running",
+                },
+                {
+                    "task": "collect facts",
+                    "label": "subagent-test",
+                    "tool_profile": "standard",
+                    "notify_on_finish": True,
+                    "finalize_response": True,
+                },
+            ),
+            (
+                "launch a subagent.",
+                "Accepted, the subagent will run in the background.",
+                "spawn_subagent",
+                lambda payload: {
+                    "ok": True,
+                    "status": "accepted",
+                    "task_id": "task_spawn_ack",
+                    "child_session_id": "sess_child_ack",
+                    "queue_state": "running",
+                },
+                {
+                    "task": "collect facts",
+                    "label": "subagent-test",
+                    "tool_profile": "standard",
+                    "notify_on_finish": True,
+                    "finalize_response": True,
+                },
+            ),
+            (
+                "start a child agent.",
+                "Switched to a new session sess_demo123.",
+                "spawn_subagent",
+                lambda payload: {
+                    "ok": True,
+                    "status": "accepted",
+                    "task_id": "task_spawn_ack",
+                    "child_session_id": "sess_child_ack",
+                    "queue_state": "running",
+                },
+                {
+                    "task": "collect facts",
+                    "label": "subagent-test",
+                    "tool_profile": "standard",
+                    "notify_on_finish": True,
+                    "finalize_response": True,
+                },
+            ),
+            (
+                "start a child agent.",
+                "Accepted, the subagent will run in the background.",
+                "spawn_subagent",
+                lambda payload: {
+                    "ok": True,
+                    "status": "accepted",
+                    "task_id": "task_spawn_ack",
+                    "child_session_id": "sess_child_ack",
+                    "queue_state": "running",
+                },
+                {
+                    "task": "collect facts",
+                    "label": "subagent-test",
+                    "tool_profile": "standard",
+                    "notify_on_finish": True,
+                    "finalize_response": True,
+                },
+            ),
+            (
+                "spawn a child agent.",
+                "Accepted, the subagent will run in the background.",
+                "spawn_subagent",
+                lambda payload: {
+                    "ok": True,
+                    "status": "accepted",
+                    "task_id": "task_spawn_ack",
+                    "child_session_id": "sess_child_ack",
+                    "queue_state": "running",
+                },
+                {
+                    "task": "collect facts",
+                    "label": "subagent-test",
+                    "tool_profile": "standard",
+                    "notify_on_finish": True,
+                    "finalize_response": True,
+                },
+            ),
+            (
+                "现在在哪个session？",
+                "sess_fake123",
+                "session",
+                lambda payload: {
+                    "action": "show",
+                    "session": {
+                        "session_id": "sess_current_real",
+                        "session_title": "当前会话",
+                        "session_preview": "当前绑定会话详情。",
+                    },
+                },
+                {"action": "show", "finalize_response": True},
+            ),
+            (
+                "我现在在哪个session？",
+                "sess_fake123",
+                "session",
+                lambda payload: {
+                    "action": "show",
+                    "session": {
+                        "session_id": "sess_current_real",
+                        "session_title": "当前会话",
+                        "session_preview": "当前绑定会话详情。",
+                    },
+                },
+                {"action": "show", "finalize_response": True},
+            ),
+            (
+                "开一个子agent。",
+                "已受理，子 agent 会在后台执行。",
+                "spawn_subagent",
+                lambda payload: {
+                    "ok": True,
+                    "status": "accepted",
+                    "task_id": "task_spawn_ack",
+                    "child_session_id": "sess_child_ack",
+                    "queue_state": "running",
+                },
+                {
+                    "task": "collect facts",
+                    "label": "subagent-test",
+                    "tool_profile": "standard",
+                    "notify_on_finish": True,
+                    "finalize_response": True,
+                },
+            ),
+            (
+                "开一个子代理。",
+                "已受理，子 agent 会在后台执行。",
+                "spawn_subagent",
+                lambda payload: {
+                    "ok": True,
+                    "status": "accepted",
+                    "task_id": "task_spawn_ack",
+                    "child_session_id": "sess_child_ack",
+                    "queue_state": "running",
+                },
+                {
+                    "task": "collect facts",
+                    "label": "subagent-test",
+                    "tool_profile": "standard",
+                    "notify_on_finish": True,
+                    "finalize_response": True,
+                },
+            ),
+            (
+                "当前是哪个会话？",
+                "sess_fake123",
+                "session",
+                lambda payload: {
+                    "action": "show",
+                    "session": {
+                        "session_id": "sess_current_real",
+                        "session_title": "当前会话",
+                        "session_preview": "当前绑定会话详情。",
+                    },
+                },
+                {"action": "show", "finalize_response": True},
+            ),
+        )
+        for user_message, invalid_final, tool_name, tool_impl, repair_payload in cases:
+            with self.subTest(user_message=user_message, invalid_final=invalid_final):
+                if invalid_final == "Switched to a new session sess_demo123.":
+                    first_reply = _session_switch_reply(
+                        invalid_final,
+                        kind="new",
+                        session_id="sess_demo123",
+                    )
+                elif invalid_final == "Accepted, the subagent will run in the background.":
+                    first_reply = _spawn_reply(invalid_final, queue_state="running")
+                elif invalid_final == "已受理，子 agent 会在后台执行。":
+                    first_reply = _spawn_reply(invalid_final, queue_state="running")
+                else:
+                    first_reply = contracted_final_reply(invalid_final)
+                tools = ToolRegistry()
+                history = InMemoryRunHistory()
+                llm = ScriptedLLMClient(
+                    [
+                        first_reply,
+                        LLMReply(tool_name=tool_name, tool_payload=repair_payload),
+                    ]
+                )
+                runtime = RuntimeLoop(llm, tools, history)
+                tools.register(tool_name, tool_impl)
+                agent = AgentSpec(
+                    agent_id="main",
+                    role="general_assistant",
+                    app_id="main_agent",
+                    allowed_tools=["session", "spawn_subagent"],
+                )
+
+                events = runtime.run(
+                    session_id="sess_session_family_paraphrase_contract_repair",
+                    message=user_message,
+                    trace_id="trace_session_family_paraphrase_contract_repair",
+                    agent=agent,
+                )
+
+                self.assertEqual([event.event_type for event in events], ["progress", "final"])
+                run = history.get(events[-1].run_id)
+                expected_repair = invalid_final != "sess_fake123"
+                if expected_repair:
+                    self.assertEqual(len(llm.requests), 2)
+                    self.assertEqual(llm.requests[1].request_kind, "contract_repair")
+                    self.assertTrue(run.contract_repair_triggered)
+                    self.assertEqual(run.contract_repair_selected_tool, tool_name)
+                    self.assertEqual([item["tool_name"] for item in run.tool_calls], [tool_name])
+                else:
+                    self.assertEqual(len(llm.requests), 1)
+                    self.assertFalse(run.contract_repair_triggered)
+                    self.assertEqual(run.tool_calls, [])
+                    self.assertEqual(events[-1].payload["text"], "sess_fake123")
+
+    def test_runtime_does_not_contract_repair_current_session_copy_task(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("当前会话 id 字段示例：sess_demo123")])
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["session"],
+        )
+
+        events = runtime.run(
+            session_id="sess_current_session_copy_task",
+            message="帮我写一段当前会话 id 字段说明",
+            trace_id="trace_current_session_copy_task",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "当前会话 id 字段示例：sess_demo123")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_accepts_session_new_continuation_followup_without_forcing_contract_retry(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="session",
+                    tool_payload={"action": "new", "finalize_response": True},
+                ),
+                _session_switch_reply(
+                    "已切换到新会话（sess_new123）。继续“部署告警排查”任务。请补充最小必要信息。",
+                    kind="new",
+                    session_id="sess_new123",
+                ),
+                plain_final_reply(
+                    "已在新会话继续“部署告警排查”任务。请补充最小必要信息。"
+                ),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        tools.register(
+            "session",
+            lambda payload: {
+                "action": "new",
+                "transition": {
+                    "mode": "switched",
+                    "binding_changed": True,
+                    "source_session_id": "sess_old123",
+                    "target_session_id": "sess_new123",
+                    "compaction_attempted": False,
+                    "compaction_succeeded": False,
+                    "compaction_reason": None,
+                },
+                "session": {
+                    "session_id": "sess_new123",
+                    "message_count": 0,
+                    "state": "created",
+                    "created_at": "2026-04-19T15:30:41+00:00",
+                },
+            },
+        )
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["session"],
+        )
+
+        events = runtime.run(
+            session_id="sess_session_new_continuation_retry",
+            message="在新会话里继续刚才那个部署告警排查任务。",
+            trace_id="trace_session_new_continuation_retry",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(
+            events[-1].payload["text"],
+            "已切换到新会话\n- 消息数：0\n- 状态：created\n- 创建时间：2026-04-19 23:30:41",
+        )
+        self.assertEqual(
+            [request.request_kind for request in llm.requests],
+            ["interactive"],
+        )
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.llm_request_count, 1)
+        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["session"])
+        self.assertEqual(run.finalization.request_kind, "interactive")
+        self.assertEqual(run.finalization.assessment, "accepted")
+
     def test_runtime_rejects_session_resume_claim_with_wrong_session_id_after_real_tool(
         self,
     ) -> None:
@@ -1451,8 +2575,16 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="session", tool_payload={"action": "resume", "session_id": "sess_real"}),
-                LLMReply(final_text="已切换到会话 `sess_wrong`。"),
-                LLMReply(final_text="已切换到会话 `sess_wrong`。"),
+                _session_switch_reply(
+                    "已切换到会话 `sess_wrong`。",
+                    kind="resume_switch",
+                    session_id="sess_wrong",
+                ),
+                _session_switch_reply(
+                    "已切换到会话 `sess_wrong`。",
+                    kind="resume_switch",
+                    session_id="sess_wrong",
+                ),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -1506,7 +2638,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         tools = ToolRegistry()
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
-            [LLMReply(final_text="这个会话目前有 72 条消息。")]
+            [contracted_final_reply("这个会话目前有 72 条消息。")]
         )
         runtime = RuntimeLoop(llm, tools, history)
         tools.register(
@@ -1541,7 +2673,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         tools = ToolRegistry()
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
-            [LLMReply(final_text="这个会话目前有 72 条消息。")]
+            [contracted_final_reply("这个会话目前有 72 条消息。")]
         )
         runtime = RuntimeLoop(llm, tools, history)
         tools.register(
@@ -1579,8 +2711,16 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
-                LLMReply(final_text="当前已在会话 `sess_dcce8f9c`。"),
-                LLMReply(final_text="当前已在会话 `sess_dcce8f9c`。"),
+                _session_switch_reply(
+                    "当前已在会话 `sess_dcce8f9c`。",
+                    kind="resume_noop",
+                    session_id="sess_dcce8f9c",
+                ),
+                _session_switch_reply(
+                    "当前已在会话 `sess_dcce8f9c`。",
+                    kind="resume_noop",
+                    session_id="sess_dcce8f9c",
+                ),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -1634,8 +2774,8 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
-                LLMReply(final_text="已切换到新会话。"),
-                LLMReply(final_text="已切换到新会话。"),
+                _session_switch_reply("已切换到新会话。", kind="new"),
+                _session_switch_reply("已切换到新会话。", kind="new"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -1682,14 +2822,215 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self.assertEqual(run.llm_request_count, 2)
         self.assertEqual(run.tool_calls, [])
 
-    def test_runtime_repairs_unbacked_spawn_subagent_acceptance_claim_with_contract_repair(
-        self,
-    ) -> None:
+    def test_runtime_does_not_contract_repair_session_switch_copy_task(self) -> None:
         tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("已切换到新会话 sess_demo123。")])
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["session"],
+        )
+
+        events = runtime.run(
+            session_id="sess_session_switch_copy_task",
+            message="帮我写一段 session.new 成功提示文案",
+            trace_id="trace_session_switch_copy_task",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "已切换到新会话 sess_demo123。")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_repairs_mixed_live_session_switch_and_copy_request(self) -> None:
+        tools = ToolRegistry()
+        tools.register(
+            "session",
+            lambda payload: {
+                "action": "new",
+                "transition": {
+                    "mode": "switched",
+                    "binding_changed": True,
+                    "source_session_id": "sess_current",
+                    "target_session_id": "sess_new_direct",
+                    "compaction_attempted": False,
+                    "compaction_succeeded": False,
+                    "compaction_reason": None,
+                },
+                "session": {
+                    "session_id": "sess_new_direct",
+                    "message_count": 0,
+                    "state": "created",
+                    "created_at": "2026-04-20T06:00:00+00:00",
+                },
+            },
+        )
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
-                LLMReply(final_text="已受理，子 agent 正在后台执行，完成后会通知你结果。"),
+                _session_switch_reply(
+                    "已切换到新会话 sess_demo123。",
+                    kind="new",
+                    session_id="sess_demo123",
+                ),
+                LLMReply(
+                    tool_name="session",
+                    tool_payload={"action": "new", "finalize_response": True},
+                ),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["session"],
+        )
+
+        events = runtime.run(
+            session_id="sess_session_switch_mixed_request",
+            message="帮我新建一个会话，并写一段 session.new 成功提示文案",
+            trace_id="trace_session_switch_mixed_request",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertIn("已切换到新会话", events[-1].payload["text"])
+        self.assertEqual(len(llm.requests), 2)
+        self.assertEqual(llm.requests[1].request_kind, "contract_repair")
+        run = history.get(events[-1].run_id)
+        self.assertTrue(run.contract_repair_triggered)
+        self.assertEqual(run.contract_repair_selected_tool, "session")
+        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["session"])
+
+    def test_runtime_repairs_unbacked_spawn_subagent_acceptance_claim_with_contract_repair(
+        self,
+    ) -> None:
+        cases = (
+            ("已受理，子 agent 正在后台执行，完成后会通知你结果。", "running"),
+            ("Queued.", "queued"),
+            ("Task queued.", "queued"),
+            ("Running in the background.", "running"),
+            ("已在后台执行。", "running"),
+            ("已排队。", "queued"),
+        )
+        for invalid_final, queue_state in cases:
+            with self.subTest(invalid_final=invalid_final, queue_state=queue_state):
+                first_reply = _spawn_reply(
+                    invalid_final,
+                    queue_state=queue_state,
+                    notify_phrase="after_finish"
+                    if invalid_final == "已受理，子 agent 正在后台执行，完成后会通知你结果。"
+                    else None,
+                )
+                tools = ToolRegistry()
+                history = InMemoryRunHistory()
+                llm = ScriptedLLMClient(
+                    [
+                        first_reply,
+                        LLMReply(
+                            tool_name="spawn_subagent",
+                            tool_payload={
+                                "task": "查询最近一次提交",
+                                "label": "commit-check",
+                                "tool_profile": "standard",
+                                "notify_on_finish": True,
+                                "finalize_response": True,
+                            },
+                        ),
+                    ]
+                )
+                runtime = RuntimeLoop(llm, tools, history)
+                tools.register(
+                    "spawn_subagent",
+                    lambda payload, queue_state=queue_state: {
+                        "ok": True,
+                        "status": "accepted",
+                        "task_id": "task_spawn_ack",
+                        "child_session_id": "sess_child_ack",
+                        "effective_tool_profile": "standard",
+                        "queue_state": queue_state,
+                    },
+                )
+                agent = AgentSpec(
+                    agent_id="main",
+                    role="general_assistant",
+                    app_id="main_agent",
+                    allowed_tools=["spawn_subagent"],
+                )
+
+                events = runtime.run(
+                    session_id="sess_spawn_unbacked_claim",
+                    message="开启子代理查询最近一次提交",
+                    trace_id="trace_spawn_unbacked_claim",
+                    agent=agent,
+                )
+
+                self.assertEqual([event.event_type for event in events], ["progress", "final"])
+                if queue_state == "queued":
+                    self.assertIn("已进入队列", events[-1].payload["text"])
+                else:
+                    self.assertIn("正在后台执行", events[-1].payload["text"])
+                self.assertEqual(len(llm.requests), 2)
+                self.assertEqual(llm.requests[1].request_kind, "contract_repair")
+                self.assertIsNone(llm.requests[1].finalization_evidence_ledger)
+                self.assertEqual(llm.requests[1].invalid_final_text, invalid_final)
+                run = history.get(events[-1].run_id)
+                self.assertEqual(run.llm_request_count, 2)
+                self.assertEqual([item["tool_name"] for item in run.tool_calls], ["spawn_subagent"])
+                self.assertTrue(run.contract_repair_triggered)
+                self.assertEqual(run.contract_repair_outcome, "tool_call")
+                self.assertEqual(run.contract_repair_selected_tool, "spawn_subagent")
+
+    def test_runtime_does_not_contract_repair_spawn_subagent_copy_task(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("已受理，子 agent 会在后台执行。")])
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["spawn_subagent"],
+        )
+
+        events = runtime.run(
+            session_id="sess_spawn_copy_task",
+            message="帮我写一段子 agent 受理提示文案",
+            trace_id="trace_spawn_copy_task",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "已受理，子 agent 会在后台执行。")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_repairs_mixed_live_spawn_and_explanation_request(self) -> None:
+        tools = ToolRegistry()
+        tools.register(
+            "spawn_subagent",
+            lambda payload: {
+                "ok": True,
+                "status": "accepted",
+                "task_id": "task_spawn_ack",
+                "child_session_id": "sess_child_ack",
+                "effective_tool_profile": "standard",
+                "queue_state": "running",
+            },
+        )
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                _spawn_reply("已受理，子 agent 会在后台执行。", queue_state="running"),
                 LLMReply(
                     tool_name="spawn_subagent",
                     tool_payload={
@@ -1703,17 +3044,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
-        tools.register(
-            "spawn_subagent",
-            lambda payload: {
-                "ok": True,
-                "status": "accepted",
-                "task_id": "task_spawn_ack",
-                "child_session_id": "sess_child_ack",
-                "effective_tool_profile": "standard",
-                "queue_state": "running",
-            },
-        )
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
@@ -1722,27 +3052,20 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
 
         events = runtime.run(
-            session_id="sess_spawn_unbacked_claim",
-            message="开启子代理查询最近一次提交",
-            trace_id="trace_spawn_unbacked_claim",
+            session_id="sess_spawn_mixed_request",
+            message="帮我启动一个子 agent，并解释子 agent 受理消息是什么意思",
+            trace_id="trace_spawn_mixed_request",
             agent=agent,
         )
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
-        self.assertEqual(events[-1].payload["text"], "已受理，子 agent 正在后台执行，完成后会通知你结果。")
+        self.assertIn("已受理", events[-1].payload["text"])
         self.assertEqual(len(llm.requests), 2)
         self.assertEqual(llm.requests[1].request_kind, "contract_repair")
-        self.assertIsNone(llm.requests[1].finalization_evidence_ledger)
-        self.assertEqual(
-            llm.requests[1].invalid_final_text,
-            "已受理，子 agent 正在后台执行，完成后会通知你结果。",
-        )
         run = history.get(events[-1].run_id)
-        self.assertEqual(run.llm_request_count, 2)
-        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["spawn_subagent"])
         self.assertTrue(run.contract_repair_triggered)
-        self.assertEqual(run.contract_repair_outcome, "tool_call")
         self.assertEqual(run.contract_repair_selected_tool, "spawn_subagent")
+        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["spawn_subagent"])
 
     def test_runtime_rejects_unbacked_spawn_subagent_acceptance_claim_after_one_contract_repair(
         self,
@@ -1751,8 +3074,16 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
-                LLMReply(final_text="已受理，子 agent 正在后台执行，完成后会通知你结果。"),
-                LLMReply(final_text="已受理，子 agent 正在后台执行，完成后会通知你结果。"),
+                _spawn_reply(
+                    "已受理，子 agent 正在后台执行，完成后会通知你结果。",
+                    queue_state="running",
+                    notify_phrase="after_finish",
+                ),
+                _spawn_reply(
+                    "已受理，子 agent 正在后台执行，完成后会通知你结果。",
+                    queue_state="running",
+                    notify_phrase="after_finish",
+                ),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -1809,8 +3140,16 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                         "notify_on_finish": True,
                     },
                 ),
-                LLMReply(final_text="已受理，子 agent 正在后台执行，完成后会通知你结果。"),
-                LLMReply(final_text="已受理，子 agent 正在后台执行，完成后会通知你结果。"),
+                _spawn_reply(
+                    "已受理，子 agent 正在后台执行，完成后会通知你结果。",
+                    queue_state="running",
+                    notify_phrase="after_finish",
+                ),
+                _spawn_reply(
+                    "已受理，子 agent 正在后台执行，完成后会通知你结果。",
+                    queue_state="running",
+                    notify_phrase="after_finish",
+                ),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -1849,6 +3188,167 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         run = history.get(events[-1].run_id)
         self.assertEqual(run.llm_request_count, 3)
         self.assertEqual([item["tool_name"] for item in run.tool_calls], ["spawn_subagent"])
+
+    def test_runtime_recovers_spawn_subagent_acceptance_when_followup_tool_fails(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="spawn_subagent",
+                    tool_payload={
+                        "task": "查询最近一次提交时间",
+                        "label": "github-last-commit",
+                        "tool_profile": "standard",
+                        "notify_on_finish": True,
+                    },
+                ),
+                LLMReply(
+                    tool_name="mcp",
+                    tool_payload={
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "get_latest_commit",
+                        "arguments": {"owner": "tiezhuli001", "repo": "codex-skills"},
+                        "finalize_response": True,
+                    },
+                ),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        tools.register(
+            "spawn_subagent",
+            lambda payload: {
+                "ok": True,
+                "status": "accepted",
+                "task_id": "task_spawn_ack",
+                "child_session_id": "sess_child_ack",
+                "effective_tool_profile": "standard",
+                "queue_state": "running",
+            },
+        )
+        tools.register(
+            "mcp",
+            lambda payload: (_ for _ in ()).throw(RuntimeError("github mcp request timed out")),
+        )
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["spawn_subagent", "mcp"],
+        )
+
+        events = runtime.run(
+            session_id="sess_spawn_followup_tool_fail_recover",
+            message="开启子代理查询 github 上 tiezhuli001/codex-skills 最近一次提交是什么时候",
+            trace_id="trace_spawn_followup_tool_fail_recover",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(
+            events[-1].payload["text"],
+            "已受理，子 agent 正在后台执行，完成后会通知你结果。",
+        )
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.status, "succeeded")
+        self.assertEqual(run.llm_request_count, 2)
+        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["spawn_subagent", "mcp"])
+        self.assertIsNone(run.error_code)
+
+    def test_runtime_fails_when_target_mcp_call_errors_after_discovery_steps(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(tool_name="mcp", tool_payload={"action": "list", "server_id": "github"}),
+                LLMReply(tool_name="mcp", tool_payload={"action": "detail", "server_id": "github"}),
+                LLMReply(
+                    tool_name="mcp",
+                    tool_payload={
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "commits_list",
+                        "arguments": {
+                            "owner": "tiezhuli001",
+                            "repo": "codex-skills",
+                            "per_page": 1,
+                        },
+                    },
+                ),
+                contracted_final_reply("当前可用 MCP 服务共 1 个。"),
+                contracted_final_reply("GitHub MCP 提交查询失败：unhandled errors in a TaskGroup (1 sub-exception)"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+
+        def mcp_tool(payload):
+            action = str(payload.get("action") or "").strip()
+            if action == "list":
+                return {
+                    "action": "list",
+                    "servers": [
+                        {
+                            "server_id": "github",
+                            "state": "discovered",
+                            "tool_count": 38,
+                        }
+                    ],
+                }
+            if action == "detail":
+                return {
+                    "action": "detail",
+                    "server": {
+                        "server_id": "github",
+                        "state": "discovered",
+                        "tool_count": 38,
+                        "tools": [{"name": "list_commits"}],
+                    },
+                }
+            return {
+                "ok": False,
+                "is_error": True,
+                "error_code": "TOOL_EXECUTION_FAILED",
+                "error_text": "unhandled errors in a TaskGroup (1 sub-exception)",
+            }
+
+        tools.register("mcp", mcp_tool)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["mcp"],
+        )
+
+        events = runtime.run(
+            session_id="sess_mcp_target_call_error",
+            message="查询 tiezhuli001/codex-skills 最近一次提交。",
+            trace_id="trace_mcp_target_call_error",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(
+            events[-1].payload["text"],
+            "GitHub MCP 提交查询失败：unhandled errors in a TaskGroup (1 sub-exception)",
+        )
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.status, "succeeded")
+        self.assertEqual(
+            [request.request_kind for request in llm.requests],
+            ["interactive", "interactive", "interactive", "interactive", "finalization_retry"],
+        )
+        self.assertEqual(
+            [item["tool_payload"]["action"] for item in run.tool_calls],
+            ["list", "detail", "call"],
+        )
+        self.assertNotIn("当前可用 MCP 服务", events[-1].payload["text"])
+        self.assertEqual(run.finalization.request_kind, "finalization_retry")
+        self.assertTrue(run.finalization.retry_triggered)
 
     def test_runtime_finishes_from_first_accepted_spawn_subagent_when_followup_repeats_same_tool(
         self,
@@ -1910,6 +3410,74 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self.assertEqual(run.llm_request_count, 2)
         self.assertEqual([item["tool_name"] for item in run.tool_calls], ["spawn_subagent"])
 
+    def test_runtime_allows_second_distinct_spawn_subagent_for_remaining_child_task(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="spawn_subagent",
+                    tool_payload={
+                        "task": "查询最近一次提交时间",
+                        "label": "github-last-commit",
+                        "tool_profile": "standard",
+                        "notify_on_finish": True,
+                    },
+                ),
+                LLMReply(
+                    tool_name="spawn_subagent",
+                    tool_payload={
+                        "task": "梳理 README 结构",
+                        "label": "readme-structure",
+                        "tool_profile": "standard",
+                        "notify_on_finish": True,
+                    },
+                ),
+                _spawn_reply(
+                    "已受理，两个子 agent 正在后台执行，完成后会通知你结果。",
+                    queue_state="running",
+                    notify_phrase="after_finish",
+                ),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        tools.register(
+            "spawn_subagent",
+            lambda payload: {
+                "ok": True,
+                "status": "accepted",
+                "task_id": f"task_{payload.get('label')}",
+                "child_session_id": f"sess_{payload.get('label')}",
+                "effective_tool_profile": "standard",
+                "queue_state": "running",
+            },
+        )
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["spawn_subagent"],
+        )
+
+        events = runtime.run(
+            session_id="sess_spawn_two_children",
+            message="拆成两个子任务：一个查最近提交，一个梳理 README。",
+            trace_id="trace_spawn_two_children",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "已受理，两个子 agent 正在后台执行，完成后会通知你结果。")
+        self.assertEqual(len(llm.requests), 3)
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.llm_request_count, 3)
+        self.assertEqual(
+            [item["tool_payload"]["label"] for item in run.tool_calls],
+            ["github-last-commit", "readme-structure"],
+        )
+
     def test_runtime_keeps_followup_after_mcp_call_inside_multi_step_request(
         self,
     ) -> None:
@@ -1927,7 +3495,10 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                     },
                 ),
                 LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
-                LLMReply(final_text="CloudWide851/easy-agent 最近一次提交已获取；当前上下文使用详情：当前估算占用 100/184000 tokens（0%）。"),
+                contracted_final_reply(
+                    "CloudWide851/easy-agent 最近一次提交是 **2026-04-01 10:24:49**（北京时间）。"
+                    " 当前上下文使用详情：当前估算占用 100/184000 tokens（0%）。"
+                ),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -1995,7 +3566,10 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                     },
                 ),
                 LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
-                LLMReply(final_text="CloudWide851/easy-agent 最近一次提交已获取；当前上下文使用详情：当前估算占用 100/184000 tokens（0%）。"),
+                contracted_final_reply(
+                    "CloudWide851/easy-agent 最近一次提交是 **2026-04-01 10:24:49**（北京时间）。"
+                    " 当前上下文使用详情：当前估算占用 100/184000 tokens（0%）。"
+                ),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -2046,15 +3620,30 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         run = history.get(events[-1].run_id)
         self.assertEqual([item["tool_name"] for item in run.tool_calls], ["mcp", "runtime"])
 
-    def test_runtime_keeps_first_turn_live_time_query_on_model_selected_path(
+    def test_runtime_repairs_first_turn_live_time_query_with_contract_repair(
         self,
     ) -> None:
         tools = ToolRegistry()
-        tools.register("time", run_time_tool)
+        tools.register(
+            "time",
+            lambda payload: {
+                "timezone": "Asia/Shanghai",
+                "iso_time": "2026-04-20T21:37:00+08:00",
+            },
+        )
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
-                LLMReply(final_text="现在是北京时间 21:37。"),
+                _live_time_reply(
+                    "现在是北京时间 21:37。",
+                    facets=["time"],
+                    hour=21,
+                    minute=37,
+                ),
+                LLMReply(
+                    tool_name="time",
+                    tool_payload={"timezone": "Asia/Shanghai", "finalize_response": True},
+                ),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -2073,21 +3662,453 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
-        self.assertEqual(events[-1].payload["text"], "现在是北京时间 21:37。")
-        self.assertEqual(len(llm.requests), 1)
+        self.assertIn("现在是北京时间", events[-1].payload["text"])
+        self.assertEqual(len(llm.requests), 2)
         self.assertIsNone(llm.requests[0].requested_tool_name)
+        self.assertEqual(llm.requests[1].request_kind, "contract_repair")
         run = history.get(events[-1].run_id)
-        self.assertEqual(run.llm_request_count, 1)
+        self.assertEqual(run.llm_request_count, 2)
+        self.assertTrue(run.contract_repair_triggered)
+        self.assertEqual(run.contract_repair_reason, "invalid_first_turn_finalization_contract")
+        self.assertEqual(run.contract_repair_outcome, "tool_call")
+        self.assertEqual(run.contract_repair_selected_tool, "time")
+        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["time"])
+
+    def test_runtime_keeps_bare_mixed_live_time_reply_in_llm_path(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("21:37")])
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["time"],
+        )
+
+        events = runtime.run(
+            session_id="sess_time_mixed_contract_repair",
+            message="请告诉我现在几点，并解释一下 UTC 时间格式",
+            trace_id="trace_time_mixed_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "21:37")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
         self.assertEqual(run.tool_calls, [])
 
-    def test_runtime_keeps_first_turn_live_runtime_query_on_model_selected_path(
-        self,
-    ) -> None:
+    def test_runtime_keeps_bare_mixed_live_time_reply_with_inline_connector_in_llm_path(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("21:37")])
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["time"],
+        )
+
+        events = runtime.run(
+            session_id="sess_time_inline_connector_contract_repair",
+            message="请告诉我现在几点顺便解释一下 UTC 时间格式",
+            trace_id="trace_time_inline_connector_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "21:37")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_does_not_contract_repair_user_supplied_time_conversion_prompt(self) -> None:
         tools = ToolRegistry()
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
-                LLMReply(final_text="当前上下文大约 3000 tokens。"),
+                contracted_final_reply("UTC 时间是 13:37。"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["time"],
+        )
+
+        events = runtime.run(
+            session_id="sess_time_conversion_prompt",
+            message="把北京时间 21:37 转成 UTC 时间。",
+            trace_id="trace_time_conversion_prompt",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "UTC 时间是 13:37。")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_does_not_contract_repair_time_copy_task(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("例如可以显示 21:37。")])
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["time"],
+        )
+
+        events = runtime.run(
+            session_id="sess_time_copy_task",
+            message="写一段北京时间展示文案",
+            trace_id="trace_time_copy_task",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "例如可以显示 21:37。")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_does_not_contract_repair_time_explanation_tasks(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                contracted_final_reply("21:37 表示 9 点 37 分。"),
+                contracted_final_reply("例如返回 21:37。"),
+                contracted_final_reply("北京时间比 UTC 快 8 小时，比如 21:37 对应 13:37。"),
+                contracted_final_reply("例如返回 21:37。"),
+                contracted_final_reply("UTC time can look like 13:37."),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["time"],
+        )
+
+        first_events = runtime.run(
+            session_id="sess_time_explain_task",
+            message="解释一下北京时间格式",
+            trace_id="trace_time_explain_task",
+            agent=agent,
+        )
+        second_events = runtime.run(
+            session_id="sess_time_interface_task",
+            message="解释一下当前时间接口格式",
+            trace_id="trace_time_interface_task",
+            agent=agent,
+        )
+        third_events = runtime.run(
+            session_id="sess_time_difference_task",
+            message="北京时间和 UTC 时间差几个小时？",
+            trace_id="trace_time_difference_task",
+            agent=agent,
+        )
+        fourth_events = runtime.run(
+            session_id="sess_time_merge_field_explain_task",
+            message="说明合并后的当前时间接口格式",
+            trace_id="trace_time_merge_field_explain_task",
+            agent=agent,
+        )
+        fifth_events = runtime.run(
+            session_id="sess_time_english_explain_task",
+            message="explain UTC time",
+            trace_id="trace_time_english_explain_task",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in first_events], ["progress", "final"])
+        self.assertEqual([event.event_type for event in second_events], ["progress", "final"])
+        self.assertEqual([event.event_type for event in third_events], ["progress", "final"])
+        self.assertEqual([event.event_type for event in fourth_events], ["progress", "final"])
+        self.assertEqual([event.event_type for event in fifth_events], ["progress", "final"])
+        self.assertEqual(first_events[-1].payload["text"], "21:37 表示 9 点 37 分。")
+        self.assertEqual(second_events[-1].payload["text"], "例如返回 21:37。")
+        self.assertEqual(third_events[-1].payload["text"], "北京时间比 UTC 快 8 小时，比如 21:37 对应 13:37。")
+        self.assertEqual(fourth_events[-1].payload["text"], "例如返回 21:37。")
+        self.assertEqual(fifth_events[-1].payload["text"], "UTC time can look like 13:37.")
+        self.assertEqual(len(llm.requests), 5)
+        first_run = history.get(first_events[-1].run_id)
+        second_run = history.get(second_events[-1].run_id)
+        third_run = history.get(third_events[-1].run_id)
+        fourth_run = history.get(fourth_events[-1].run_id)
+        fifth_run = history.get(fifth_events[-1].run_id)
+        self.assertFalse(first_run.contract_repair_triggered)
+        self.assertFalse(second_run.contract_repair_triggered)
+        self.assertFalse(third_run.contract_repair_triggered)
+        self.assertFalse(fourth_run.contract_repair_triggered)
+        self.assertFalse(fifth_run.contract_repair_triggered)
+        self.assertEqual(first_run.tool_calls, [])
+        self.assertEqual(second_run.tool_calls, [])
+        self.assertEqual(third_run.tool_calls, [])
+        self.assertEqual(fourth_run.tool_calls, [])
+        self.assertEqual(fifth_run.tool_calls, [])
+
+    def test_runtime_repairs_first_turn_live_date_query_with_contract_repair(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        tools.register(
+            "time",
+            lambda payload: {
+                "timezone": "Asia/Shanghai",
+                "iso_time": "2026-05-03T21:37:00+08:00",
+            },
+        )
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                _live_time_reply(
+                    "今天是 5 月 3 日。",
+                    facets=["date"],
+                    month=5,
+                    day=3,
+                ),
+                LLMReply(
+                    tool_name="time",
+                    tool_payload={"timezone": "Asia/Shanghai", "finalize_response": True},
+                ),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["time"],
+        )
+
+        events = runtime.run(
+            session_id="sess_date_contract_repair",
+            message="今天几号？",
+            trace_id="trace_date_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertIn("2026年5月3日", events[-1].payload["text"])
+        self.assertEqual(len(llm.requests), 2)
+        self.assertEqual(llm.requests[1].request_kind, "contract_repair")
+        run = history.get(events[-1].run_id)
+        self.assertTrue(run.contract_repair_triggered)
+        self.assertEqual(run.contract_repair_selected_tool, "time")
+        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["time"])
+
+    def test_runtime_keeps_first_turn_bare_date_reply_in_llm_path(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("5月3日")])
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["time"],
+        )
+
+        events = runtime.run(
+            session_id="sess_bare_date_contract_repair",
+            message="现在是几月几号？",
+            trace_id="trace_bare_date_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "5月3日")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_keeps_first_turn_english_live_date_reply_in_llm_path(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("2026-05-03")])
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["time"],
+        )
+
+        events = runtime.run(
+            session_id="sess_english_date_contract_repair",
+            message="what is the current date?",
+            trace_id="trace_english_date_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "2026-05-03")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_keeps_first_turn_live_time_paraphrases_in_llm_path(self) -> None:
+        cases = (
+            ("what is the time?", "21:37"),
+            ("what's the time?", "21:37"),
+            ("what is the date?", "2026-05-03"),
+            ("what's the date?", "2026-05-03"),
+            ("what is my current date?", "2026-05-03"),
+            ("what's my current date?", "2026-05-03"),
+            ("what date is it?", "2026-05-03"),
+            ("what is the weekday?", "Sunday"),
+            ("what's the weekday?", "Sunday"),
+            ("what is my current weekday?", "Sunday"),
+            ("what's my current weekday?", "Sunday"),
+            ("what date is it today?", "2026-05-03"),
+            ("what date is it currently?", "2026-05-03"),
+            ("what date is it right now?", "May 3, 2026"),
+            ("what is the date right now?", "2026-05-03"),
+            ("what's the date right now?", "2026-05-03"),
+            ("what is the date now?", "2026-05-03"),
+            ("what's the date now?", "2026-05-03"),
+            ("what weekday is it?", "Sunday"),
+            ("what's the weekday today?", "Sunday"),
+            ("what weekday is it currently?", "Sunday"),
+            ("what weekday is it right now?", "Sunday"),
+            ("现在是什么时间？", "21:37"),
+            ("当前是几点钟？", "21:37"),
+            ("现在多少点？", "21:37"),
+            ("现在是啥时间？", "21:37"),
+            ("当前是啥日期？", "2026-05-03"),
+            ("现在啥日期？", "2026-05-03"),
+            ("当前是几号？", "2026-05-03"),
+            ("今天几号？", "今天是5月3号"),
+            ("今天几号？", "2026年5月3号"),
+            ("what is the current date?", "2026/05/03"),
+            ("what is the current date?", "2026.05.03"),
+            ("what is the current date?", "5/3/2026"),
+            ("今天礼拜几？", "星期日"),
+            ("今天星期几？", "礼拜天"),
+            ("今天礼拜几？", "礼拜日"),
+            ("今天周日吗？", "星期日"),
+            ("今天周天吗？", "星期日"),
+            ("今天礼拜天吗？", "星期日"),
+            ("今天星期天吗？", "星期日"),
+            ("what date is it today?", "3 May 2026"),
+        )
+        for user_message, invalid_final in cases:
+            with self.subTest(user_message=user_message, invalid_final=invalid_final):
+                tools = ToolRegistry()
+                tools.register(
+                    "time",
+                    lambda payload: {
+                        "timezone": "Asia/Shanghai",
+                        "iso_time": "2026-05-03T21:37:00+08:00",
+                    },
+                )
+                history = InMemoryRunHistory()
+                llm = ScriptedLLMClient(
+                    [
+                        contracted_final_reply(invalid_final),
+                        LLMReply(
+                            tool_name="time",
+                            tool_payload={"timezone": "Asia/Shanghai", "finalize_response": True},
+                        ),
+                    ]
+                )
+                runtime = RuntimeLoop(llm, tools, history)
+                agent = AgentSpec(
+                    agent_id="main",
+                    role="general_assistant",
+                    app_id="main_agent",
+                    allowed_tools=["time"],
+                )
+
+                events = runtime.run(
+                    session_id="sess_time_paraphrase_contract_repair",
+                    message=user_message,
+                    trace_id="trace_time_paraphrase_contract_repair",
+                    agent=agent,
+                )
+
+                self.assertEqual([event.event_type for event in events], ["progress", "final"])
+                run = history.get(events[-1].run_id)
+                self.assertEqual(events[-1].payload["text"], invalid_final)
+                self.assertEqual(len(llm.requests), 1)
+                self.assertFalse(run.contract_repair_triggered)
+                self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_keeps_first_turn_weekday_reply_in_llm_path(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("星期日")])
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["time"],
+        )
+
+        events = runtime.run(
+            session_id="sess_weekday_contract_repair",
+            message="今天星期几？",
+            trace_id="trace_weekday_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "星期日")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_repairs_first_turn_live_runtime_query_with_contract_repair(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        tools.register(
+            "runtime",
+            lambda payload: {
+                "action": "context_status",
+                "next_request_estimate": {
+                    "input_tokens_estimate": 3000,
+                    "effective_window_tokens": 184000,
+                    "context_window_tokens": 200000,
+                },
+                "usage_percent": 2,
+                "compaction_status": "none",
+            },
+        )
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                _live_runtime_reply(
+                    "当前上下文大约 3000 tokens。",
+                    numeric_claims=[("estimated_usage", 3000)],
+                ),
+                LLMReply(
+                    tool_name="runtime",
+                    tool_payload={"action": "context_status", "finalize_response": True},
+                ),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -2106,10 +4127,1120 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         )
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
-        self.assertEqual(events[-1].payload["text"], "当前上下文大约 3000 tokens。")
-        self.assertEqual(len(llm.requests), 1)
+        self.assertIn("当前上下文使用详情", events[-1].payload["text"])
+        self.assertEqual(len(llm.requests), 2)
         self.assertIsNone(llm.requests[0].requested_tool_name)
+        self.assertEqual(llm.requests[1].request_kind, "contract_repair")
         run = history.get(events[-1].run_id)
+        self.assertEqual(run.llm_request_count, 2)
+        self.assertTrue(run.contract_repair_triggered)
+        self.assertEqual(run.contract_repair_reason, "invalid_first_turn_finalization_contract")
+        self.assertEqual(run.contract_repair_outcome, "tool_call")
+        self.assertEqual(run.contract_repair_selected_tool, "runtime")
+        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["runtime"])
+
+    def test_runtime_keeps_bare_mixed_live_runtime_reply_in_llm_path(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("8")])
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["runtime"],
+        )
+
+        events = runtime.run(
+            session_id="sess_runtime_mixed_contract_repair",
+            message="当前 replay budget 多少，并解释 replay budget 是什么",
+            trace_id="trace_runtime_mixed_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "8")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_does_not_contract_repair_generic_compression_or_checkpoint_tasks(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                contracted_final_reply("这是 100 字摘要。"),
+                contracted_final_reply("可以采用双 checkpoint 方案。"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["runtime"],
+        )
+
+        first_events = runtime.run(
+            session_id="sess_generic_compression_task",
+            message="请把这段长文压缩成 100 字摘要。",
+            trace_id="trace_generic_compression_task",
+            agent=agent,
+        )
+        second_events = runtime.run(
+            session_id="sess_checkpoint_design_task",
+            message="帮我设计一个 checkpoint 方案。",
+            trace_id="trace_checkpoint_design_task",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in first_events], ["progress", "final"])
+        self.assertEqual([event.event_type for event in second_events], ["progress", "final"])
+        self.assertEqual(first_events[-1].payload["text"], "这是 100 字摘要。")
+        self.assertEqual(second_events[-1].payload["text"], "可以采用双 checkpoint 方案。")
+        self.assertEqual(len(llm.requests), 2)
+        first_run = history.get(first_events[-1].run_id)
+        second_run = history.get(second_events[-1].run_id)
+        self.assertFalse(first_run.contract_repair_triggered)
+        self.assertFalse(second_run.contract_repair_triggered)
+        self.assertEqual(first_run.tool_calls, [])
+        self.assertEqual(second_run.tool_calls, [])
+
+    def test_runtime_does_not_contract_repair_runtime_design_or_explanation_tasks(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                contracted_final_reply("可以按 8000 预算起步。"),
+                contracted_final_reply("很多实现会给出 184000 这样的有效窗口。"),
+                contracted_final_reply("它表示可回放的用户轮数，比如 8。"),
+                contracted_final_reply("Replay budget can be 8 in one design."),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["runtime"],
+        )
+
+        first_events = runtime.run(
+            session_id="sess_runtime_design_task",
+            message="帮我设计一个 replay budget 策略",
+            trace_id="trace_runtime_design_task",
+            agent=agent,
+        )
+        second_events = runtime.run(
+            session_id="sess_runtime_explain_task",
+            message="解释一下 effective window 概念",
+            trace_id="trace_runtime_explain_task",
+            agent=agent,
+        )
+        third_events = runtime.run(
+            session_id="sess_runtime_definition_task",
+            message="replay budget 是什么？",
+            trace_id="trace_runtime_definition_task",
+            agent=agent,
+        )
+        fourth_events = runtime.run(
+            session_id="sess_runtime_english_explain_task",
+            message="explain replay budget",
+            trace_id="trace_runtime_english_explain_task",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in first_events], ["progress", "final"])
+        self.assertEqual([event.event_type for event in second_events], ["progress", "final"])
+        self.assertEqual([event.event_type for event in third_events], ["progress", "final"])
+        self.assertEqual([event.event_type for event in fourth_events], ["progress", "final"])
+        self.assertEqual(first_events[-1].payload["text"], "可以按 8000 预算起步。")
+        self.assertEqual(second_events[-1].payload["text"], "很多实现会给出 184000 这样的有效窗口。")
+        self.assertEqual(third_events[-1].payload["text"], "它表示可回放的用户轮数，比如 8。")
+        self.assertEqual(fourth_events[-1].payload["text"], "Replay budget can be 8 in one design.")
+        self.assertEqual(len(llm.requests), 4)
+        first_run = history.get(first_events[-1].run_id)
+        second_run = history.get(second_events[-1].run_id)
+        third_run = history.get(third_events[-1].run_id)
+        fourth_run = history.get(fourth_events[-1].run_id)
+        self.assertFalse(first_run.contract_repair_triggered)
+        self.assertFalse(second_run.contract_repair_triggered)
+        self.assertFalse(third_run.contract_repair_triggered)
+        self.assertFalse(fourth_run.contract_repair_triggered)
+        self.assertEqual(first_run.tool_calls, [])
+        self.assertEqual(second_run.tool_calls, [])
+        self.assertEqual(third_run.tool_calls, [])
+        self.assertEqual(fourth_run.tool_calls, [])
+
+    def test_runtime_does_not_contract_repair_runtime_or_session_format_explanations(self) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                contracted_final_reply("这个字段可以是 8000。"),
+                contracted_final_reply("例如 sess_demo123。"),
+                contracted_final_reply("已切换到新会话 sess_demo123。"),
+                contracted_final_reply("已受理，子 agent 会在后台执行。"),
+                contracted_final_reply("它成功时通常会显示：已切换到新会话 sess_demo123。"),
+                contracted_final_reply("这个字段可以是 8000。"),
+                contracted_final_reply("例如 sess_demo123。"),
+                contracted_final_reply("当前会话 id 可能像 sess_demo123。"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["runtime", "session", "spawn_subagent"],
+        )
+
+        first_events = runtime.run(
+            session_id="sess_runtime_field_explain_task",
+            message="说明 replay budget 字段",
+            trace_id="trace_runtime_field_explain_task",
+            agent=agent,
+        )
+        second_events = runtime.run(
+            session_id="sess_session_field_explain_task",
+            message="解释 current session id 字段",
+            trace_id="trace_session_field_explain_task",
+            agent=agent,
+        )
+        third_events = runtime.run(
+            session_id="sess_session_new_format_task",
+            message="解释 session.new 成功消息格式",
+            trace_id="trace_session_new_format_task",
+            agent=agent,
+        )
+        fourth_events = runtime.run(
+            session_id="sess_subagent_format_task",
+            message="解释子 agent 受理消息格式",
+            trace_id="trace_subagent_format_task",
+            agent=agent,
+        )
+        fifth_events = runtime.run(
+            session_id="sess_session_new_definition_task",
+            message="session.new 是什么？",
+            trace_id="trace_session_new_definition_task",
+            agent=agent,
+        )
+        sixth_events = runtime.run(
+            session_id="sess_runtime_merge_field_explain_task",
+            message="说明合并后的 replay budget 字段格式",
+            trace_id="trace_runtime_merge_field_explain_task",
+            agent=agent,
+        )
+        seventh_events = runtime.run(
+            session_id="sess_session_merge_field_explain_task",
+            message="说明合并后的 current session id 字段格式",
+            trace_id="trace_session_merge_field_explain_task",
+            agent=agent,
+        )
+        eighth_events = runtime.run(
+            session_id="sess_session_plain_explain_task",
+            message="解释当前会话 id",
+            trace_id="trace_session_plain_explain_task",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in first_events], ["progress", "final"])
+        self.assertEqual([event.event_type for event in second_events], ["progress", "final"])
+        self.assertEqual([event.event_type for event in third_events], ["progress", "final"])
+        self.assertEqual([event.event_type for event in fourth_events], ["progress", "final"])
+        self.assertEqual([event.event_type for event in fifth_events], ["progress", "final"])
+        self.assertEqual([event.event_type for event in sixth_events], ["progress", "final"])
+        self.assertEqual([event.event_type for event in seventh_events], ["progress", "final"])
+        self.assertEqual([event.event_type for event in eighth_events], ["progress", "final"])
+        self.assertEqual(first_events[-1].payload["text"], "这个字段可以是 8000。")
+        self.assertEqual(second_events[-1].payload["text"], "例如 sess_demo123。")
+        self.assertEqual(third_events[-1].payload["text"], "已切换到新会话 sess_demo123。")
+        self.assertEqual(fourth_events[-1].payload["text"], "已受理，子 agent 会在后台执行。")
+        self.assertEqual(fifth_events[-1].payload["text"], "它成功时通常会显示：已切换到新会话 sess_demo123。")
+        self.assertEqual(sixth_events[-1].payload["text"], "这个字段可以是 8000。")
+        self.assertEqual(seventh_events[-1].payload["text"], "例如 sess_demo123。")
+        self.assertEqual(eighth_events[-1].payload["text"], "当前会话 id 可能像 sess_demo123。")
+        self.assertEqual(len(llm.requests), 8)
+        first_run = history.get(first_events[-1].run_id)
+        second_run = history.get(second_events[-1].run_id)
+        third_run = history.get(third_events[-1].run_id)
+        fourth_run = history.get(fourth_events[-1].run_id)
+        fifth_run = history.get(fifth_events[-1].run_id)
+        sixth_run = history.get(sixth_events[-1].run_id)
+        seventh_run = history.get(seventh_events[-1].run_id)
+        eighth_run = history.get(eighth_events[-1].run_id)
+        self.assertFalse(first_run.contract_repair_triggered)
+        self.assertFalse(second_run.contract_repair_triggered)
+        self.assertFalse(third_run.contract_repair_triggered)
+        self.assertFalse(fourth_run.contract_repair_triggered)
+        self.assertFalse(fifth_run.contract_repair_triggered)
+        self.assertFalse(sixth_run.contract_repair_triggered)
+        self.assertFalse(seventh_run.contract_repair_triggered)
+        self.assertFalse(eighth_run.contract_repair_triggered)
+        self.assertEqual(first_run.tool_calls, [])
+        self.assertEqual(second_run.tool_calls, [])
+        self.assertEqual(third_run.tool_calls, [])
+        self.assertEqual(fourth_run.tool_calls, [])
+        self.assertEqual(fifth_run.tool_calls, [])
+        self.assertEqual(sixth_run.tool_calls, [])
+        self.assertEqual(seventh_run.tool_calls, [])
+        self.assertEqual(eighth_run.tool_calls, [])
+
+    def test_runtime_keeps_first_turn_effective_window_reply_in_llm_path(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("184000")])
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["runtime"],
+        )
+
+        events = runtime.run(
+            session_id="sess_effective_window_contract_repair",
+            message="为什么有效窗口是 184000？",
+            trace_id="trace_effective_window_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "184000")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_keeps_first_turn_compaction_status_reply_in_llm_path(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("稳定。")])
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["runtime"],
+        )
+
+        events = runtime.run(
+            session_id="sess_compaction_status_contract_repair",
+            message="当前压缩状态怎么样？",
+            trace_id="trace_compaction_status_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "稳定。")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_keeps_first_turn_english_runtime_reply_in_llm_path(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("3000 tokens")])
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["runtime"],
+        )
+
+        events = runtime.run(
+            session_id="sess_english_runtime_contract_repair",
+            message="what is the current context window usage?",
+            trace_id="trace_english_runtime_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "3000 tokens")
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_keeps_first_turn_runtime_paraphrases_in_llm_path(self) -> None:
+        cases = (
+            ("what is the current compaction state?", "stable"),
+            ("what is the current context status?", "healthy"),
+            ("what is the current context status?", "normal"),
+            ("how much context is currently used?", "3000 tokens"),
+            ("当前检查点情况怎么样？", "稳定"),
+            ("当前压缩状态如何？", "正常"),
+            ("当前压缩情况如何？", "稳定"),
+            ("当前检查点情况如何？", "稳定"),
+            ("当前检查点情况如何？", "空闲"),
+        )
+        for user_message, invalid_final in cases:
+            with self.subTest(user_message=user_message, invalid_final=invalid_final):
+                tools = ToolRegistry()
+                tools.register(
+                    "runtime",
+                    lambda payload: {
+                        "action": "context_status",
+                        "next_request_estimate": {
+                            "input_tokens_estimate": 3000,
+                            "effective_window_tokens": 184000,
+                            "context_window_tokens": 200000,
+                        },
+                        "usage_percent": 2,
+                        "compaction_status": "none",
+                    },
+                )
+                history = InMemoryRunHistory()
+                llm = ScriptedLLMClient(
+                    [
+                        contracted_final_reply(invalid_final),
+                        LLMReply(
+                            tool_name="runtime",
+                            tool_payload={"action": "context_status", "finalize_response": True},
+                        ),
+                    ]
+                )
+                runtime = RuntimeLoop(llm, tools, history)
+                agent = AgentSpec(
+                    agent_id="main",
+                    role="general_assistant",
+                    app_id="main_agent",
+                    allowed_tools=["runtime"],
+                )
+
+                events = runtime.run(
+                    session_id="sess_runtime_paraphrase_contract_repair",
+                    message=user_message,
+                    trace_id="trace_runtime_paraphrase_contract_repair",
+                    agent=agent,
+                )
+
+                self.assertEqual([event.event_type for event in events], ["progress", "final"])
+                self.assertEqual(events[-1].payload["text"], invalid_final)
+                self.assertEqual(len(llm.requests), 1)
+                run = history.get(events[-1].run_id)
+                self.assertFalse(run.contract_repair_triggered)
+                self.assertEqual(run.tool_calls, [])
+
+    def test_runtime_repairs_unbacked_memory_delete_claim_with_contract_repair(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        tools.register(
+            "memory",
+            lambda payload: {
+                "action": "delete",
+                "intent": "durable_delete",
+                "ok": True,
+                "available": True,
+                "sections": {"preferences": []},
+            },
+        )
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                _memory_delete_reply("已删除该偏好。"),
+                LLMReply(
+                    tool_name="memory",
+                    tool_payload={
+                        "action": "delete",
+                        "intent": "durable_delete",
+                        "source_excerpt": "删除这个偏好：以后始终用中文回复。",
+                        "section": "preferences",
+                        "content": "以后始终用中文回复。",
+                    },
+                ),
+                _memory_delete_reply("已删除该偏好。", content="以后始终用中文回复。"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["memory"],
+        )
+
+        events = runtime.run(
+            session_id="sess_memory_delete_contract_repair",
+            message="删除这个偏好：以后始终用中文回复。",
+            trace_id="trace_memory_delete_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "已删除该偏好。")
+        self.assertEqual(len(llm.requests), 3)
+        self.assertEqual(llm.requests[1].request_kind, "contract_repair")
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.llm_request_count, 3)
+        self.assertTrue(run.contract_repair_triggered)
+        self.assertEqual(run.contract_repair_reason, "invalid_first_turn_finalization_contract")
+        self.assertEqual(run.contract_repair_outcome, "tool_call")
+        self.assertEqual(run.contract_repair_selected_tool, "memory")
+        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["memory"])
+
+    def test_runtime_repairs_memory_paraphrase_claims_with_contract_repair(self) -> None:
+        cases = (
+            (
+                "save it to memory.",
+                "Saved to memory.",
+                {
+                    "action": "append",
+                    "intent": "durable_write",
+                    "section": "preferences",
+                    "content": "Always answer in Chinese.",
+                },
+                "Saved to memory: Always answer in Chinese.",
+            ),
+            (
+                "save that to memory.",
+                "Saved that to memory.",
+                {
+                    "action": "append",
+                    "intent": "durable_write",
+                    "section": "preferences",
+                    "content": "Always answer in Chinese.",
+                },
+                "Saved that to memory: Always answer in Chinese.",
+            ),
+            (
+                "save this in memory.",
+                "Saved to memory.",
+                {
+                    "action": "append",
+                    "intent": "durable_write",
+                    "section": "preferences",
+                    "content": "Always answer in Chinese.",
+                },
+                "Saved to memory: Always answer in Chinese.",
+            ),
+            (
+                "save this into memory.",
+                "Deleted this memory.",
+                {
+                    "action": "append",
+                    "intent": "durable_write",
+                    "section": "preferences",
+                    "content": "Always answer in Chinese.",
+                },
+                "Saved to memory: Always answer in Chinese.",
+            ),
+            (
+                "save this into memory.",
+                "Saved to memory.",
+                {
+                    "action": "append",
+                    "intent": "durable_write",
+                    "section": "preferences",
+                    "content": "Always answer in Chinese.",
+                },
+                "Saved to memory: Always answer in Chinese.",
+            ),
+            (
+                "store it in memory.",
+                "Saved to memory.",
+                {
+                    "action": "append",
+                    "intent": "durable_write",
+                    "section": "preferences",
+                    "content": "Always answer in Chinese.",
+                },
+                "Saved to memory: Always answer in Chinese.",
+            ),
+            (
+                "store this into memory.",
+                "Stored in memory.",
+                {
+                    "action": "append",
+                    "intent": "durable_write",
+                    "section": "preferences",
+                    "content": "Always answer in Chinese.",
+                },
+                "Stored in memory: Always answer in Chinese.",
+            ),
+            (
+                "store this to memory.",
+                "Stored in memory.",
+                {
+                    "action": "append",
+                    "intent": "durable_write",
+                    "section": "preferences",
+                    "content": "Always answer in Chinese.",
+                },
+                "Stored in memory: Always answer in Chinese.",
+            ),
+            (
+                "add it to memory.",
+                "Added to memory.",
+                {
+                    "action": "append",
+                    "intent": "durable_write",
+                    "section": "preferences",
+                    "content": "Always answer in Chinese.",
+                },
+                "Added to memory: Always answer in Chinese.",
+            ),
+            (
+                "delete it from memory.",
+                "Deleted from memory.",
+                {
+                    "action": "delete",
+                    "intent": "durable_delete",
+                    "section": "preferences",
+                    "content": "Always answer in Chinese.",
+                },
+                "Deleted from memory: Always answer in Chinese.",
+            ),
+            (
+                "delete this memory.",
+                "Saved to memory.",
+                {
+                    "action": "delete",
+                    "intent": "durable_delete",
+                    "section": "preferences",
+                    "content": "Always answer in Chinese.",
+                },
+                "Deleted this memory: Always answer in Chinese.",
+            ),
+            (
+                "删掉这条记忆。",
+                "已删除该偏好。",
+                {
+                    "action": "delete",
+                    "intent": "durable_delete",
+                    "section": "preferences",
+                    "content": "以后始终用中文回复。",
+                },
+                "已删除该偏好：以后始终用中文回复。",
+            ),
+            (
+                "删除这条记忆。",
+                "记住了。",
+                {
+                    "action": "delete",
+                    "intent": "durable_delete",
+                    "section": "preferences",
+                    "content": "以后始终用中文回复。",
+                },
+                "已删除该偏好：以后始终用中文回复。",
+            ),
+            (
+                "删了这条记忆。",
+                "已删除该偏好。",
+                {
+                    "action": "delete",
+                    "intent": "durable_delete",
+                    "section": "preferences",
+                    "content": "以后始终用中文回复。",
+                },
+                "已删除该偏好：以后始终用中文回复。",
+            ),
+            (
+                "清除这条记忆。",
+                "已删除该偏好。",
+                {
+                    "action": "delete",
+                    "intent": "durable_delete",
+                    "section": "preferences",
+                    "content": "以后始终用中文回复。",
+                },
+                "已删除该偏好：以后始终用中文回复。",
+            ),
+            (
+                "删除这条记忆。",
+                "已删除该偏好。",
+                {
+                    "action": "delete",
+                    "intent": "durable_delete",
+                    "section": "preferences",
+                    "content": "以后始终用中文回复。",
+                },
+                "已删除该偏好：以后始终用中文回复。",
+            ),
+            (
+                "记住以后始终用中文回复",
+                "已删除该偏好。",
+                {
+                    "action": "append",
+                    "intent": "durable_write",
+                    "section": "preferences",
+                    "content": "以后始终用中文回复。",
+                },
+                "记住了：以后始终用中文回复。",
+            ),
+            (
+                "移除这条记忆。",
+                "已删除该偏好。",
+                {
+                    "action": "delete",
+                    "intent": "durable_delete",
+                    "section": "preferences",
+                    "content": "以后始终用中文回复。",
+                },
+                "已删除该偏好：以后始终用中文回复。",
+            ),
+            (
+                "remove that memory.",
+                "Deleted that memory.",
+                {
+                    "action": "delete",
+                    "intent": "durable_delete",
+                    "section": "preferences",
+                    "content": "Always answer in Chinese.",
+                },
+                "Deleted that memory: Always answer in Chinese.",
+            ),
+            (
+                "delete this saved memory.",
+                "Deleted this memory.",
+                {
+                    "action": "delete",
+                    "intent": "durable_delete",
+                    "section": "preferences",
+                    "content": "Always answer in Chinese.",
+                },
+                "Deleted this memory: Always answer in Chinese.",
+            ),
+        )
+        for user_message, invalid_final, tool_payload, repaired_final in cases:
+            with self.subTest(user_message=user_message, invalid_final=invalid_final):
+                tool_payload = dict(tool_payload, source_excerpt=user_message)
+                if invalid_final in {
+                    "Saved to memory.",
+                    "Saved that to memory.",
+                    "Stored in memory.",
+                    "Added to memory.",
+                    "记住了。",
+                }:
+                    first_reply = _memory_write_reply(invalid_final)
+                elif invalid_final in {
+                    "Deleted from memory.",
+                    "Deleted this memory.",
+                    "Deleted that memory.",
+                    "已删除该偏好。",
+                }:
+                    first_reply = _memory_delete_reply(invalid_final)
+                else:
+                    first_reply = contracted_final_reply(invalid_final)
+                tools = ToolRegistry()
+                tools.register(
+                    "memory",
+                    lambda payload: {
+                        "action": payload["action"],
+                        "ok": True,
+                        "available": True,
+                        "sections": {
+                            "preferences": []
+                            if payload["action"] == "delete"
+                            else [str(payload.get("content") or "")]
+                        },
+                    },
+                )
+                history = InMemoryRunHistory()
+                llm = ScriptedLLMClient(
+                    [
+                        first_reply,
+                        LLMReply(tool_name="memory", tool_payload=tool_payload),
+                        (
+                            _memory_delete_reply(repaired_final, content=str(tool_payload.get("content") or ""))
+                            if str(tool_payload.get("action") or "") == "delete"
+                            else _memory_write_reply(repaired_final, content=str(tool_payload.get("content") or ""))
+                        ),
+                    ]
+                )
+                runtime = RuntimeLoop(llm, tools, history)
+                agent = AgentSpec(
+                    agent_id="main",
+                    role="general_assistant",
+                    app_id="main_agent",
+                    allowed_tools=["memory"],
+                )
+
+                events = runtime.run(
+                    session_id="sess_memory_paraphrase_contract_repair",
+                    message=user_message,
+                    trace_id="trace_memory_paraphrase_contract_repair",
+                    agent=agent,
+                )
+
+                self.assertEqual([event.event_type for event in events], ["progress", "final"])
+                self.assertEqual(llm.requests[1].request_kind, "contract_repair")
+                run = history.get(events[-1].run_id)
+                self.assertTrue(run.contract_repair_triggered)
+                self.assertEqual(run.contract_repair_selected_tool, "memory")
+                self.assertEqual([item["tool_name"] for item in run.tool_calls], ["memory"])
+
+    def test_runtime_repairs_unbacked_english_memory_write_claim_with_contract_repair(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        tools.register(
+            "memory",
+            lambda payload: {
+                "action": "append",
+                "intent": "durable_write",
+                "ok": True,
+                "available": True,
+                "sections": {"preferences": ["Always answer in Chinese."]},
+            },
+        )
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                _memory_write_reply("Saved to memory."),
+                LLMReply(
+                    tool_name="memory",
+                    tool_payload={
+                        "action": "append",
+                        "intent": "durable_write",
+                        "source_excerpt": "Remember this and save this to memory.",
+                        "section": "preferences",
+                        "content": "Always answer in Chinese.",
+                    },
+                ),
+                _memory_write_reply(
+                    "Saved to memory: Always answer in Chinese.",
+                    content="Always answer in Chinese.",
+                ),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["memory"],
+        )
+
+        events = runtime.run(
+            session_id="sess_english_memory_write_contract_repair",
+            message="Remember this and save this to memory.",
+            trace_id="trace_english_memory_write_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "Saved to memory: Always answer in Chinese.")
+        self.assertEqual(len(llm.requests), 3)
+        self.assertEqual(llm.requests[1].request_kind, "contract_repair")
+        run = history.get(events[-1].run_id)
+        self.assertTrue(run.contract_repair_triggered)
+        self.assertEqual(run.contract_repair_selected_tool, "memory")
+        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["memory"])
+
+    def test_runtime_repairs_unbacked_english_memory_delete_claim_with_contract_repair(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        tools.register(
+            "memory",
+            lambda payload: {
+                "action": "delete",
+                "intent": "durable_delete",
+                "ok": True,
+                "available": True,
+                "sections": {"preferences": []},
+            },
+        )
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                _memory_delete_reply("Deleted this memory."),
+                LLMReply(
+                    tool_name="memory",
+                    tool_payload={
+                        "action": "delete",
+                        "intent": "durable_delete",
+                        "source_excerpt": "Delete this memory.",
+                        "section": "preferences",
+                        "content": "Always answer in Chinese.",
+                    },
+                ),
+                _memory_delete_reply(
+                    "Deleted this memory: Always answer in Chinese.",
+                    content="Always answer in Chinese.",
+                ),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["memory"],
+        )
+
+        events = runtime.run(
+            session_id="sess_english_memory_delete_contract_repair",
+            message="Delete this memory.",
+            trace_id="trace_english_memory_delete_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "Deleted this memory: Always answer in Chinese.")
+        self.assertEqual(len(llm.requests), 3)
+        self.assertEqual(llm.requests[1].request_kind, "contract_repair")
+        run = history.get(events[-1].run_id)
+        self.assertTrue(run.contract_repair_triggered)
+        self.assertEqual(run.contract_repair_selected_tool, "memory")
+        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["memory"])
+
+    def test_runtime_retries_when_memory_write_confirmation_claims_wrong_content_after_real_tool(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        tools.register(
+            "memory",
+            lambda payload: {
+                "action": "append",
+                "intent": "durable_write",
+                "ok": True,
+                "available": True,
+                "sections": {"preferences": ["以后始终用中文回复。"]},
+            },
+        )
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="memory",
+                    tool_payload={
+                        "action": "append",
+                        "intent": "durable_write",
+                        "source_excerpt": "记住以后始终用中文回复",
+                        "section": "preferences",
+                        "content": "以后始终用中文回复。",
+                    },
+                ),
+                _memory_write_reply("记住了，以后始终用英文回复。", content="以后始终用英文回复。"),
+                _memory_write_reply("记住了：以后始终用中文回复。", content="以后始终用中文回复。"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["memory"],
+        )
+
+        events = runtime.run(
+            session_id="sess_memory_write_wrong_comma_confirmation",
+            message="记住以后始终用中文回复",
+            trace_id="trace_memory_write_wrong_comma_confirmation",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "记住了：以后始终用中文回复。")
+        self.assertEqual(
+            [request.request_kind for request in llm.requests],
+            ["interactive", "interactive", "finalization_retry"],
+        )
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.llm_request_count, 3)
+        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["memory"])
+        self.assertFalse(run.contract_repair_triggered)
+        self.assertEqual(run.finalization.request_kind, "finalization_retry")
+        self.assertEqual(run.finalization.assessment, "accepted")
+
+    def test_runtime_keeps_finalization_retry_text_when_it_covers_memory_read_tokens(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        tools.register(
+            "memory",
+            lambda payload: {
+                "ok": True,
+                "action": "get",
+                "available": True,
+                "sections": {"tasks": ["排查部署告警"]},
+            },
+        )
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(tool_name="memory", tool_payload={"action": "get"}),
+                contracted_final_reply("好的。"),
+                contracted_final_reply("继续排查部署告警，需要补充告警来源或关键日志。"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["memory"],
+        )
+
+        events = runtime.run(
+            session_id="sess_memory_read_retry_keeps_answer",
+            message="在新会话里继续刚才那个部署告警排查任务。",
+            trace_id="trace_memory_read_retry_keeps_answer",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(
+            events[-1].payload["text"],
+            "继续排查部署告警，需要补充告警来源或关键日志。",
+        )
+        self.assertEqual(
+            [request.request_kind for request in llm.requests],
+            ["interactive", "interactive", "finalization_retry"],
+        )
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.finalization.assessment, "accepted")
+        self.assertEqual(run.finalization.request_kind, "finalization_retry")
+        self.assertTrue(run.finalization.retry_triggered)
+        self.assertFalse(run.finalization.recovered_from_fragments)
+
+    def test_runtime_keeps_finalization_retry_text_when_only_contract_block_is_missing(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        tools.register(
+            "skill",
+            lambda payload: {
+                "action": "load",
+                "skill_id": payload.get("skill_id"),
+                "name": "Self Improve Management",
+                "description": "inspect runtime-learned rules",
+                "body": "Use the self_improve family tool to inspect runtime-learned candidate rules and active lessons.",
+            },
+        )
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(tool_name="skill", tool_payload={"action": "load", "skill_id": "self_improve_management"}),
+                contracted_final_reply("action=load, body=Use the self_improve family tool to inspect runtime-learned candidate rules."),
+                plain_final_reply("这个 skill 用于查看运行时自我改进候选规则与已激活教训。"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["skill"],
+        )
+
+        events = runtime.run(
+            session_id="sess_skill_missing_retry_contract",
+            message="读取 self_improve_management 这个 skill 并用一句话说明用途。",
+            trace_id="trace_skill_missing_retry_contract",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(
+            events[-1].payload["text"],
+            "这个 skill 用于查看运行时自我改进候选规则与已激活教训。",
+        )
+        self.assertEqual(
+            [request.request_kind for request in llm.requests],
+            ["interactive", "interactive", "finalization_retry"],
+        )
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.finalization.assessment, "retryable_degraded")
+        self.assertEqual(run.finalization.request_kind, "finalization_retry")
+        self.assertTrue(run.finalization.retry_triggered)
+        self.assertFalse(run.finalization.recovered_from_fragments)
+        self.assertEqual(
+            run.finalization.invalid_final_text,
+            "这个 skill 用于查看运行时自我改进候选规则与已激活教训。",
+        )
+
+    def test_runtime_keeps_contract_repair_text_when_only_contract_block_is_missing(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                plain_final_reply("当前会话中没有找到部署告警排查任务。"),
+                plain_final_reply("继续跟进部署告警排查任务。"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=[],
+        )
+
+        events = runtime.run(
+            session_id="sess_contract_repair_text_missing_contract",
+            message="继续跟进上一轮那个部署告警排查任务。",
+            trace_id="trace_contract_repair_text_missing_contract",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "继续跟进部署告警排查任务。")
+        self.assertEqual(
+            [request.request_kind for request in llm.requests],
+            ["interactive", "contract_repair"],
+        )
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.status, "succeeded")
+        self.assertEqual(run.finalization.assessment, "retryable_degraded")
+        self.assertEqual(run.finalization.request_kind, "contract_repair")
+        self.assertTrue(run.finalization.retry_triggered)
+        self.assertEqual(run.finalization.invalid_final_text, "继续跟进部署告警排查任务。")
+        self.assertEqual(run.contract_repair_outcome, "final_text_missing_contract")
+
+    def test_runtime_allows_memory_readback_reply_without_misclassifying_it_as_new_write(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                contracted_final_reply("记住了：以后始终用中文回复。"),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            app_id="main_agent",
+            allowed_tools=["memory"],
+        )
+
+        events = runtime.run(
+            session_id="sess_memory_readback_contract",
+            message="继续当前任务，并说明你记住了什么。",
+            trace_id="trace_memory_readback_contract",
+            agent=agent,
+            memory_text="User memory:\n# MEMORY\n\n## preferences\n- 以后始终用中文回复。",
+            recent_tool_outcome_summaries=[
+                {
+                    "summary_text": "已将用户的语言回复偏好写入长期记忆：以后始终用中文回复。",
+                    "volatile": False,
+                    "keep_next_turn": True,
+                    "refresh_hint": "下轮直接按该偏好使用中文回复，无需重复确认。",
+                }
+            ],
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertIn("以后始终用中文回复", events[-1].payload["text"])
+        self.assertEqual(len(llm.requests), 1)
+        run = history.get(events[-1].run_id)
+        self.assertFalse(run.contract_repair_triggered)
         self.assertEqual(run.llm_request_count, 1)
         self.assertEqual(run.tool_calls, [])
 
@@ -2130,8 +5261,8 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                         "finalize_response": True,
                     },
                 ),
-                LLMReply(final_text="工具执行失败，请重试。"),
-                LLMReply(final_text="工具执行失败，请重试。"),
+                contracted_final_reply("工具执行失败，请重试。"),
+                contracted_final_reply("工具执行失败，请重试。"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -2220,8 +5351,8 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="mock_search", tool_payload={"query": "now"}),
-                LLMReply(final_text=""),
-                LLMReply(final_text=""),
+                contracted_final_reply(""),
+                contracted_final_reply(""),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -2350,7 +5481,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         tools = ToolRegistry()
         history = InMemoryRunHistory()
         runtime = RuntimeLoop(
-            ScriptedLLMClient([LLMReply(final_text="done")]),
+            ScriptedLLMClient([contracted_final_reply("done")]),
             tools,
             history,
             self_improve_post_commit_callback=lambda *, agent_id: (_ for _ in ()).throw(RuntimeError(f"boom:{agent_id}")),
@@ -2377,7 +5508,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                 return LLMReply(tool_name="time", tool_payload={"timezone": "UTC"})
 
         tools = ToolRegistry()
-        tools.register("time", run_time_tool)
+        tools.register("time", _fixed_time_tool)
         history = InMemoryRunHistory()
         runtime = RuntimeLoop(EndlessToolLLMClient(), tools, history)
         runtime.max_tool_rounds = 1
@@ -2417,7 +5548,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                 self_improve_recorder=recorder,
             )
             success_runtime = RuntimeLoop(
-                ScriptedLLMClient([LLMReply(final_text="done")]),
+                ScriptedLLMClient([contracted_final_reply("done")]),
                 tools,
                 history,
                 self_improve_recorder=recorder,

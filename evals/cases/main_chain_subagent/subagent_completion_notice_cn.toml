@@ -1,0 +1,27 @@
+case_id = "subagent_completion_notice_cn"
+suite_id = "main_chain_subagent"
+family = "subagent"
+enabled = true
+required = true
+description = "子代理受理通知"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "subagent"]
+
+[[turns]]
+role = "user"
+content = "开启子代理处理这个任务。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_any = ["子 agent", "已受理"]
+
+[weights]
+outcome = 100
+tool_path = 0
+efficiency = 0
+context = 0

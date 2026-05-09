@@ -9,6 +9,11 @@ from marten_runtime.runtime.llm_provider_support import (
     collapse_system_messages as _collapse_system_messages,
     resolve_parameters_schema as _resolve_parameters_schema,
 )
+from marten_runtime.runtime.capabilities import (
+    get_capability_declarations as _get_capability_declarations,
+    render_capability_catalog_for_request as _render_capability_catalog_for_request,
+    render_tool_description_for_provider as _render_tool_description_for_provider,
+)
 from marten_runtime.runtime.llm_request_instructions import (
     request_specific_instruction as _request_specific_instruction,
     tool_followup_instruction as _tool_followup_instruction,
@@ -28,18 +33,28 @@ def build_openai_messages(request: "LLMRequest") -> list[dict[str, object]]:
     is_tool_followup = bool(request.tool_history) or (
         request.tool_result is not None and bool(request.requested_tool_name)
     )
-    include_capability_catalog = bool(request.capability_catalog_text) and not is_tool_followup
+    is_session_summary = request.request_kind == "session_summary"
+    include_capability_catalog = (
+        bool(request.capability_catalog_text)
+        and not is_tool_followup
+        and request.request_kind != "contract_repair"
+    )
+    capability_catalog_text = request.capability_catalog_text
+    if include_capability_catalog:
+        capability_catalog_text = _compact_capability_catalog_for_request(request)
     _append_system_message(messages, request.system_prompt)
     if not is_tool_followup:
         _append_system_message(messages, request.skill_heads_text)
     if include_capability_catalog:
-        _append_system_message(messages, request.capability_catalog_text)
+        _append_system_message(messages, capability_catalog_text)
     _append_system_message(messages, request.always_on_skill_text)
+    _append_system_message(messages, request.repository_context_text)
     _append_system_message(messages, request.compact_summary_text)
     _append_system_message(messages, request.tool_outcome_summary_text)
     _append_system_message(messages, request.memory_text)
     _append_system_message(messages, request.working_context_text)
-    _append_system_message(messages, _request_specific_instruction(request))
+    if not is_session_summary:
+        _append_system_message(messages, _request_specific_instruction(request))
     _append_system_message(
         messages,
         render_finalization_evidence_ledger_block(
@@ -102,8 +117,8 @@ def build_tool_definitions(request: "LLMRequest") -> list[dict[str, object]]:
             "type": "function",
             "function": {
                 "name": tool_name,
-                "description": _tool_description(tool_name, request),
-                "parameters": _tool_parameters_schema(tool_name, request),
+                "description": _tool_description_for_provider(tool_name, request),
+                "parameters": _tool_parameters_schema_for_provider(tool_name, request),
             },
         }
         for tool_name in tool_names
@@ -145,6 +160,14 @@ def render_finalization_evidence_ledger_block(
 
 
 def _tool_history_for_request(request: "LLMRequest") -> list["ToolExchange"]:
+    if request.request_kind == "finalization_retry":
+        ledger = request.finalization_evidence_ledger
+        if (
+            str(request.compact_summary_text or "").strip()
+            and ledger is not None
+            and not any(item.required_for_user_request for item in ledger.items)
+        ):
+            return []
     tool_history = list(request.tool_history)
     if tool_history or request.tool_result is None or not request.requested_tool_name:
         return tool_history
@@ -203,8 +226,97 @@ def _tool_result_message(item: "ToolExchange", call_id: str) -> dict[str, object
     return {
         "role": "tool",
         "tool_call_id": call_id,
-        "content": json.dumps(item.tool_result, ensure_ascii=True),
+        "content": json.dumps(
+            _serialize_tool_result_for_provider(item.tool_result),
+            ensure_ascii=True,
+        ),
     }
+
+
+def _serialize_tool_result_for_provider(
+    tool_result: object,
+    *,
+    text_limit: int = 1600,
+    content_item_limit: int = 2,
+) -> object:
+    if isinstance(tool_result, dict):
+        if _is_successful_github_file_content_result(tool_result):
+            text_limit = max(text_limit, 12000)
+            content_item_limit = max(content_item_limit, 6)
+        if _is_mcp_discovery_result(tool_result):
+            content_item_limit = max(content_item_limit, 80)
+        serialized: dict[str, object] = {}
+        for key, value in tool_result.items():
+            if key == "content" and isinstance(value, list):
+                trimmed_items: list[object] = []
+                for item in value[:content_item_limit]:
+                    trimmed_items.append(
+                        _serialize_tool_result_for_provider(
+                            item,
+                            text_limit=text_limit,
+                            content_item_limit=content_item_limit,
+                        )
+                    )
+                if len(value) > content_item_limit:
+                    trimmed_items.append({"type": "truncated", "omitted_items": len(value) - content_item_limit})
+                serialized[key] = trimmed_items
+                continue
+            if key in {"result_text", "text", "message"} and isinstance(value, str):
+                serialized[key] = _truncate_ledger_text(value, limit=text_limit)
+                continue
+            if isinstance(value, str):
+                serialized[key] = _truncate_ledger_text(value, limit=text_limit)
+                continue
+            if isinstance(value, dict):
+                serialized[key] = _serialize_tool_result_for_provider(
+                    value,
+                    text_limit=text_limit,
+                    content_item_limit=content_item_limit,
+                )
+                continue
+            if isinstance(value, list):
+                serialized[key] = [
+                    _serialize_tool_result_for_provider(
+                        item,
+                        text_limit=text_limit,
+                        content_item_limit=content_item_limit,
+                    )
+                    for item in value[:content_item_limit]
+                ]
+                if len(value) > content_item_limit:
+                    serialized[f"{key}_truncated_count"] = len(value) - content_item_limit
+                continue
+            serialized[key] = value
+        return serialized
+    if isinstance(tool_result, list):
+        trimmed = [
+            _serialize_tool_result_for_provider(
+                item,
+                text_limit=text_limit,
+                content_item_limit=content_item_limit,
+            )
+            for item in tool_result[:content_item_limit]
+        ]
+        if len(tool_result) > content_item_limit:
+            trimmed.append({"omitted_items": len(tool_result) - content_item_limit})
+        return trimmed
+    if isinstance(tool_result, str):
+        return _truncate_ledger_text(tool_result, limit=text_limit)
+    return tool_result
+
+
+def _is_successful_github_file_content_result(tool_result: dict[str, object]) -> bool:
+    return (
+        str(tool_result.get("action") or "").strip() == "call"
+        and str(tool_result.get("server_id") or "").strip() == "github"
+        and str(tool_result.get("tool_name") or "").strip() == "get_file_contents"
+        and bool(tool_result.get("ok", True))
+        and not bool(tool_result.get("is_error"))
+    )
+
+
+def _is_mcp_discovery_result(tool_result: dict[str, object]) -> bool:
+    return str(tool_result.get("action") or "").strip() in {"list", "detail"}
 
 
 def _tool_description(tool_name: str, request: "LLMRequest") -> str:
@@ -212,6 +324,14 @@ def _tool_description(tool_name: str, request: "LLMRequest") -> str:
     if isinstance(metadata, Mapping):
         return str(metadata.get("description", ""))
     return ""
+
+
+def _tool_description_for_provider(tool_name: str, request: "LLMRequest") -> str:
+    declarations = _get_capability_declarations()
+    declaration = declarations.get(tool_name)
+    if declaration is not None:
+        return _render_tool_description_for_provider(declaration)
+    return _tool_description(tool_name, request)
 
 
 def _forced_initial_tool_name(request: "LLMRequest") -> str | None:
@@ -250,6 +370,44 @@ def _tool_parameters_schema(tool_name: str, request: "LLMRequest") -> dict[str, 
     if _forced_initial_tool_name(request) != "session":
         return schema
     return _forced_session_parameters_schema(schema, request.requested_tool_payload)
+
+
+def _tool_parameters_schema_for_provider(
+    tool_name: str,
+    request: "LLMRequest",
+) -> dict[str, object]:
+    schema = _tool_parameters_schema(tool_name, request)
+    return _strip_schema_descriptions(schema)
+
+
+def _strip_schema_descriptions(schema: object) -> object:
+    if isinstance(schema, dict):
+        cleaned: dict[str, object] = {}
+        for key, value in schema.items():
+            if key in {"description", "title", "examples", "default"}:
+                continue
+            cleaned[key] = _strip_schema_descriptions(value)
+        return cleaned
+    if isinstance(schema, list):
+        return [_strip_schema_descriptions(item) for item in schema]
+    return schema
+
+
+def _compact_capability_catalog_for_request(request: "LLMRequest") -> str | None:
+    declarations = _get_capability_declarations()
+    source_text = str(request.capability_catalog_text or "")
+    if "Global rule:" not in source_text:
+        return source_text or None
+    mcp_catalog_text = None
+    marker = "MCP family contract:"
+    if marker in source_text:
+        mcp_catalog_text = source_text.split(marker, 1)[1]
+        mcp_catalog_text = marker + mcp_catalog_text
+    return _render_capability_catalog_for_request(
+        declarations,
+        available_tools=request.available_tools,
+        mcp_catalog_text=mcp_catalog_text,
+    )
 
 
 def _forced_session_parameters_schema(

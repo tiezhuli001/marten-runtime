@@ -1,0 +1,29 @@
+case_id = "subagent_background_task_acceptance_cn"
+suite_id = "subagent_task_progress"
+family = "subagent_task_progress"
+enabled = true
+required = true
+description = "该委派时发起一次正确委派"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "subagent", "acceptance"]
+gate_components = ["delegation_quality", "child_progress"]
+
+[[turns]]
+role = "user"
+content = "把这个仓库的结构梳理放到后台做，完成后通知我。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+delegation_quality = 60
+child_progress = 40
+
+
+[grader_case]
+expected_spawn_count = 1
+await_child_completion = true
+timeout_ms = 120000

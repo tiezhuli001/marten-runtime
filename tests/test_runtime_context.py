@@ -80,7 +80,7 @@ class RuntimeContextTests(unittest.TestCase):
         )
         self.assertIn("continuation_hint", context.working_context)
 
-    def test_assembler_preserves_earlier_user_constraints_in_working_context(self) -> None:
+    def test_assembler_preserves_earlier_user_messages_in_working_context(self) -> None:
         history = [
             SessionMessage.user("请始终用中文回复，并且不要改 README。"),
             SessionMessage.assistant("收到，我会用中文并避免改 README。"),
@@ -97,15 +97,47 @@ class RuntimeContextTests(unittest.TestCase):
             tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1"),
         )
 
-        self.assertIn("请始终用中文回复", "\n".join(context.working_context.get("user_constraints", [])))
-        self.assertIn("不要改 README", "\n".join(context.working_context.get("user_constraints", [])))
-        self.assertIn("用户约束", context.working_context_text or "")
+        self.assertIn(
+            "请始终用中文回复",
+            "\n".join(context.working_context.get("recent_user_messages", [])),
+        )
+        self.assertIn(
+            "不要改 README",
+            "\n".join(context.working_context.get("recent_user_messages", [])),
+        )
+        self.assertIsNone(context.working_context_text)
 
-    def test_assembler_drops_orphaned_user_turn_when_noisy_assistant_reply_is_trimmed(self) -> None:
-        noisy_reply = "工具执行日志：" + "步骤;" * 40 + " 结论：上一轮误把请求路由到了 GitHub 热榜。"
+    def test_assembler_keeps_recent_middle_user_constraint_in_working_context(self) -> None:
+        history = [
+            SessionMessage.user("约束A"),
+            SessionMessage.assistant("收到 A"),
+            SessionMessage.user("约束B：不能改数据库"),
+            SessionMessage.assistant("收到 B"),
+            SessionMessage.user("约束C"),
+            SessionMessage.assistant("收到 C"),
+            SessionMessage.user("约束D"),
+            SessionMessage.assistant("收到 D"),
+            SessionMessage.user("继续"),
+        ]
+
+        context = assemble_runtime_context(
+            session_id="sess_middle_constraint",
+            current_message="继续",
+            system_prompt="You are marten-runtime.",
+            session_messages=history,
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1"),
+        )
+
+        self.assertEqual(
+            context.working_context.get("recent_user_messages"),
+            ["约束A", "约束B：不能改数据库", "约束C", "约束D"],
+        )
+
+    def test_assembler_keeps_long_assistant_reply_in_replay(self) -> None:
+        long_reply = "工具执行日志：" + "步骤;" * 40 + " 结论：上一轮误把请求路由到了 GitHub 热榜。"
         history = [
             SessionMessage.user("排查上一轮为什么会误查 GitHub 热榜"),
-            SessionMessage.assistant(noisy_reply),
+            SessionMessage.assistant(long_reply),
             SessionMessage.user("当前上下文窗口多大？"),
         ]
 
@@ -118,16 +150,85 @@ class RuntimeContextTests(unittest.TestCase):
             replay_user_turns=1,
         )
 
-        self.assertEqual(context.conversation_messages, [])
+        self.assertEqual(
+            [item.content for item in context.conversation_messages],
+            ["排查上一轮为什么会误查 GitHub 热榜", long_reply],
+        )
         self.assertEqual(context.working_context["active_goal"], "当前上下文窗口多大？")
 
-    def test_assembler_prefers_compacted_result_over_noisy_assistant_transcript(self) -> None:
-        noisy_result = (
+    def test_assembler_renders_session_transition_carryover_checkpoint_with_no_reopen_guard(self) -> None:
+        context = assemble_runtime_context(
+            session_id="sess_new",
+            current_message="在新会话里继续刚才那个部署告警排查任务。",
+            system_prompt="You are marten-runtime.",
+            session_messages=[SessionMessage.system("created")],
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1"),
+            compacted_context=CompactedContext(
+                compact_id="cmp_carry",
+                session_id="sess_new",
+                summary_text="以下任务锚点来自切换前会话，用于在新会话里继续同一任务：\n当前目标：排查部署告警。",
+                source_message_range=[0, 1],
+                trigger_kind="session_transition_carryover",
+                next_step="在新会话里继续部署告警排查",
+                open_todos=["部署告警排查"],
+            ),
+        )
+
+        self.assertIsNotNone(context.compact_summary_text)
+        assert context.compact_summary_text is not None
+        self.assertIn("当前会话已经是切换后的目标新会话", context.compact_summary_text)
+        self.assertIn("不要再次调用 session.new", context.compact_summary_text)
+        self.assertIn("当前目标：排查部署告警", context.compact_summary_text)
+
+    def test_assembler_does_not_emit_model_visible_working_context_recap(self) -> None:
+        history = [
+            SessionMessage.user("请始终用中文回复，并且不要改 README。"),
+            SessionMessage.assistant("收到，我会用中文并避免改 README。"),
+            SessionMessage.user("现在继续修复 agent routing"),
+        ]
+
+        context = assemble_runtime_context(
+            session_id="sess_no_working_context_text",
+            current_message="现在继续修复 agent routing",
+            system_prompt="You are marten-runtime.",
+            session_messages=history,
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1"),
+        )
+
+        self.assertIsNone(context.working_context_text)
+
+    def test_assembler_keeps_full_long_assistant_message_in_working_context_state(self) -> None:
+        long_reply = (
+            "关键约束：不要改数据库。"
+            + "补充说明" * 80
+            + "最终动作：继续修复 session。"
+        )
+        history = [
+            SessionMessage.user("先分析 session 问题"),
+            SessionMessage.assistant(long_reply),
+            SessionMessage.user("继续"),
+        ]
+
+        context = assemble_runtime_context(
+            session_id="sess_full_long_context",
+            current_message="继续",
+            system_prompt="You are marten-runtime.",
+            session_messages=history,
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1"),
+        )
+
+        self.assertEqual(
+            context.working_context.get("recent_assistant_messages"),
+            [long_reply],
+        )
+
+    def test_assembler_keeps_long_assistant_transcript_available_for_followup(self) -> None:
+        long_result = (
             "工具执行日志：" + "步骤;" * 80 + " 结论: 已定位问题在 bootstrap_handlers requested_agent_id 入站链路缺失。"
         )
         history = [
             SessionMessage.user("帮我排查 agent routing 问题"),
-            SessionMessage.assistant(noisy_result),
+            SessionMessage.assistant(long_result),
             SessionMessage.user("记住刚才定位到的问题，继续修复"),
         ]
 
@@ -140,11 +241,64 @@ class RuntimeContextTests(unittest.TestCase):
             replay_user_turns=4,
         )
 
-        self.assertNotIn(noisy_result, [item.content for item in context.conversation_messages])
-        self.assertIn("bootstrap_handlers", "\n".join(context.working_context.get("recent_results", [])))
-        self.assertIn("关键结果", context.working_context_text or "")
+        self.assertEqual(
+            [item.content for item in context.conversation_messages],
+            ["帮我排查 agent routing 问题", long_result],
+        )
+        self.assertIn(
+            "bootstrap_handlers",
+            "\n".join(context.working_context.get("recent_assistant_messages", [])),
+        )
+        self.assertIsNone(context.working_context_text)
 
-    def test_assembler_renders_structured_working_context_text(self) -> None:
+    def test_assembler_mechanically_truncates_long_assistant_context_without_semantic_rewrite(
+        self,
+    ) -> None:
+        long_reply = (
+            "关键约束：不要改数据库。"
+            + "补充说明" * 80
+            + "最终动作：继续修复 session。"
+        )
+        history = [
+            SessionMessage.user("先分析 session 问题"),
+            SessionMessage.assistant(long_reply),
+            SessionMessage.user("继续"),
+        ]
+
+        context = assemble_runtime_context(
+            session_id="sess_long_context",
+            current_message="继续",
+            system_prompt="You are marten-runtime.",
+            session_messages=history,
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1"),
+        )
+
+        rendered = "\n".join(context.working_context.get("recent_assistant_messages", []))
+        self.assertIn("关键约束：不要改数据库", rendered)
+        self.assertIn("最终动作：继续修复 session。", rendered)
+        self.assertIsNone(context.working_context_text)
+
+    def test_working_context_does_not_synthesize_recent_results_from_assistant_prose(self) -> None:
+        history = [
+            SessionMessage.user("先看上轮情况"),
+            SessionMessage.assistant("已定位到 bootstrap_handlers.py 的入口。"),
+            SessionMessage.user("继续"),
+            SessionMessage.assistant("工具执行日志：" + "步骤;" * 40 + " 结论：上一轮误把请求路由到了 GitHub 热榜。"),
+            SessionMessage.user("现在修复"),
+        ]
+
+        context = assemble_runtime_context(
+            session_id="sess_no_recent_results",
+            current_message="现在修复",
+            system_prompt="You are marten-runtime.",
+            session_messages=history,
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1"),
+        )
+
+        self.assertEqual(context.working_context.get("recent_results"), [])
+        self.assertIsNone(context.working_context_text)
+
+    def test_assembler_keeps_structured_working_context_state_without_model_visible_text(self) -> None:
         history = [
             SessionMessage.user("请始终用中文回复"),
             SessionMessage.assistant("好的。"),
@@ -159,9 +313,16 @@ class RuntimeContextTests(unittest.TestCase):
             tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1"),
         )
 
-        self.assertNotIn("- active_goal:", context.working_context_text or "")
-        self.assertIn("当前目标", context.working_context_text or "")
-        self.assertIn("用户约束", context.working_context_text or "")
+        self.assertEqual(context.working_context.get("active_goal"), "当前目标：完成 A/B 两个阶段")
+        self.assertEqual(
+            context.working_context.get("recent_user_messages"),
+            ["请始终用中文回复"],
+        )
+        self.assertEqual(
+            context.working_context.get("recent_assistant_messages"),
+            ["好的。"],
+        )
+        self.assertIsNone(context.working_context_text)
 
     def test_assembler_defaults_to_eight_recent_user_turns(self) -> None:
         history: list[SessionMessage] = []
@@ -265,8 +426,7 @@ class RuntimeContextTests(unittest.TestCase):
         )
 
         self.assertIn("当前进展", context.compact_summary_text or "")
-        self.assertNotIn("旧阶段已经完成", context.working_context_text or "")
-        self.assertIn("最近结果", context.working_context_text or "")
+        self.assertIsNone(context.working_context_text)
 
     def test_assembler_does_not_replay_compacted_prefix_verbatim(self) -> None:
         history = [
@@ -444,6 +604,46 @@ class RuntimeContextTests(unittest.TestCase):
         self.assertIn("补充说明", context.compact_summary_text or "")
         self.assertIn("更早的用户轮次", context.compact_summary_text or "")
         self.assertIn("更早的助手进展", context.compact_summary_text or "")
+
+    def test_assembler_keeps_context_pressure_replay_on_checkpoint_tail(self) -> None:
+        history = [
+            SessionMessage.user("u1"),
+            SessionMessage.assistant("a1"),
+            SessionMessage.user("u2"),
+            SessionMessage.assistant("a2"),
+            SessionMessage.user("u3"),
+            SessionMessage.assistant("a3"),
+            SessionMessage.user("u4"),
+            SessionMessage.assistant("a4"),
+            SessionMessage.user("继续"),
+        ]
+
+        compacted = CompactedContext(
+            compact_id="cmp_context_pressure_tail",
+            session_id="sess_context_pressure_tail",
+            summary_text="当前进展：旧历史已压缩。",
+            source_message_range=[0, 6],
+            preserved_tail_user_turns=1,
+            trigger_kind="context_pressure_proactive",
+        )
+
+        context = assemble_runtime_context(
+            session_id="sess_context_pressure_tail",
+            current_message="继续",
+            system_prompt="You are marten-runtime.",
+            session_messages=history,
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1"),
+            replay_user_turns=3,
+            compacted_context=compacted,
+        )
+
+        self.assertEqual(
+            [item.content for item in context.conversation_messages],
+            ["u4", "a4"],
+        )
+        self.assertIn("当前进展：旧历史已压缩。", context.compact_summary_text or "")
+        self.assertNotIn("u1", context.compact_summary_text or "")
+        self.assertNotIn("更早的用户轮次", context.compact_summary_text or "")
 
     def test_runtime_context_injects_tool_outcome_summary_text_without_replaying_tool_transcript(self) -> None:
         history = [

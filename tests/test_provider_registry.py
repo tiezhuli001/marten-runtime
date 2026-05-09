@@ -22,7 +22,7 @@ class ProviderRegistryTests(unittest.TestCase):
         providers = load_providers_config(str(PROVIDERS_EXAMPLE_TOML))
 
         provider = resolve_provider(
-            profile_name="openai_gpt5",
+            profile_name="openai_gpt_5_4",
             models_config=models,
             providers_config=providers,
         )
@@ -35,12 +35,12 @@ class ProviderRegistryTests(unittest.TestCase):
         providers = load_providers_config(str(PROVIDERS_EXAMPLE_TOML))
 
         fallbacks = resolve_fallback_profiles(
-            profile_name="openai_gpt5",
+            profile_name="openai_gpt_5_4",
             models_config=models,
             providers_config=providers,
         )
 
-        self.assertEqual([item[0] for item in fallbacks], ["minimax_m25"])
+        self.assertEqual([item[0] for item in fallbacks], ["minimax_m2_7_highspeed"])
         self.assertEqual([item[1].base_url for item in fallbacks], [
             "https://api.minimaxi.com/v1",
         ])
@@ -78,9 +78,9 @@ class ProviderRegistryTests(unittest.TestCase):
     def test_unknown_fallback_profile_fails(self) -> None:
         models = self._load_models_from_text(
             """
-            default_profile = "openai_gpt5"
+            default_profile = "openai_gpt_5_4"
 
-            [profiles.openai_gpt5]
+            [profiles.openai_gpt_5_4]
             provider_ref = "openai"
             model = "gpt-5.4"
             fallback_profiles = ["missing_profile"]
@@ -90,7 +90,7 @@ class ProviderRegistryTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "unknown_fallback_profile:missing_profile"):
             resolve_fallback_profiles(
-                profile_name="openai_gpt5",
+                profile_name="openai_gpt_5_4",
                 models_config=models,
                 providers_config=providers,
             )
@@ -98,23 +98,23 @@ class ProviderRegistryTests(unittest.TestCase):
     def test_duplicate_fallback_entries_fail(self) -> None:
         models = self._load_models_from_text(
             """
-            default_profile = "openai_gpt5"
+            default_profile = "openai_gpt_5_4"
 
-            [profiles.openai_gpt5]
+            [profiles.openai_gpt_5_4]
             provider_ref = "openai"
             model = "gpt-5.4"
-            fallback_profiles = ["minimax_m25", "minimax_m25"]
+            fallback_profiles = ["minimax_m2_7_highspeed", "minimax_m2_7_highspeed"]
 
-            [profiles.minimax_m25]
+            [profiles.minimax_m2_7_highspeed]
             provider_ref = "minimax"
-            model = "MiniMax-M2.5"
+            model = "MiniMax-M2.7-highspeed"
             """
         )
         providers = load_providers_config(str(REPO_ROOT / "config/providers.toml"))
 
-        with self.assertRaisesRegex(ValueError, "duplicate_fallback_profile:minimax_m25"):
+        with self.assertRaisesRegex(ValueError, "duplicate_fallback_profile:minimax_m2_7_highspeed"):
             resolve_fallback_profiles(
-                profile_name="openai_gpt5",
+                profile_name="openai_gpt_5_4",
                 models_config=models,
                 providers_config=providers,
             )

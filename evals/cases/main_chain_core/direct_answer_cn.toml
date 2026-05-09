@@ -1,0 +1,37 @@
+case_id = "direct_answer_cn"
+suite_id = "main_chain_core"
+family = "direct_answer"
+enabled = true
+required = true
+description = "最小 direct answer case"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "direct"]
+
+[[turns]]
+role = "user"
+content = "你好"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_any = ["你好"]
+
+[expectations.efficiency]
+max_llm_requests = 1
+max_tool_calls = 0
+
+[expectations.context]
+expect_compaction = false
+
+[expectations.diagnostics]
+expect_provider_ref = "openai"
+
+[weights]
+outcome = 80
+tool_path = 0
+efficiency = 15
+context = 5

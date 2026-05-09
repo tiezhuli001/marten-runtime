@@ -1,0 +1,23 @@
+suite_id = "main_chain_core"
+description = "Main chain core golden replay suite"
+default_mode = "live"
+scripted_supported = true
+required_dependencies = ["provider"]
+baseline_policy = "latest_passed_auto"
+case_files = [
+  "evals/cases/main_chain_core/direct_answer_cn.toml",
+  "evals/cases/main_chain_core/time_single_tool_cn.toml",
+  "evals/cases/main_chain_core/runtime_context_status_cn.toml",
+  "evals/cases/main_chain_core/session_catalog_cn.toml",
+  "evals/cases/main_chain_core/memory_write_then_read_cn.toml",
+  "evals/cases/main_chain_core/memory_replace_then_read_cn.toml",
+  "evals/cases/main_chain_core/multi_turn_time_then_context_cn.toml",
+  "evals/cases/main_chain_core/multi_turn_memory_reuse_cn.toml",
+  "evals/cases/main_chain_core/session_new_continuity_cn.toml",
+  "evals/cases/main_chain_core/session_resume_continuity_cn.toml",
+  "evals/cases/main_chain_core/context_compaction_continuity_cn.toml",
+  "evals/cases/main_chain_core/proactive_compaction_cn.toml",
+  "evals/cases/main_chain_core/runtime_usage_window_cn.toml",
+  "evals/cases/main_chain_core/tool_followup_to_final_cn.toml",
+  "evals/cases/main_chain_core/direct_answer_followup_cn.toml",
+]
