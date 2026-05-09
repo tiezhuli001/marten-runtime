@@ -114,13 +114,17 @@ def render_tool_outcome_summary_block(
     max_items: int = 2,
     max_chars: int = 600,
 ) -> str | None:
-    rendered: list[str] = []
+    prepared: list[ToolOutcomeSummary] = []
     for item in list(summaries or []):
         summary = coerce_tool_outcome_summary(item)
         if not summary.summary_text.strip():
             continue
         if summary.volatile or not summary.keep_next_turn:
             continue
+        prepared.append(summary)
+    prepared.sort(key=_summary_render_priority, reverse=True)
+    rendered: list[str] = []
+    for summary in prepared:
         facts_text = "; ".join(f"{fact.key}={fact.value}" for fact in summary.facts[:2] if fact.key and fact.value)
         line = f"- {summary.summary_text}"
         if facts_text:
@@ -147,3 +151,11 @@ def render_tool_outcome_summary_block(
     if not kept:
         kept = [_trim_text(rendered[0], limit=max(20, max_chars - len(heading) - 1))]
     return heading + "\n" + "\n".join(kept)
+
+
+def _summary_render_priority(summary: ToolOutcomeSummary) -> tuple[int, int, float]:
+    return (
+        1 if str(summary.source_kind or "").strip() == "subagent" else 0,
+        int(summary.token_estimate or 0),
+        summary.created_at.timestamp() if summary.created_at is not None else 0.0,
+    )

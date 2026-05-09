@@ -1,0 +1,29 @@
+case_id = "subagent_simple_request_stays_main_thread_cn"
+suite_id = "subagent_task_progress"
+family = "subagent_task_progress"
+enabled = true
+required = true
+description = "简单请求保持主线程直答"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "subagent", "main_thread"]
+gate_components = ["delegation_quality", "duplicate_dispatch_penalty"]
+
+[[turns]]
+role = "user"
+content = "用一句中文解释这个项目的主链路。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+delegation_quality = 70
+duplicate_dispatch_penalty = 30
+
+
+[grader_case]
+expected_spawn_count = 0
+integration_contains_all = ["主链路"]
+max_spawn_count = 0

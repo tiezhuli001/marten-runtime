@@ -1,0 +1,15 @@
+suite_id = "subagent_task_progress"
+grader_id = "subagent_task_progress"
+description = "Subagent task progress golden replay suite"
+default_mode = "live"
+scripted_supported = true
+required_dependencies = ["provider", "subagent", "mcp"]
+baseline_policy = "latest_passed_auto"
+case_files = [
+  "evals/cases/subagent_task_progress/subagent_background_task_acceptance_cn.toml",
+  "evals/cases/subagent_task_progress/subagent_child_completion_notice_cn.toml",
+  "evals/cases/subagent_task_progress/subagent_followup_uses_child_result_cn.toml",
+  "evals/cases/subagent_task_progress/subagent_multi_child_progress_cn.toml",
+  "evals/cases/subagent_task_progress/subagent_duplicate_dispatch_penalty_cn.toml",
+  "evals/cases/subagent_task_progress/subagent_simple_request_stays_main_thread_cn.toml",
+]

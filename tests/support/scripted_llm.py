@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from marten_runtime.runtime.llm_client import LLMReply
+from marten_runtime.runtime.direct_rendering import render_direct_tool_text
+from marten_runtime.runtime.llm_client import LLMReply, _normalize_reply_contract_metadata
 from marten_runtime.runtime.usage_models import ProviderCallAttempt, ProviderCallDiagnostics
+from tests.support.finalization_contracts import contracted_final_reply
 
 
 class FailingLLMClient:
@@ -100,7 +102,7 @@ class ObservedLLMClient:
         )
 
     def complete(self, request):  # noqa: ANN001
-        return LLMReply(final_text="ok")
+        return contracted_final_reply("ok")
 
 
 class PromptTooLongThenSuccessLLMClient:
@@ -116,7 +118,7 @@ class PromptTooLongThenSuccessLLMClient:
         self._calls += 1
         if self._calls == 1:
             raise RuntimeError("provider_http_error:400:prompt too long")
-        return LLMReply(final_text="recovered")
+        return _normalize_reply_contract_metadata(request, contracted_final_reply("recovered"))
 
 
 class ConcurrentInterleavingLLMClient:
@@ -127,5 +129,14 @@ class ConcurrentInterleavingLLMClient:
         if request.message == "first":
             if request.tool_result is None:
                 return LLMReply(tool_name="time", tool_payload={})
-            return LLMReply(final_text="done-first")
-        return LLMReply(final_text="done-second")
+            return contracted_final_reply(
+                str(
+                    render_direct_tool_text(
+                        "time",
+                        request.tool_result,
+                        tool_payload={"timezone": request.tool_result.get("timezone")},
+                    )
+                    or ""
+                )
+            )
+        return contracted_final_reply("done-second")

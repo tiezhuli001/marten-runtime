@@ -6,6 +6,7 @@ from marten_runtime.runtime.capabilities import (
     get_parameters_schema,
     render_capability_catalog,
     render_tool_description,
+    render_tool_description_for_provider,
 )
 
 
@@ -29,6 +30,22 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
             },
         )
         self.assertTrue(all(isinstance(item, CapabilityDeclaration) for item in declarations.values()))
+
+
+    def test_provider_description_keeps_llm_first_rules_for_sensitive_routing_tools(self) -> None:
+        declarations = get_capability_declarations()
+
+        session_provider = render_tool_description_for_provider(declarations["session"])
+        spawn_provider = render_tool_description_for_provider(declarations["spawn_subagent"])
+        runtime_provider = render_tool_description_for_provider(declarations["runtime"])
+
+        self.assertIn("session_ref", session_provider)
+        self.assertIn("go directly to resume/show instead of listing first", session_provider)
+        self.assertIn("do not repeat resume/show/list", session_provider)
+        self.assertIn("explicitly requests delegation/background execution", spawn_provider)
+        self.assertIn("answer from that attached state directly", spawn_provider)
+        self.assertIn("Use spawn_subagent only for launching a new child task", spawn_provider)
+        self.assertNotIn("Rules:", runtime_provider)
 
     def test_capability_declarations_render_catalog_and_descriptions_from_same_source(self) -> None:
         declarations = get_capability_declarations()
@@ -54,6 +71,11 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         self.assertIn("requested execution mode is part of the task contract", catalog)
         self.assertIn("Do not replace requested delegation/background execution", catalog)
         self.assertIn("Re-evaluate tool choice from the current user turn every time", catalog)
+        self.assertIn("parked one concrete future task or topic for continuation", catalog)
+        self.assertIn("在压缩后的上下文里继续执行", catalog)
+        self.assertIn("continuation cues, not as session metadata or runtime-number queries", catalog)
+        self.assertIn("Only confirm a durable-memory write after a successful memory tool result", catalog)
+        self.assertIn("explicit durable-memory write requests still require a memory tool result", catalog)
         self.assertTrue(automation_description)
         self.assertTrue(mcp_description)
         self.assertTrue(runtime_description)
@@ -93,6 +115,8 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         self.assertIn("why the effective window is a certain size", runtime_description)
         self.assertIn("当前会话的上下文窗口使用情况", runtime_description)
         self.assertIn("这个会话", runtime_description)
+        self.assertIn("继续旧会话", runtime_description)
+        self.assertIn("do not belong here by themselves", runtime_description.lower())
         self.assertIn("previous reply showed a session catalog", runtime_description)
         self.assertIn("finalize_response=true", runtime_description)
         self.assertNotIn("先调用 `runtime`", catalog)
@@ -113,11 +137,63 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         self.assertIn("北京时间", catalog)
         self.assertIn("live clock data", time_description)
         self.assertIn("timezone", time_description)
+        self.assertIn("only answer a live current-time/current-date/current-datetime request", time_description.lower())
         self.assertIn("finalize_response=true", time_description)
         self.assertNotIn("不要直接猜", catalog)
         self.assertNotIn("先调用 `time`", catalog)
         self.assertNotIn("不要直接猜", time_description)
         self.assertNotIn("先调用", time_description)
+
+    def test_time_runtime_and_memory_capabilities_expose_live_source_and_write_field_rules(
+        self,
+    ) -> None:
+        declarations = get_capability_declarations()
+
+        catalog = render_capability_catalog(declarations) or ""
+        time_description = render_tool_description(declarations["time"])
+        runtime_description = render_tool_description(declarations["runtime"])
+        memory_description = render_tool_description(declarations["memory"])
+        memory_schema = get_parameters_schema(declarations["memory"])
+        session_schema = get_parameters_schema(declarations["session"])
+        skill_schema = get_parameters_schema(declarations["skill"])
+        skill_description = render_tool_description(declarations["skill"])
+        self_improve_description = render_tool_description(declarations["self_improve"])
+
+        self.assertIn("current time/date/datetime", catalog.lower())
+        self.assertIn("time tool result", catalog.lower())
+        self.assertIn("current-session context/token/window", catalog.lower())
+        self.assertIn("runtime tool result", catalog.lower())
+        self.assertIn("first-turn plain questions", time_description.lower())
+        self.assertIn("this-turn time tool result", time_description.lower())
+        self.assertIn("this-turn runtime result", runtime_description.lower())
+        self.assertIn("only produce concrete current-session context", runtime_description.lower())
+        self.assertIn("prior replies or summaries mention token counts", runtime_description.lower())
+        self.assertIn("append/replace/delete", memory_description.lower())
+        self.assertIn("source_excerpt", memory_description.lower())
+        self.assertIn("section", memory_description.lower())
+        self.assertIn("preferences", memory_description.lower())
+        self.assertIn("facts", memory_description.lower())
+        self.assertIn("before confirming success", memory_description.lower())
+        self.assertIn("prefer replace on section=preferences", memory_description.lower())
+        self.assertIn("only confirm 已记住 / 已更新", memory_description.lower())
+        self.assertIn("still requires a memory tool call in this turn", memory_description.lower())
+        self.assertIn("attached memory state directly", memory_description.lower())
+        self.assertIn("immediate read-after-write", memory_description.lower())
+        self.assertIn("calling get again", memory_description.lower())
+        self.assertIn("source_excerpt", memory_schema["properties"])
+        self.assertIn("exact current-user-message span", memory_schema["properties"]["source_excerpt"]["description"].lower())
+        self.assertIn("required for append/replace/delete", memory_schema["properties"]["section"]["description"].lower())
+        self.assertIn("preferences", memory_schema["properties"]["section"]["description"].lower())
+        self.assertIn("required for append/replace", memory_schema["properties"]["content"]["description"].lower())
+        self.assertIn("session_ref", session_schema["properties"])
+        self.assertIn("visible session title", session_schema["properties"]["session_ref"]["description"].lower())
+        self.assertIn("exact visible skill_id only", skill_schema["properties"]["skill_id"]["description"].lower())
+        self.assertIn("plain continuation cues", skill_description.lower())
+        self.assertIn("continue directly instead of loading a skill", skill_description.lower())
+        self.assertIn("copy the exact skill_id from visible skills", skill_description.lower())
+        self.assertIn("task-summary nouns", skill_description.lower())
+        self.assertIn("missing skill body", skill_description.lower())
+        self.assertIn("plain task continuation", self_improve_description.lower())
 
     def test_session_and_automation_capability_descriptions_define_builtin_boundaries(self) -> None:
         declarations = get_capability_declarations()
@@ -130,17 +206,33 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         self.assertIn("现在有哪些会话列表", catalog)
         self.assertIn("切换到 sess_dcce8f9c", catalog)
         self.assertIn("当前有哪些定时任务", catalog)
-        self.assertIn("记住我默认使用 minimax", catalog)
+        self.assertIn("记住这个长期偏好：我默认使用 minimax", catalog)
         self.assertIn("action=list only for explicit catalog requests", session_description.lower())
         self.assertIn("action=show", session_description.lower())
         self.assertIn("scheduled job lists belong to automation", session_description.lower())
         self.assertIn("runtime context size belongs to runtime", session_description.lower())
         self.assertIn("do not use it for current-session context", session_description.lower())
         self.assertIn("do not repeat action=list unless the current turn explicitly asks", session_description.lower())
+        self.assertIn("after a successful session.new or session.resume", session_description.lower())
+        self.assertIn("plain task execution in the now-bound session", session_description.lower())
+        self.assertIn("across later turns", session_description.lower())
+        self.assertIn("do not repeat resume/show/list", session_description.lower())
+        self.assertIn("brief continuation confirmation", session_description.lower())
+        self.assertIn("message_count", session_description.lower())
+        self.assertIn("session_id unless the user explicitly asked for session metadata", session_description.lower())
+        self.assertIn("minimum task anchor needed", session_description.lower())
+        self.assertIn("do not switch to session.show/list or runtime", session_description.lower())
+        self.assertIn("compaction continuation requests", session_description.lower())
+        self.assertIn("继续这个长线程任务", session_description)
+        self.assertIn("words like 上下文, 长线程, or 当前会话", session_description.lower())
         self.assertIn("定时任务", automation_description)
         self.assertIn("cron", automation_description.lower())
         self.assertIn("durable memory", memory_description)
         self.assertIn("session history questions belong to session", memory_description.lower())
+        self.assertIn("收到的话只回两个字", memory_description)
+        self.assertIn("not durable memory writes", memory_description.lower())
+        self.assertIn("new session request", session_description.lower())
+        self.assertIn("finalize_response=true", session_description.lower())
 
     def test_runtime_and_session_descriptions_keep_current_turn_boundary_under_recent_history_noise(
         self,
@@ -180,6 +272,8 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         self.assertIn("Use resume to switch/continue", session_action["description"])
         self.assertIn("Use list only for explicit session catalog requests", session_action["description"])
         self.assertIn("Copy the exact sess_xxx token", session_id["description"])
+        self.assertIn("session_ref", session_schema["properties"])
+        self.assertIn("visible session title", session_schema["properties"]["session_ref"]["description"].lower())
         self.assertEqual(time_schema["properties"]["finalize_response"]["type"], "boolean")
         self.assertIn("clock result itself should end the turn", time_schema["properties"]["finalize_response"]["description"])
 
@@ -196,6 +290,8 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         self.assertIn("arguments", mcp_description)
         self.assertIn("do not invent aliases", mcp_description.lower())
         self.assertIn("stop after the requested scope", mcp_description.lower())
+        self.assertIn("README.md", mcp_description)
+        self.assertIn("instead of spending a turn on mcp.detail", mcp_description)
         self.assertNotIn("progressive inspection", mcp_description.lower())
         self.assertNotIn("before one concrete call", mcp_description.lower())
         self.assertNotIn("search_repositories", mcp_description)
@@ -215,10 +311,30 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         self.assertIn("最近一次提交", catalog)
         self.assertIn("最新提交", mcp_description)
         self.assertIn("latest commit", mcp_description)
-        self.assertIn("commit-history/list surface", mcp_description)
-        self.assertIn("commit-detail surface only when a concrete commit sha is already known", mcp_description)
+        self.assertIn("exact visible MCP tools in the current catalog", mcp_description)
+        self.assertIn("smallest visible tool sequence", mcp_description)
+        self.assertIn("concrete commit sha is already known", mcp_description)
         self.assertNotIn("get_commit", mcp_description)
         self.assertNotIn("list_commits", mcp_description)
+
+    def test_mcp_schema_guides_visible_commit_history_tool_selection_without_named_tools(self) -> None:
+        declarations = get_capability_declarations()
+
+        schema = get_parameters_schema(declarations["mcp"])
+        tool_name_description = schema["properties"]["tool_name"]["description"]
+        arguments_description = schema["properties"]["arguments"]["description"]
+
+        self.assertIn("Exact visible MCP tool name", tool_name_description)
+        self.assertIn("latest-commit", tool_name_description)
+        self.assertIn("history/list tool", tool_name_description)
+        self.assertIn("avoid invented convenience names", tool_name_description)
+        self.assertIn("commit-history lookups", arguments_description)
+        self.assertIn("owner and repo", arguments_description)
+        self.assertIn("small result-limit", arguments_description)
+        self.assertNotIn("get_commit", tool_name_description)
+        self.assertNotIn("list_commits", tool_name_description)
+        self.assertNotIn("get_commit", arguments_description)
+        self.assertNotIn("list_commits", arguments_description)
 
     def test_capability_declarations_expose_expected_structured_fields(self) -> None:
         declarations = get_capability_declarations()
@@ -256,6 +372,22 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         self.assertIn("explicitly requests delegation/background execution", spawn_description.lower())
         self.assertIn("stable across retries, failover, and repair turns", spawn_description.lower())
         self.assertIn("package the work into the child task", spawn_description.lower())
+        self.assertIn("child task brief semantic and goal-first", spawn_description.lower())
+        self.assertIn("do not pre-script exact mcp subtool names", spawn_description.lower())
+        self.assertIn("one bound repository context", spawn_description.lower())
+        self.assertIn("do not ask the child to request owner/repo again", spawn_description.lower())
+        self.assertIn("split work into multiple child tasks", spawn_description.lower())
+        self.assertIn("every requested child task has been dispatched", spawn_description.lower())
+        self.assertIn("already includes a real prior child-task state or completion summary", spawn_description.lower())
+        self.assertIn("answer from that attached state directly", spawn_description.lower())
+        self.assertIn("preserving the child summary's concrete object phrase", spawn_description.lower())
+        self.assertIn("coverage nouns", spawn_description.lower())
+        self.assertIn("reuse the attached summary's own task objects", spawn_description.lower())
+        self.assertIn("document/module names", spawn_description.lower())
+        self.assertIn("structure layers", spawn_description.lower())
+        self.assertIn("coverage terms", spawn_description.lower())
+        self.assertIn("conclusion phrases", spawn_description.lower())
+        self.assertNotIn("仓库结构、顶层目录、主要模块、关键配置、测试与文档", spawn_description)
         self.assertIn("restricted profile only has runtime, skill, and time", spawn_description)
         self.assertIn("MCP, web/API, or other external live data", spawn_description)
         self.assertIn("Omit optional fields", spawn_description)

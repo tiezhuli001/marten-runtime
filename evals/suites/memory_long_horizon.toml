@@ -1,0 +1,16 @@
+suite_id = "memory_long_horizon"
+grader_id = "memory_long_horizon"
+description = "Memory long horizon golden replay suite"
+default_mode = "live"
+scripted_supported = true
+required_dependencies = ["provider"]
+baseline_policy = "latest_passed_auto"
+case_files = [
+  "evals/cases/memory_long_horizon/memory_capture_preference_cn.toml",
+  "evals/cases/memory_long_horizon/memory_delayed_recall_same_session_cn.toml",
+  "evals/cases/memory_long_horizon/memory_delayed_recall_cross_session_cn.toml",
+  "evals/cases/memory_long_horizon/memory_overwrite_then_recall_cn.toml",
+  "evals/cases/memory_long_horizon/memory_long_gap_with_interference_recall_cn.toml",
+  "evals/cases/memory_long_horizon/memory_stale_conflict_rejection_cn.toml",
+  "evals/cases/memory_long_horizon/memory_preference_applied_to_output_cn.toml",
+]

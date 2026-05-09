@@ -1,0 +1,32 @@
+case_id = "memory_capture_preference_cn"
+suite_id = "memory_long_horizon"
+family = "memory_long_horizon"
+enabled = true
+required = true
+description = "显式写入长期偏好并立即确认"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "memory", "capture"]
+
+[[turns]]
+role = "user"
+content = "记住一个长期偏好：以后所有答复都用中文，并保持简洁。记住后复述给我。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+gate_components = ["capture", "utility_gain"]
+
+[component_weights]
+capture = 70
+utility_gain = 30
+
+
+[grader_case]
+expected_memory_action = "replace"
+expected_section = "preferences"
+expected_content_contains = ["中文", "简洁"]
+utility_contains_all = ["中文", "简洁"]
+max_memory_calls = 1

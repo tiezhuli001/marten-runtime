@@ -1,0 +1,38 @@
+case_id = "memory_stale_conflict_rejection_cn"
+suite_id = "memory_long_horizon"
+family = "memory_long_horizon"
+enabled = true
+required = true
+description = "旧偏好冲突时按新值生效"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "memory", "stale"]
+
+[[turns]]
+role = "user"
+content = "把周报偏好更新成：先结论，后细节，别再沿用旧顺序。"
+
+[[turns]]
+role = "user"
+content = "现在再说一遍周报顺序。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "stale_conflict_cn.md"
+automation_fixture = "none"
+
+gate_components = ["overwrite_correctness", "stale_rejection"]
+
+[component_weights]
+capture = 20
+overwrite_correctness = 30
+stale_rejection = 50
+
+
+[grader_case]
+expected_memory_action = "replace"
+expected_section = "preferences"
+expected_content_contains = ["先结论", "后细节"]
+recall_contains_all = ["先结论", "后细节"]
+recall_forbid_all = ["先背景", "后结论"]
+max_memory_calls = 1

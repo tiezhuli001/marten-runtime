@@ -18,7 +18,7 @@ class SubagentBuiltinToolTests(unittest.TestCase):
         threading.excepthook = _capture
 
     def _build_app(self):
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         self._apps.append(app)
         return app
 

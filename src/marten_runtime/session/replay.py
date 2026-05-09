@@ -10,7 +10,12 @@ def replay_session_messages(
     user_turns: int = 8,
     message_count: int | None = None,
 ) -> list[SessionMessage]:
-    replayable = [message for message in messages if message.role in {"user", "assistant"}]
+    replayable = [
+        message
+        for message in messages
+        if message.role in {"user", "assistant"}
+        or (message.role == "system" and _is_replayable_system_message(message.content))
+    ]
     if replayable and current_message is not None:
         last = replayable[-1]
         if last.role == "user" and last.content == current_message:
@@ -49,32 +54,16 @@ def _recent_user_turn_window(
 
 
 def _trim_noisy_tail(messages: list[SessionMessage], limit: int) -> list[SessionMessage]:
-    replay: list[SessionMessage] = []
-    skip_orphaned_user = False
-    for message in reversed(messages):
-        if skip_orphaned_user and message.role == "user":
-            skip_orphaned_user = False
-            continue
-        if message.role == "assistant" and _is_noisy_assistant_message(message.content):
-            skip_orphaned_user = not replay
-            continue
-        skip_orphaned_user = False
-        replay.append(message)
-        if len(replay) >= limit:
-            break
-    return list(reversed(replay))
+    if limit <= 0:
+        return []
+    return list(messages[-limit:])
 
 
 def _is_noisy_assistant_message(content: str) -> bool:
-    normalized = content.strip()
-    if not normalized:
-        return False
-    if "工具执行日志" in normalized or "tool execution log" in normalized.lower():
-        return True
-    if normalized.count("步骤;") >= 8 and (
-        "工具执行" in normalized
-        or "结论:" in normalized
-        or "结论：" in normalized
-    ):
-        return True
+    del content
     return False
+
+
+def _is_replayable_system_message(content: str) -> bool:
+    normalized = str(content or "").strip().lower()
+    return normalized.startswith("subagent task completed:") or normalized.startswith("subagent task failed:") or normalized.startswith("subagent task timed out:") or normalized.startswith("subagent task cancelled:")

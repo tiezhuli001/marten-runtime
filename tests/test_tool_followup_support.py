@@ -115,6 +115,29 @@ class ToolFollowupSupportTests(unittest.TestCase):
         self.assertIsNotNone(followup.recovery_fragment)
         self.assertIn("当前会话下一次请求预计带入 100 tokens", followup.recovery_fragment.text)
 
+    def test_memory_get_coverage_tokens_include_read_sections(self) -> None:
+        ledger = build_finalization_evidence_ledger(
+            user_message="继续这个任务",
+            tool_history=[
+                ToolExchange(
+                    tool_name="memory",
+                    tool_payload={"action": "get"},
+                    tool_result={
+                        "ok": True,
+                        "action": "get",
+                        "sections": {"tasks": ["排查部署告警"]},
+                    },
+                )
+            ],
+            model_request_count=2,
+            requires_result_coverage=True,
+            requires_round_trip_report=False,
+        )
+
+        self.assertEqual(ledger.items[0].tool_name, "memory")
+        self.assertIn("tasks", ledger.items[0].coverage_tokens)
+        self.assertIn("排查部署告警", ledger.items[0].coverage_tokens)
+
     def test_build_tool_followup_request_copies_followup_fields(self) -> None:
         base_request = LLMRequest(
             session_id="sess_1",
@@ -317,6 +340,76 @@ class ToolFollowupSupportTests(unittest.TestCase):
         self.assertIn("已切换到会话 `sess_dcce8f9c`", followup.terminal_text or "")
         self.assertNotIn("查看某个会话", followup.terminal_text or "")
         self.assertNotIn("新开一个会话", followup.terminal_text or "")
+
+    def test_normalize_tool_result_for_followup_does_not_direct_render_session_new_for_continuation_turn(
+        self,
+    ) -> None:
+        tool_result, followup = normalize_tool_result_for_followup(
+            tool_name="session",
+            tool_payload={"action": "new"},
+            tool_result={
+                "action": "new",
+                "transition": {
+                    "mode": "switched",
+                    "binding_changed": True,
+                    "target_session_id": "sess_new_1",
+                },
+                "session": {
+                    "session_id": "sess_new_1",
+                    "message_count": 0,
+                    "state": "created",
+                    "created_at": "2026-04-20T06:00:00+00:00",
+                },
+            },
+            peak_input_tokens_estimate=120,
+            peak_stage="initial_request",
+            actual_peak_input_tokens=None,
+            actual_peak_output_tokens=None,
+            actual_peak_total_tokens=None,
+            actual_peak_stage=None,
+            message="在新会话里继续刚才那个部署告警排查任务。",
+        )
+
+        self.assertEqual(tool_result["action"], "new")
+        self.assertIsNone(followup.terminal_text)
+        self.assertIsNotNone(followup.recovery_fragment)
+
+    def test_normalize_tool_result_for_followup_does_not_direct_render_session_resume_for_continuation_turn(
+        self,
+    ) -> None:
+        tool_result, followup = normalize_tool_result_for_followup(
+            tool_name="session",
+            tool_payload={
+                "action": "resume",
+                "session_id": "sess_dcce8f9c",
+            },
+            tool_result={
+                "action": "resume",
+                "transition": {
+                    "mode": "switched",
+                    "binding_changed": True,
+                    "target_session_id": "sess_dcce8f9c",
+                },
+                "session": {
+                    "session_id": "sess_dcce8f9c",
+                    "session_title": "旧会话",
+                    "message_count": 72,
+                    "state": "running",
+                    "created_at": "2026-04-19T15:30:41+00:00",
+                },
+            },
+            peak_input_tokens_estimate=120,
+            peak_stage="initial_request",
+            actual_peak_input_tokens=None,
+            actual_peak_output_tokens=None,
+            actual_peak_total_tokens=None,
+            actual_peak_stage=None,
+            message="继续旧会话。",
+        )
+
+        self.assertEqual(tool_result["action"], "resume")
+        self.assertIsNone(followup.terminal_text)
+        self.assertIsNotNone(followup.recovery_fragment)
 
     def test_normalize_tool_result_for_followup_does_not_direct_render_session_resume_inside_multi_step_request(
         self,
@@ -593,6 +686,139 @@ class ToolFollowupSupportTests(unittest.TestCase):
         self.assertEqual(tool_result["status"], "accepted")
         self.assertIsNone(followup.terminal_text)
         self.assertIsNotNone(followup.recovery_fragment)
+
+    def test_normalize_tool_result_for_followup_does_not_direct_render_spawn_subagent_for_plain_continuation_turn(
+        self,
+    ) -> None:
+        tool_result, followup = normalize_tool_result_for_followup(
+            tool_name="spawn_subagent",
+            tool_payload={
+                "task": "继续排查日报同步告警",
+                "label": "alert-followup",
+                "tool_profile": "standard",
+                "notify_on_finish": True,
+            },
+            tool_result={
+                "ok": True,
+                "status": "accepted",
+                "task_id": "task_spawn_cont",
+                "child_session_id": "sess_child_cont",
+                "effective_tool_profile": "standard",
+                "queue_state": "running",
+            },
+            peak_input_tokens_estimate=120,
+            peak_stage="initial_request",
+            actual_peak_input_tokens=None,
+            actual_peak_output_tokens=None,
+            actual_peak_total_tokens=None,
+            actual_peak_stage=None,
+            message="在压缩后的上下文里继续执行。",
+        )
+
+        self.assertEqual(tool_result["status"], "accepted")
+        self.assertIsNone(followup.terminal_text)
+        self.assertIsNotNone(followup.recovery_fragment)
+        self.assertIn("已受理", followup.recovery_fragment.text)
+
+    def test_normalize_tool_result_for_followup_does_not_direct_render_spawn_subagent_for_status_followup_turn(
+        self,
+    ) -> None:
+        tool_result, followup = normalize_tool_result_for_followup(
+            tool_name="spawn_subagent",
+            tool_payload={
+                "task": "重新梳理仓库结构",
+                "label": "repo-structure",
+                "tool_profile": "standard",
+                "notify_on_finish": True,
+            },
+            tool_result={
+                "ok": True,
+                "status": "accepted",
+                "task_id": "task_spawn_status",
+                "child_session_id": "sess_child_status",
+                "effective_tool_profile": "standard",
+                "queue_state": "running",
+            },
+            peak_input_tokens_estimate=120,
+            peak_stage="initial_request",
+            actual_peak_input_tokens=None,
+            actual_peak_output_tokens=None,
+            actual_peak_total_tokens=None,
+            actual_peak_stage=None,
+            message="子任务完成了吗？直接给我一句中文摘要，明确它梳理的对象和结论。",
+        )
+
+        self.assertEqual(tool_result["status"], "accepted")
+        self.assertIsNone(followup.terminal_text)
+        self.assertIsNotNone(followup.recovery_fragment)
+        self.assertIn("已受理", followup.recovery_fragment.text)
+
+    def test_normalize_tool_result_for_followup_direct_renders_session_new_when_model_explicitly_finalizes(
+        self,
+    ) -> None:
+        tool_result, followup = normalize_tool_result_for_followup(
+            tool_name="session",
+            tool_payload={"action": "new", "finalize_response": True},
+            tool_result={
+                "action": "new",
+                "transition": {
+                    "mode": "switched",
+                    "binding_changed": True,
+                    "target_session_id": "sess_new_1",
+                },
+                "session": {
+                    "session_id": "sess_new_1",
+                    "message_count": 0,
+                    "state": "created",
+                    "created_at": "2026-04-20T06:00:00+00:00",
+                },
+            },
+            peak_input_tokens_estimate=120,
+            peak_stage="initial_request",
+            actual_peak_input_tokens=None,
+            actual_peak_output_tokens=None,
+            actual_peak_total_tokens=None,
+            actual_peak_stage=None,
+            message="在新会话里继续刚才那个部署告警排查任务。",
+        )
+
+        self.assertEqual(tool_result["action"], "new")
+        self.assertIn("已切换到新会话", followup.terminal_text or "")
+
+    def test_normalize_tool_result_for_followup_direct_renders_spawn_subagent_when_model_explicitly_finalizes(
+        self,
+    ) -> None:
+        tool_result, followup = normalize_tool_result_for_followup(
+            tool_name="spawn_subagent",
+            tool_payload={
+                "task": "重新梳理仓库结构",
+                "label": "repo-structure",
+                "tool_profile": "standard",
+                "notify_on_finish": True,
+                "finalize_response": True,
+            },
+            tool_result={
+                "ok": True,
+                "status": "accepted",
+                "task_id": "task_spawn_status",
+                "child_session_id": "sess_child_status",
+                "effective_tool_profile": "standard",
+                "queue_state": "running",
+            },
+            peak_input_tokens_estimate=120,
+            peak_stage="initial_request",
+            actual_peak_input_tokens=None,
+            actual_peak_output_tokens=None,
+            actual_peak_total_tokens=None,
+            actual_peak_stage=None,
+            message="子任务完成了吗？直接给我一句中文摘要，明确它梳理的对象和结论。",
+        )
+
+        self.assertEqual(tool_result["status"], "accepted")
+        self.assertEqual(
+            followup.terminal_text,
+            "已受理，子 agent 正在后台执行，完成后会通知你结果。",
+        )
 
     def test_normalize_tool_result_for_followup_does_not_finalize_on_mcp_list_inside_multi_step_request(self) -> None:
         tool_result, followup = normalize_tool_result_for_followup(
@@ -947,12 +1173,66 @@ class ToolFollowupSupportTests(unittest.TestCase):
 
         self.assertIsInstance(ledger, FinalizationEvidenceLedger)
         self.assertEqual(ledger.tool_call_count, 1)
-        self.assertEqual(len(ledger.items), 1)
+        self.assertEqual(len(ledger.items), 2)
         self.assertEqual(ledger.items[0].ordinal, 1)
         self.assertEqual(ledger.items[0].tool_name, "time")
         self.assertEqual(ledger.items[0].payload_summary, "timezone=UTC")
         self.assertTrue(ledger.items[0].required_for_user_request)
         self.assertIn("现在是", ledger.items[0].result_summary)
+        self.assertEqual(ledger.items[1].tool_name, "runtime_loop")
+        self.assertFalse(ledger.items[1].required_for_user_request)
+        self.assertEqual(ledger.items[1].evidence_source, "loop_meta")
+
+    def test_build_finalization_evidence_ledger_marks_mcp_discovery_step_as_intermediate(
+        self,
+    ) -> None:
+        ledger = build_finalization_evidence_ledger(
+            user_message="梳理 README 结构",
+            tool_history=[
+                ToolExchange(
+                    tool_name="mcp",
+                    tool_payload={"action": "list", "query": "github repository file content/readme tools"},
+                    tool_result={
+                        "action": "list",
+                        "servers": [
+                            {"server_id": "github", "tool_count": 38, "state": "discovered"},
+                        ],
+                    },
+                ),
+                ToolExchange(
+                    tool_name="mcp",
+                    tool_payload={
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "get_file_contents",
+                        "arguments": {
+                            "owner": "tiezhuli001",
+                            "repo": "marten-runtime",
+                            "path": "README.md",
+                        },
+                    },
+                    tool_result={
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "get_file_contents",
+                        "arguments": {
+                            "owner": "tiezhuli001",
+                            "repo": "marten-runtime",
+                            "path": "README.md",
+                        },
+                        "result_text": "successfully downloaded text file (SHA: d8f224f84cbda99c2ab3aeb2cc6abde4abccca03)",
+                        "ok": True,
+                        "is_error": False,
+                    },
+                ),
+            ],
+            model_request_count=3,
+            requires_result_coverage=True,
+            requires_round_trip_report=False,
+        )
+
+        self.assertFalse(ledger.items[0].required_for_user_request)
+        self.assertTrue(ledger.items[1].required_for_user_request)
 
     def test_build_finalization_evidence_ledger_preserves_order_and_prefers_recovery_fragment(
         self,
@@ -987,9 +1267,13 @@ class ToolFollowupSupportTests(unittest.TestCase):
             requires_round_trip_report=False,
         )
 
-        self.assertEqual([item.tool_name for item in ledger.items], ["time", "mcp", "spawn_subagent"])
+        self.assertEqual(
+            [item.tool_name for item in ledger.items],
+            ["time", "mcp", "spawn_subagent", "runtime_loop"],
+        )
         self.assertIn("github", ledger.items[1].result_summary)
         self.assertEqual(ledger.items[2].result_summary, "子 agent 已进入后台执行。")
+        self.assertEqual(ledger.items[3].evidence_source, "loop_meta")
 
     def test_build_finalization_evidence_ledger_adds_loop_meta_only_when_round_trip_reporting_is_required(
         self,
@@ -1021,8 +1305,9 @@ class ToolFollowupSupportTests(unittest.TestCase):
             requires_round_trip_report=True,
         )
 
-        self.assertEqual(len(without_loop_meta.items), 1)
+        self.assertEqual(len(without_loop_meta.items), 2)
         self.assertEqual(len(with_loop_meta.items), 2)
+        self.assertFalse(without_loop_meta.items[-1].required_for_user_request)
         self.assertEqual(with_loop_meta.items[-1].evidence_source, "loop_meta")
         self.assertIn("3 次模型请求", with_loop_meta.items[-1].result_summary)
 
@@ -1053,10 +1338,12 @@ class ToolFollowupSupportTests(unittest.TestCase):
             requires_round_trip_report=False,
         )
 
-        self.assertEqual(len(ledger.items), 2)
+        self.assertEqual(len(ledger.items), 3)
         self.assertTrue(ledger.items[0].required_for_user_request)
         self.assertFalse(ledger.items[1].required_for_user_request)
         self.assertIn("工具执行失败", ledger.items[1].result_summary)
+        self.assertEqual(ledger.items[2].tool_name, "runtime_loop")
+        self.assertFalse(ledger.items[2].required_for_user_request)
 
 
 if __name__ == "__main__":

@@ -89,6 +89,38 @@ class ToolOutcomeSummaryTests(unittest.TestCase):
         self.assertIn("工具结果摘要", block)
         self.assertLessEqual(len(block), 140)
 
+    def test_render_tool_outcome_summary_block_prioritizes_subagent_completions_over_generic_builtin_acceptance(self) -> None:
+        block = render_tool_outcome_summary_block(
+            [
+                ToolOutcomeSummary.create(
+                    run_id="run_accept",
+                    source_kind="builtin",
+                    summary_text="上一轮调用了 spawn_subagent，并获得了结果。",
+                    keep_next_turn=True,
+                ),
+                ToolOutcomeSummary.create(
+                    run_id="run_commit",
+                    source_kind="subagent",
+                    summary_text="后台子任务《最近提交检查》已完成。结论：最近提交集中在评测与报告。",
+                    keep_next_turn=True,
+                ),
+                ToolOutcomeSummary.create(
+                    run_id="run_readme",
+                    source_kind="subagent",
+                    summary_text="后台子任务《README 结构检查》已完成。结论：README 包含快速开始、离线评测、仓库结构。",
+                    keep_next_turn=True,
+                ),
+            ],
+            max_items=2,
+            max_chars=600,
+        )
+
+        self.assertIsNotNone(block)
+        assert block is not None
+        self.assertIn("后台子任务《最近提交检查》已完成", block)
+        self.assertIn("后台子任务《README 结构检查》已完成", block)
+        self.assertNotIn("上一轮调用了 spawn_subagent，并获得了结果。", block)
+
 
 if __name__ == "__main__":
     unittest.main()

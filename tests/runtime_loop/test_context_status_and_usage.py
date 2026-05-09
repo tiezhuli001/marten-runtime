@@ -12,13 +12,17 @@ from marten_runtime.runtime.context import RuntimeContext
 from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.runtime.usage_models import NormalizedUsage
 from marten_runtime.session.compacted_context import CompactedContext
-from marten_runtime.session.compaction_trigger import build_compaction_settings
+from marten_runtime.session.compaction_trigger import (
+    build_compaction_settings,
+    has_continuation_demand,
+)
 from marten_runtime.session.models import SessionMessage
 from marten_runtime.self_improve.recorder import SelfImproveRecorder
 from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
 from marten_runtime.tools.builtins.runtime_tool import run_runtime_tool
 from marten_runtime.tools.builtins.time_tool import run_time_tool
 from marten_runtime.tools.registry import ToolRegistry, ToolSnapshot
+from tests.support.finalization_contracts import contracted_final_reply
 from tests.support.scripted_llm import PromptTooLongThenSuccessLLMClient
 
 
@@ -32,8 +36,8 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
     ) -> None:
         tools = ToolRegistry()
         history = InMemoryRunHistory()
-        llm = ScriptedLLMClient([LLMReply(final_text="done")])
-        compact_llm = ScriptedLLMClient([LLMReply(final_text="compact summary")])
+        llm = ScriptedLLMClient([contracted_final_reply("done")])
+        compact_llm = ScriptedLLMClient([contracted_final_reply("compact summary")])
         runtime = RuntimeLoop(llm, tools, history)
         mocked_run_compaction.return_value = CompactedContext(
             compact_id="cmp_runtime_turns",
@@ -99,7 +103,7 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         tools = ToolRegistry()
         tools.register("time", run_time_tool)
         history = InMemoryRunHistory()
-        llm = ScriptedLLMClient([LLMReply(final_text="hello again")])
+        llm = ScriptedLLMClient([contracted_final_reply("hello again")])
         runtime = RuntimeLoop(llm, tools, history)
 
         runtime.run(
@@ -143,7 +147,7 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         history = InMemoryRunHistory()
         llm = PromptTooLongThenSuccessLLMClient()
         compact_llm = ScriptedLLMClient(
-            [LLMReply(final_text="当前进展：历史已压缩。\n明确下一步：继续执行。")]
+            [contracted_final_reply("当前进展：历史已压缩。\n明确下一步：继续执行。")]
         )
         runtime = RuntimeLoop(llm, tools, history)
         stored = []
@@ -200,9 +204,9 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
     ) -> None:
         tools = ToolRegistry()
         history = InMemoryRunHistory()
-        llm = ScriptedLLMClient([LLMReply(final_text="done after proactive compact")])
+        llm = ScriptedLLMClient([contracted_final_reply("done after proactive compact")])
         compact_llm = ScriptedLLMClient(
-            [LLMReply(final_text="当前进展：长线程已压缩。")]
+            [contracted_final_reply("当前进展：长线程已压缩。")]
         )
         runtime = RuntimeLoop(llm, tools, history)
         stored = []
@@ -238,13 +242,13 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         self.assertEqual(stored[0].trigger_kind, "context_pressure_proactive")
         self.assertIn("当前进展", llm.requests[0].compact_summary_text or "")
 
-    def test_runtime_does_not_proactively_compact_finished_turn_without_continuation_signal(
+    def test_runtime_proactively_compacts_existing_thread_even_for_terminal_wording(
         self,
     ) -> None:
         tools = ToolRegistry()
         history = InMemoryRunHistory()
-        llm = ScriptedLLMClient([LLMReply(final_text="done without compact")])
-        compact_llm = ScriptedLLMClient([LLMReply(final_text="should not compact")])
+        llm = ScriptedLLMClient([contracted_final_reply("done after compact")])
+        compact_llm = ScriptedLLMClient([contracted_final_reply("compacted")])
         runtime = RuntimeLoop(llm, tools, history)
         stored = []
 
@@ -254,11 +258,50 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
             trace_id="trace_no_followup",
             system_prompt="You are marten-runtime.",
             session_messages=[
-                SessionMessage.user("旧历史 1 " + "x" * 200),
-                SessionMessage.assistant("旧历史 1 完成 " + "y" * 200),
-                SessionMessage.user("旧历史 2 " + "x" * 200),
-                SessionMessage.assistant("旧历史 2 完成 " + "y" * 200),
+                SessionMessage.user("旧历史 1 " + "x" * 500),
+                SessionMessage.assistant("旧历史 1 完成 " + "y" * 500),
+                SessionMessage.user("旧历史 2 " + "x" * 500),
+                SessionMessage.assistant("旧历史 2 完成 " + "y" * 500),
                 SessionMessage.user("这个问题已经完成，可以结束了。"),
+            ],
+            compact_llm_client=compact_llm,
+            on_compacted=lambda item: stored.append(item),
+            session_replay_user_turns=1,
+            compact_settings=build_compaction_settings(
+                ModelProfile(
+                    provider_ref="openai",
+                    model="gpt-4.1",
+                    context_window_tokens=400,
+                    reserve_output_tokens=50,
+                    compact_trigger_ratio=0.5,
+                )
+            ),
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "done after compact")
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0].trigger_kind, "context_pressure_proactive")
+        self.assertEqual(len(compact_llm.requests), 1)
+        self.assertIn("compacted", llm.requests[0].compact_summary_text or "")
+
+    def test_runtime_does_not_proactively_compact_first_turn_without_existing_thread(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient([contracted_final_reply("done without compact")])
+        compact_llm = ScriptedLLMClient([contracted_final_reply("should not compact")])
+        runtime = RuntimeLoop(llm, tools, history)
+        stored = []
+
+        events = runtime.run(
+            session_id="sess_no_thread",
+            message="第一次提问 " + "x" * 600,
+            trace_id="trace_no_thread",
+            system_prompt="You are marten-runtime.",
+            session_messages=[
+                SessionMessage.user("第一次提问 " + "x" * 600),
             ],
             compact_llm_client=compact_llm,
             on_compacted=lambda item: stored.append(item),
@@ -279,14 +322,37 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         self.assertEqual(len(compact_llm.requests), 0)
         self.assertIsNone(llm.requests[0].compact_summary_text)
 
+    def test_has_continuation_demand_uses_thread_structure_instead_of_keywords(self) -> None:
+        for message in (
+            "解释一下风险模型的定义",
+            "把 TODO MVC 这个词翻译成中文",
+            "请把 thanks 页面文案改成正式语气",
+        ):
+            with self.subTest(message=message):
+                self.assertFalse(
+                    has_continuation_demand(
+                        current_message=message,
+                        recent_messages=[],
+                    )
+                )
+                self.assertTrue(
+                    has_continuation_demand(
+                        current_message=message,
+                        recent_messages=[
+                            "上一轮先整理了一版背景",
+                            message,
+                        ],
+                    )
+                )
+
     def test_runtime_records_compaction_diagnostics_and_reduces_estimated_tokens_after_compaction(
         self,
     ) -> None:
         tools = ToolRegistry()
         history = InMemoryRunHistory()
-        llm = ScriptedLLMClient([LLMReply(final_text="done after proactive compact")])
+        llm = ScriptedLLMClient([contracted_final_reply("done after proactive compact")])
         compact_llm = ScriptedLLMClient(
-            [LLMReply(final_text="当前进展：长线程已压缩。")]
+            [contracted_final_reply("当前进展：长线程已压缩。")]
         )
         runtime = RuntimeLoop(llm, tools, history)
 
@@ -296,10 +362,10 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
             trace_id="trace_diag_compact",
             system_prompt="You are marten-runtime.",
             session_messages=[
-                SessionMessage.user("todo：处理 chunk 1 " + "x" * 200),
-                SessionMessage.assistant("chunk 1 完成，下一步继续 " + "y" * 200),
-                SessionMessage.user("风险：注意不要覆盖 system prompt " + "x" * 200),
-                SessionMessage.assistant("已收到风险，继续保留脚手架 " + "y" * 200),
+                SessionMessage.user("todo：处理 chunk 1 " + "x" * 1200),
+                SessionMessage.assistant("chunk 1 完成，下一步继续 " + "y" * 1200),
+                SessionMessage.user("风险：注意不要覆盖 system prompt " + "x" * 1200),
+                SessionMessage.assistant("已收到风险，继续保留脚手架 " + "y" * 1200),
                 SessionMessage.user("下一步：继续处理剩余问题"),
             ],
             compact_llm_client=compact_llm,
@@ -334,10 +400,10 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
             store = SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3")
             recorder = SelfImproveRecorder(store)
             llm = ScriptedLLMClient(
-                [LLMReply(final_text="done after proactive compact")]
+                [contracted_final_reply("done after proactive compact")]
             )
             compact_llm = ScriptedLLMClient(
-                [LLMReply(final_text="当前进展：长线程已压缩。")]
+                [contracted_final_reply("当前进展：长线程已压缩。")]
             )
             runtime = RuntimeLoop(
                 llm,
@@ -352,10 +418,10 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
                 trace_id="trace_pre_compact_trigger",
                 system_prompt="You are marten-runtime.",
                 session_messages=[
-                    SessionMessage.user("todo：处理 chunk 1 " + "x" * 200),
-                    SessionMessage.assistant("chunk 1 完成，下一步继续 " + "y" * 200),
-                    SessionMessage.user("风险：注意不要覆盖 system prompt " + "x" * 200),
-                    SessionMessage.assistant("已收到风险，继续保留脚手架 " + "y" * 200),
+                    SessionMessage.user("todo：处理 chunk 1 " + "x" * 1200),
+                    SessionMessage.assistant("chunk 1 完成，下一步继续 " + "y" * 1200),
+                    SessionMessage.user("风险：注意不要覆盖 system prompt " + "x" * 1200),
+                    SessionMessage.assistant("已收到风险，继续保留脚手架 " + "y" * 1200),
                     SessionMessage.user("下一步：继续处理剩余问题"),
                 ],
                 compact_llm_client=compact_llm,
@@ -397,8 +463,8 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
                 LLMReply(
                     tool_name="runtime", tool_payload={"action": "context_status"}
                 ),
-                LLMReply(
-                    final_text=(
+                contracted_final_reply(
+                    (
                         "当前上下文使用详情：当前估算占用 1200/184000 tokens（1%）。"
                         " 下一次请求预计输入 1200 tokens。"
                     )
@@ -484,7 +550,7 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
-                LLMReply(final_text="当前上下文使用详情：现在占用很低。"),
+                contracted_final_reply("当前上下文使用详情：现在占用很低。"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -528,8 +594,8 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         history = InMemoryRunHistory()
         llm = ScriptedLLMClient(
             [
-                LLMReply(
-                    final_text="done",
+                contracted_final_reply(
+                    "done",
                     usage=NormalizedUsage(
                         input_tokens=120,
                         output_tokens=30,
@@ -574,7 +640,7 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="big_tool", tool_payload={"query": "large"}),
-                LLMReply(final_text="done"),
+                contracted_final_reply("done"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, history)
@@ -616,8 +682,8 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
                         input_tokens=2400, output_tokens=120, total_tokens=2520
                     ),
                 ),
-                LLMReply(
-                    final_text="done",
+                contracted_final_reply(
+                    "done",
                     usage=NormalizedUsage(
                         input_tokens=13870, output_tokens=196, total_tokens=14066
                     ),
@@ -689,8 +755,8 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
 
     def test_runtime_initial_preflight_reflects_activated_skill_bodies(self) -> None:
         history = InMemoryRunHistory()
-        llm_plain = ScriptedLLMClient([LLMReply(final_text="plain")])
-        llm_skill = ScriptedLLMClient([LLMReply(final_text="skill")])
+        llm_plain = ScriptedLLMClient([contracted_final_reply("plain")])
+        llm_skill = ScriptedLLMClient([contracted_final_reply("skill")])
 
         runtime_plain = RuntimeLoop(llm_plain, ToolRegistry(), history)
         events_plain = runtime_plain.run(

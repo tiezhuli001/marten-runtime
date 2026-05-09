@@ -1,0 +1,46 @@
+case_id = "session_new_continuity_cn"
+suite_id = "main_chain_core"
+family = "session_switch"
+enabled = true
+required = true
+description = "切到新会话后继续"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "session", "new"]
+
+[[turns]]
+role = "user"
+content = "切换到新会话。"
+
+[[turns]]
+role = "user"
+content = "在新会话里继续刚才那个部署告警排查任务。"
+
+[setup]
+session_history_fixture = "session_switch_source_thread.md"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_all = ["新会话"]
+
+[[expectations.tool_path.required_calls]]
+tool_name = "session"
+min_calls = 1
+max_calls = 2
+
+[expectations.efficiency]
+max_llm_requests = 5
+max_tool_calls = 2
+
+[expectations.context]
+expect_compaction = false
+
+[expectations.diagnostics]
+expect_provider_ref = "openai"
+
+[weights]
+outcome = 55
+tool_path = 25
+efficiency = 15
+context = 5

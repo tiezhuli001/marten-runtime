@@ -1,0 +1,27 @@
+case_id = "github_trace_correlation_cn"
+suite_id = "main_chain_mcp"
+family = "mcp"
+enabled = true
+required = true
+description = "GitHub MCP trace correlation"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "mcp", "github", "trace"]
+
+[[turns]]
+role = "user"
+content = "调用 github mcp，并检查 trace 关联。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_any = ["trace", "GitHub"]
+
+[weights]
+outcome = 100
+tool_path = 0
+efficiency = 0
+context = 0

@@ -31,6 +31,9 @@ from marten_runtime.runtime.provider_retry import (
     normalize_provider_error,
     with_retry,
 )
+from marten_runtime.runtime.finalization_contract_prompt import (
+    extract_finalization_contract_block,
+)
 from marten_runtime.runtime.tool_episode_summary_prompt import (
     extract_tool_episode_summary_block,
 )
@@ -87,7 +90,7 @@ class OpenAICompatLLMClient:
         self._uses_default_transport = transport is None
         self.retry_policy = RetryPolicy()
         self.interactive_retry_policy = RetryPolicy(
-            max_attempts=2, base_backoff_seconds=0.25, max_backoff_seconds=1.0
+            max_attempts=3, base_backoff_seconds=0.25, max_backoff_seconds=1.0
         )
         self.default_timeout_seconds = 30
         self.interactive_timeout_seconds = 20
@@ -95,11 +98,11 @@ class OpenAICompatLLMClient:
         self.last_call_diagnostics: ProviderCallDiagnostics | None = None
 
     def complete(self, request) -> object:
-        timeout_seconds = self._timeout_seconds_for(request)
+        use_responses_api = self._should_use_responses_api()
+        timeout_seconds = self._timeout_seconds_for(request, responses_api=use_responses_api)
         retry_policy = self._retry_policy_for(request)
         attempts: list[ProviderCallAttempt] = []
         self.last_call_diagnostics = None
-        use_responses_api = self._should_use_responses_api()
         try:
             payload = with_retry(
                 lambda: (
@@ -167,9 +170,14 @@ class OpenAICompatLLMClient:
                 f"provider_response_invalid:{exc}",
             ) from exc
 
-    def _timeout_seconds_for(self, request) -> int:
+    def _timeout_seconds_for(self, request, *, responses_api: bool | None = None) -> int:
         if request.timeout_seconds_override is not None:
             return max(1, int(math.ceil(request.timeout_seconds_override)))
+        if request.request_kind == "subagent":
+            return 60
+        if responses_api is False and str(self.model_name or "").lower().startswith("gpt-5"):
+            if _is_tool_followup_request(request) or request.request_kind == "interactive":
+                return 40
         if _is_tool_followup_request(request):
             return self.interactive_tool_followup_timeout_seconds
         if request.request_kind == "interactive":
@@ -183,16 +191,25 @@ class OpenAICompatLLMClient:
 
     def _should_use_responses_api(self) -> bool:
         if str(self.model_name or "").lower().startswith("gpt-5"):
-            if not self.provider.supports_responses_api:
-                raise ValueError(
-                    f"provider_missing_responses_api_support:{self.provider_name}"
-                )
-            return True
+            if self.provider.supports_responses_api:
+                return True
+            if self.provider.supports_chat_completions:
+                return False
+            raise ValueError(
+                f"provider_missing_responses_api_support:{self.provider_name}"
+            )
         if not self.provider.supports_chat_completions:
             raise ValueError(
                 f"provider_missing_chat_completions_support:{self.provider_name}"
             )
         return False
+
+    def _build_payload(self, request) -> dict[str, object]:
+        if self._should_use_responses_api():
+            return self._build_responses_payload(request, stream=False)
+        from marten_runtime.runtime.llm_message_support import build_openai_chat_payload
+
+        return build_openai_chat_payload(self.model_name, request)
 
     def _request_headers(self) -> dict[str, str]:
         headers = {
@@ -271,21 +288,25 @@ class OpenAICompatLLMClient:
             final_text = "".join(
                 str(item.get("text") or "") for item in content if isinstance(item, dict)
             )
-            parsed = extract_tool_episode_summary_block(
+            parsed_summary = extract_tool_episode_summary_block(
                 _strip_hidden_reasoning(final_text)
             )
+            parsed_contract = extract_finalization_contract_block(parsed_summary.final_text)
             return _llm_reply(
-                final_text=parsed.final_text,
-                tool_episode_summary_draft=parsed.summary_draft,
+                final_text=parsed_contract.final_text,
+                tool_episode_summary_draft=parsed_summary.summary_draft,
+                finalization_contract_draft=parsed_contract.contract_draft,
                 usage=usage,
             )
         visible_text = "" if content is None else str(content)
-        parsed = extract_tool_episode_summary_block(
+        parsed_summary = extract_tool_episode_summary_block(
             _strip_hidden_reasoning(visible_text)
         )
+        parsed_contract = extract_finalization_contract_block(parsed_summary.final_text)
         return _llm_reply(
-            final_text=parsed.final_text,
-            tool_episode_summary_draft=parsed.summary_draft,
+            final_text=parsed_contract.final_text,
+            tool_episode_summary_draft=parsed_summary.summary_draft,
+            finalization_contract_draft=parsed_contract.contract_draft,
             usage=usage,
         )
 
@@ -328,26 +349,30 @@ class OpenAICompatLLMClient:
         if isinstance(output, list):
             text = _extract_responses_output_text(output)
             if text:
-                parsed = extract_tool_episode_summary_block(
+                parsed_summary = extract_tool_episode_summary_block(
                     _strip_hidden_reasoning(text)
                 )
+                parsed_contract = extract_finalization_contract_block(parsed_summary.final_text)
                 return _llm_reply(
-                    final_text=parsed.final_text,
-                    tool_episode_summary_draft=parsed.summary_draft,
+                    final_text=parsed_contract.final_text,
+                    tool_episode_summary_draft=parsed_summary.summary_draft,
+                    finalization_contract_draft=parsed_contract.contract_draft,
                     usage=usage,
                 )
         output_text = _extract_responses_payload_text(payload)
-        parsed = extract_tool_episode_summary_block(
+        parsed_summary = extract_tool_episode_summary_block(
             _strip_hidden_reasoning("" if output_text is None else str(output_text))
         )
-        if not parsed.final_text and payload.get("status") == "completed" and payload.get("error") is None:
+        parsed_contract = extract_finalization_contract_block(parsed_summary.final_text)
+        if not parsed_contract.final_text and payload.get("status") == "completed" and payload.get("error") is None:
             raise ProviderTransportError(
                 "PROVIDER_RESPONSE_INVALID",
                 "provider_response_invalid:completed_response_without_visible_output",
             )
         return _llm_reply(
-            final_text=parsed.final_text,
-            tool_episode_summary_draft=parsed.summary_draft,
+            final_text=parsed_contract.final_text,
+            tool_episode_summary_draft=parsed_summary.summary_draft,
+            finalization_contract_draft=parsed_contract.contract_draft,
             usage=usage,
         )
 

@@ -100,6 +100,30 @@ class RuntimeHistoryLangfuseRefTests(unittest.TestCase):
         self.assertTrue(dumped["finalization"]["retry_triggered"])
         self.assertLessEqual(len(dumped["finalization"]["invalid_final_text"]), 280)
 
+    def test_run_record_keeps_full_invalid_final_text_in_memory_while_serializing_trimmed_diagnostics(self) -> None:
+        history = InMemoryRunHistory()
+        record = history.start(
+            session_id="sess_finalization_full_text",
+            trace_id="trace_finalization_full_text",
+            config_snapshot_id="cfg_1",
+            bootstrap_manifest_id="boot_1",
+        )
+        long_text = "README 结构包含快速开始、离线评测、仓库结构。 " * 20
+
+        history.set_finalization_state(
+            record.run_id,
+            assessment="retryable_degraded",
+            request_kind="finalization_retry",
+            invalid_final_text=long_text,
+        )
+
+        stored = history.get(record.run_id)
+        dumped = stored.model_dump(mode="json")
+
+        self.assertEqual(stored.finalization.invalid_final_text_full, " ".join(long_text.split()).strip())
+        self.assertLessEqual(len(dumped["finalization"]["invalid_final_text"]), 280)
+        self.assertNotIn("invalid_final_text_full", dumped["finalization"])
+
     def test_run_record_records_fragment_recovery_state(self) -> None:
         history = InMemoryRunHistory()
         record = history.start(

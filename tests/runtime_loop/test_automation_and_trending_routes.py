@@ -288,6 +288,7 @@ class RuntimeLoopAutomationRouteTests(unittest.TestCase):
                         "server_id": "github_trending",
                         "tool_name": "trending_repositories",
                         "arguments": {"since": "daily", "limit": 10},
+                        "finalize_response": True,
                     },
                 )
             ]
@@ -358,6 +359,7 @@ class RuntimeLoopAutomationRouteTests(unittest.TestCase):
                         "server_id": "github_trending",
                         "tool_name": "trending_repositories",
                         "arguments": {"since": "daily", "limit": 10},
+                        "finalize_response": True,
                     },
                 )
             ]
@@ -422,6 +424,7 @@ class RuntimeLoopAutomationRouteTests(unittest.TestCase):
                         "server_id": "github_trending",
                         "tool_name": "trending_repositories",
                         "arguments": {"since": "weekly", "limit": 5},
+                        "finalize_response": True,
                     },
                 )
             ]

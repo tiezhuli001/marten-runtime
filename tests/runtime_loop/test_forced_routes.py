@@ -11,6 +11,7 @@ from marten_runtime.tools.builtins.skill_tool import run_skill_tool
 from marten_runtime.tools.builtins.time_tool import run_time_tool
 from marten_runtime.tools.registry import ToolRegistry
 from marten_runtime.skills.service import SkillService
+from tests.support.finalization_contracts import contracted_final_reply
 from tests.support.scripted_llm import AuthFailingLLMClient, FailingLLMClient
 
 
@@ -32,12 +33,10 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
                         "arguments": {"query": "repo:CloudWide851/easy-agent"},
                     },
                 ),
-                LLMReply(
-                    final_text=(
-                        "默认分支是 main，描述已确认。\n\n```tool_episode_summary\n"
-                        '{"summary":"通过 GitHub MCP 查询了 CloudWide851/easy-agent 的默认分支和描述。","facts":[{"key":"full_name","value":"CloudWide851/easy-agent"},{"key":"default_branch","value":"main"}],"volatile":false,"keep_next_turn":true,"refresh_hint":""}\n'
-                        "```"
-                    )
+                contracted_final_reply(
+                    "默认分支是 main，描述已确认。\n\n```tool_episode_summary\n"
+                    '{"summary":"通过 GitHub MCP 查询了 CloudWide851/easy-agent 的默认分支和描述。","facts":[{"key":"full_name","value":"CloudWide851/easy-agent"},{"key":"default_branch","value":"main"}],"volatile":false,"keep_next_turn":true,"refresh_hint":""}\n'
+                    "```"
                 ),
             ]
         )
@@ -133,12 +132,10 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
                         },
                     },
                 ),
-                LLMReply(
-                    final_text=(
-                        "这个仓库最近一次提交时间是 2026-04-01 10:24:49（北京时间）。\n\n```tool_episode_summary\n"
-                        '{"summary":"通过 GitHub MCP list_commits 查询了 CloudWide851/easy-agent 最近一次提交时间。","facts":[{"key":"full_name","value":"CloudWide851/easy-agent"},{"key":"latest_commit_at","value":"2026-04-01T02:24:49Z"}],"volatile":false,"keep_next_turn":true,"refresh_hint":""}\n'
-                        "```"
-                    )
+                contracted_final_reply(
+                    "CloudWide851/easy-agent 最近一次提交是 **2026-04-01 10:24:49**（北京时间）。\n\n```tool_episode_summary\n"
+                    '{"summary":"通过 GitHub MCP list_commits 查询了 CloudWide851/easy-agent 最近一次提交时间。","facts":[{"key":"full_name","value":"CloudWide851/easy-agent"},{"key":"latest_commit_at","value":"2026-04-01T02:24:49Z"}],"volatile":false,"keep_next_turn":true,"refresh_hint":""}\n'
+                    "```"
                 ),
             ]
         )
@@ -173,7 +170,7 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
         self.assertEqual(
             events[-1].payload["text"],
-            "这个仓库最近一次提交时间是 2026-04-01 10:24:49（北京时间）。",
+            "CloudWide851/easy-agent 最近一次提交是 **2026-04-01 10:24:49**（北京时间）。",
         )
         self.assertEqual(len(llm.requests), 2)
         run = history.get(events[-1].run_id)

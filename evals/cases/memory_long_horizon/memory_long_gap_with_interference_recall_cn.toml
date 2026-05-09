@@ -1,0 +1,49 @@
+case_id = "memory_long_gap_with_interference_recall_cn"
+suite_id = "memory_long_horizon"
+family = "memory_long_horizon"
+enabled = true
+required = true
+description = "经过多轮干扰后仍能召回长期偏好"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "memory", "long_gap"]
+
+[[turns]]
+role = "user"
+content = "记住：日报先给风险再给结论。"
+
+[[turns]]
+role = "user"
+content = "顺便告诉我现在北京时间。"
+
+[[turns]]
+role = "user"
+content = "收到的话只回两个字。"
+
+[[turns]]
+role = "user"
+content = "隔了几轮后，再完整说一下我刚才设定的日报顺序，明确哪一步在前、哪一步在后。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+gate_components = ["delayed_recall", "utility_gain"]
+
+[component_weights]
+capture = 20
+delayed_recall = 50
+utility_gain = 30
+
+
+[grader_case]
+expected_memory_action = "replace"
+expected_section = "preferences"
+expected_content_contains = ["先给风险再给结论"]
+recall_contains_all = ["日报"]
+recall_anchor_groups = [["日报"], ["先给风险", "先说风险", "风险放前面", "风险（第一步）", "第一步）", "先列出风险项"], ["再给结论", "后给结论", "结论放后面", "结论（第二步）", "第二步）", "再给出结论"]]
+utility_contains_all = ["日报"]
+utility_anchor_groups = [["日报"], ["先给风险", "先说风险", "风险放前面", "风险（第一步）", "第一步）", "先列出风险项"], ["再给结论", "后给结论", "结论放后面", "结论（第二步）", "第二步）", "再给出结论"]]
+max_memory_calls = 1
+min_interference_turns = 2

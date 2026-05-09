@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import json
-import math
 import os
-import re
 from collections.abc import Callable, Mapping
 from typing import Literal, Protocol
 
@@ -17,6 +14,11 @@ from marten_runtime.runtime.llm_adapters.openai_compat import OpenAICompatLLMCli
 from marten_runtime.runtime.llm_message_support import build_openai_chat_payload
 from marten_runtime.runtime.provider_registry import resolve_provider_ref
 from marten_runtime.runtime.token_estimator import estimate_payload_tokens
+from marten_runtime.runtime.finalization_contract_prompt import (
+    FinalizationContractDraft,
+    extract_finalization_contract_block,
+    render_finalization_contract_block,
+)
 from marten_runtime.runtime.tool_episode_summary_prompt import (
     ToolEpisodeSummaryDraft,
     extract_tool_episode_summary_block,
@@ -30,6 +32,7 @@ class FinalizationEvidenceItem(BaseModel):
     tool_action: str | None = None
     payload_summary: str | None = None
     result_summary: str
+    coverage_tokens: list[str] = Field(default_factory=list)
     required_for_user_request: bool = True
     evidence_source: Literal["tool_result", "loop_meta"] = "tool_result"
 
@@ -65,6 +68,7 @@ class LLMRequest(BaseModel):
     capability_catalog_text: str | None = None
     always_on_skill_text: str | None = None
     channel_protocol_instruction_text: str | None = None
+    repository_context_text: str | None = None
     activated_skill_bodies: list[str] = Field(default_factory=list)
     prompt_mode: str = "full"
     bootstrap_manifest_id: str = "boot_default"
@@ -90,6 +94,7 @@ class LLMReply(BaseModel):
     tool_name: str | None = None
     tool_payload: dict = Field(default_factory=dict)
     tool_episode_summary_draft: ToolEpisodeSummaryDraft | None = None
+    finalization_contract_draft: FinalizationContractDraft | None = None
     usage: object | None = None
 
 
@@ -125,28 +130,30 @@ class ScriptedLLMClient:
     provider_name: str = "scripted"
     model_name: str = "test-double"
 
-    def __init__(self, replies: list[LLMReply]) -> None:
+    def __init__(
+        self,
+        replies: list[LLMReply],
+        *,
+        session_summary_replies: list[LLMReply] | None = None,
+    ) -> None:
         self._replies = list(replies)
+        self._session_summary_replies = list(session_summary_replies or [])
         self.requests: list[LLMRequest] = []
 
     def complete(self, request: LLMRequest) -> LLMReply:
         if request.request_kind == "session_summary":
-            synthetic = _scripted_session_summary_reply(request, self._replies)
-            if synthetic is not None:
-                return synthetic
+            self.requests.append(request)
+            if not self._session_summary_replies:
+                raise RuntimeError("scripted session summary llm exhausted")
+            return _normalize_reply_contract_metadata(
+                request,
+                self._session_summary_replies.pop(0),
+            )
         self.requests.append(request)
         if not self._replies:
             raise RuntimeError("scripted llm exhausted")
         reply = self._replies.pop(0)
-        if reply.final_text and reply.tool_episode_summary_draft is None:
-            parsed = extract_tool_episode_summary_block(reply.final_text)
-            return reply.model_copy(
-                update={
-                    "final_text": parsed.final_text,
-                    "tool_episode_summary_draft": parsed.summary_draft,
-                }
-            )
-        return reply
+        return _normalize_reply_contract_metadata(request, reply)
 
 
 class DemoLLMClient:
@@ -156,58 +163,71 @@ class DemoLLMClient:
         provider_name: str = "demo",
         model_name: str = "demo-local",
         profile_name: str = "demo",
+        emit_explicit_empty_contract: bool = False,
     ) -> None:
         self.provider_name = provider_name
         self.model_name = model_name
         self.profile_name = profile_name
+        self.emit_explicit_empty_contract = emit_explicit_empty_contract
 
     def complete(self, request: LLMRequest) -> LLMReply:
         if request.tool_result is not None:
             if "iso_time" in request.tool_result:
-                return LLMReply(final_text=f"time={request.tool_result['iso_time']}")
-            return LLMReply(
-                final_text=f"{request.tool_result['tool_name']}={request.tool_result['result_text']}"
+                return _normalize_reply_contract_metadata(
+                    request,
+                    LLMReply(
+                        final_text=self._render_visible_text(
+                            f"time={request.tool_result['iso_time']}"
+                        )
+                    ),
+                )
+            return _normalize_reply_contract_metadata(
+                request,
+                LLMReply(
+                    final_text=self._render_visible_text(
+                        f"{request.tool_result['tool_name']}={request.tool_result['result_text']}"
+                    )
+                ),
             )
-        return LLMReply(final_text=request.message)
+        return _normalize_reply_contract_metadata(
+            request,
+            LLMReply(final_text=self._render_visible_text(request.message)),
+        )
+
+    def _render_visible_text(self, text: str) -> str:
+        if self.emit_explicit_empty_contract:
+            return _with_explicit_empty_contract(text)
+        return str(text or "").strip()
+
+
+def _normalize_reply_contract_metadata(request: LLMRequest, reply: LLMReply) -> LLMReply:
+    del request
+    if reply.final_text:
+        visible_text = str(reply.final_text or "")
+        parsed_summary = extract_tool_episode_summary_block(visible_text)
+        parsed_contract = extract_finalization_contract_block(parsed_summary.final_text)
+        return reply.model_copy(
+            update={
+                "final_text": parsed_contract.final_text,
+                "tool_episode_summary_draft": (
+                    reply.tool_episode_summary_draft or parsed_summary.summary_draft
+                ),
+                "finalization_contract_draft": (
+                    parsed_contract.contract_draft or reply.finalization_contract_draft
+                ),
+            }
+        )
+    return reply
+
+
+def _with_explicit_empty_contract(text: str) -> str:
+    visible_text = str(text or "").strip()
+    if not visible_text:
+        return ""
+    return f"{visible_text}\n{render_finalization_contract_block()}"
 
 
 Transport = Callable[..., dict]
-
-
-def _scripted_session_summary_reply(
-    request: LLMRequest,
-    queued_replies: list[LLMReply],
-) -> LLMReply | None:
-    if not queued_replies:
-        return _fallback_session_summary_reply(request)
-    first = queued_replies[0]
-    if _looks_like_session_summary_reply(first):
-        return None
-    return _fallback_session_summary_reply(request)
-
-
-def _looks_like_session_summary_reply(reply: LLMReply) -> bool:
-    if reply.tool_name:
-        return False
-    text = str(reply.final_text or "")
-    return bool(re.search(r"(?im)^title:\s*.+$", text)) and bool(
-        re.search(r"(?im)^preview:\s*.+$", text)
-    )
-
-
-def _fallback_session_summary_reply(request: LLMRequest) -> LLMReply:
-    source = " ".join(str(request.summary_input_text or request.message or "").split()).strip()
-    if not source:
-        source = "新会话"
-    title = source[:24].rstrip() or "新会话"
-    if len(source) > 24:
-        title = f"{title[:23].rstrip()}…"
-    preview = source[:60].rstrip() or "用户开启了一个新会话。"
-    if len(source) > 60:
-        preview = f"{preview[:59].rstrip()}…"
-    if preview[-1:] not in {"。", "！", "？", ".", "!", "?"}:
-        preview = f"{preview}。"
-    return LLMReply(final_text=f"Title: {title}\nPreview: {preview}")
 
 
 def _default_transport(

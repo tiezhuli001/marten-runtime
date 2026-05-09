@@ -350,10 +350,24 @@ def render_runtime_context_status_text(result: dict[str, Any]) -> str:
         f"- 有效窗口：{effective_window} tokens（原始窗口 {context_window}）。",
         (
             f"- 压缩状态："
-            f"{_render_compaction_status(str(result.get('compaction_status') or 'none'), using_compacted_context=using_compacted_context, checkpoint_trigger_kind=checkpoint_trigger_kind)}。"
+            f"{render_runtime_compaction_status_text(result)}。"
         ),
     ]
     return "\n".join(lines)
+
+
+def render_runtime_compaction_status_text(result: dict[str, Any]) -> str:
+    using_compacted_context = bool(result.get("using_compacted_context", False))
+    checkpoint_trigger_kind = (
+        str(result.get("checkpoint_trigger_kind")).strip()
+        if result.get("checkpoint_trigger_kind") is not None
+        else None
+    )
+    return _render_compaction_status(
+        str(result.get("compaction_status") or "none"),
+        using_compacted_context=using_compacted_context,
+        checkpoint_trigger_kind=checkpoint_trigger_kind,
+    )
 
 
 def _render_compaction_status(

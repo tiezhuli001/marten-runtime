@@ -55,22 +55,22 @@ class ModelSmokeTests(unittest.TestCase):
 
             config = load_models_config(str(repo_root / "config/models.toml"))
 
-        self.assertEqual(config.default_profile, "openai_gpt5")
+        self.assertEqual(config.default_profile, "minimax_m2_7_highspeed")
         self.assertEqual(
             sorted(config.profiles.keys()),
-            ["minimax_m25", "openai_gpt5"],
+            ["minimax_m2_7_highspeed", "openai_gpt_5_4"],
         )
-        self.assertEqual(config.profiles["openai_gpt5"].model, "gpt-5.4")
-        self.assertEqual(config.profiles["minimax_m25"].provider_ref, "minimax")
+        self.assertEqual(config.profiles["openai_gpt_5_4"].model, "gpt-5.4")
+        self.assertEqual(config.profiles["minimax_m2_7_highspeed"].provider_ref, "minimax")
 
     def test_models_loader_reads_default_profile(self) -> None:
         config = load_models_config(str(MODELS_EXAMPLE_TOML))
         profile_name, profile = resolve_model_profile(config)
 
-        self.assertEqual(profile_name, "openai_gpt5")
-        self.assertEqual(profile.provider_ref, "openai")
-        self.assertEqual(profile.model, "gpt-5.4")
-        self.assertEqual(profile.fallback_profiles, ["minimax_m25"])
+        self.assertEqual(profile_name, "minimax_m2_7_highspeed")
+        self.assertEqual(profile.provider_ref, "minimax")
+        self.assertEqual(profile.model, "MiniMax-M2.7-highspeed")
+        self.assertEqual(profile.fallback_profiles, [])
 
     def test_models_loader_accepts_optional_context_window_metadata(self) -> None:
         profile = ModelProfile(
@@ -95,7 +95,8 @@ class ModelSmokeTests(unittest.TestCase):
         providers = load_providers_config(str(PROVIDERS_TOML))
         profile_name, profile = resolve_model_profile(config)
 
-        with self.assertRaisesRegex(ValueError, "missing_llm_api_key:OPENAI_API_KEY"):
+        provider = providers.providers[profile.provider_ref]
+        with self.assertRaisesRegex(ValueError, f"missing_llm_api_key:{provider.api_key_env}"):
             build_llm_client(
                 profile_name=profile_name,
                 profile=profile,
@@ -111,7 +112,7 @@ class ModelSmokeTests(unittest.TestCase):
         providers = load_providers_config(str(PROVIDERS_TOML))
 
         client = build_llm_client(
-            profile_name="openai_gpt5",
+            profile_name="openai_gpt_5_4",
             profile=profile,
             providers_config=providers,
             env={

@@ -22,6 +22,7 @@ from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.tools.builtins.mcp_tool import run_mcp_tool
 from marten_runtime.tools.registry import ToolRegistry
+from tests.support.finalization_contracts import contracted_final_reply
 from tests.support.mcp_fixtures import build_server_map, find_free_port, wait_for_port
 
 
@@ -252,7 +253,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
                         "arguments": {"query": "release notes"},
                     },
                 ),
-                LLMReply(final_text="echo=ok"),
+                contracted_final_reply("stdio:release notes"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, InMemoryRunHistory())
@@ -268,7 +269,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         self.assertEqual(discovery["stdio-echo"]["state"], "discovered")
         self.assertEqual([tool.name for tool in server.tools], ["echo"])
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
-        self.assertEqual(events[-1].payload["text"], "echo=ok")
+        self.assertEqual(events[-1].payload["text"], "stdio:release notes")
         self.assertEqual(llm.requests[0].available_tools, ["mcp"])
 
     def test_runtime_mcp_transient_transport_retry_succeeds_without_extra_llm_round(self) -> None:
@@ -321,7 +322,9 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
                         "arguments": {"owner": "llt22", "repo": "talkio", "perPage": 1},
                     },
                 ),
-                LLMReply(final_text="最近一次提交是 release: v2.7.2。"),
+                contracted_final_reply(
+                    '[{"sha":"abc","commit":{"message":"release: v2.7.2"}}]'
+                ),
             ]
         )
         runtime = RuntimeLoop(llm, tools, InMemoryRunHistory())
@@ -341,7 +344,10 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
             )
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
-        self.assertEqual(events[-1].payload["text"], "最近一次提交是 release: v2.7.2。")
+        self.assertEqual(
+            events[-1].payload["text"],
+            '[{"sha":"abc","commit":{"message":"release: v2.7.2"}}]',
+        )
         self.assertEqual(len(llm.requests), 2)
         self.assertEqual(len(client.calls), 3)
         self.assertEqual(
@@ -391,7 +397,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
                         "arguments": {"owner": "llt22", "repo": "talkio", "perPage": 1},
                     },
                 ),
-                LLMReply(final_text="这次 GitHub MCP 调用失败了，请稍后重试。"),
+                contracted_final_reply("这次 GitHub MCP 调用失败了，请稍后重试。"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, InMemoryRunHistory())
@@ -842,7 +848,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         llm = ScriptedLLMClient(
             [
                 LLMReply(tool_name="echo", tool_payload={"query": "release notes"}),
-                LLMReply(final_text="echo=ok"),
+                contracted_final_reply("stdio:release notes"),
             ]
         )
         runtime = RuntimeLoop(llm, tools, InMemoryRunHistory())
@@ -856,7 +862,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         events = runtime.run(session_id="sess_mcp", message="find release notes", trace_id="trace_mcp", agent=agent)
 
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
-        self.assertEqual(events[-1].payload["text"], "echo=ok")
+        self.assertEqual(events[-1].payload["text"], "stdio:release notes")
         self.assertEqual(events[0].trace_id, "trace_mcp")
         self.assertIn("echo", llm.requests[0].tool_snapshot.mcp_tools)
 

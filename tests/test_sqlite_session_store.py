@@ -555,7 +555,7 @@ class SQLiteSessionStoreTests(unittest.TestCase):
                 preserved_tail_user_turns=2,
                 source_message_range=[0, 2],
                 snapshot_message_count=len(store.get(session.session_id).history),
-                compaction_profile_name="minimax_m25",
+                compaction_profile_name="minimax_m2_7_highspeed",
             )
 
             claimed = store.claim_next_compaction_job()
@@ -582,7 +582,7 @@ class SQLiteSessionStoreTests(unittest.TestCase):
         self.assertEqual(finished["persist_ms"], 8)
         self.assertEqual(finished["result_reason"], "generated")
         self.assertTrue(finished["write_applied"])
-        self.assertEqual(finished["compaction_profile_name"], "minimax_m25")
+        self.assertEqual(finished["compaction_profile_name"], "minimax_m2_7_highspeed")
         self.assertIsNotNone(finished["finished_at"])
 
     def test_compaction_job_schema_adds_missing_profile_column_on_reload(self) -> None:

@@ -324,13 +324,13 @@ class OpenAIChatClientTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(len(captured), 2)
+        self.assertEqual(len(captured), 3)
         self.assertTrue(all(item["timeout_seconds"] == 20 for item in captured))
         assert client.last_call_diagnostics is not None
         self.assertEqual(client.last_call_diagnostics.request_kind, "interactive")
         self.assertEqual(client.last_call_diagnostics.timeout_seconds, 20)
-        self.assertEqual(client.last_call_diagnostics.max_attempts, 2)
-        self.assertEqual(len(client.last_call_diagnostics.attempts), 2)
+        self.assertEqual(client.last_call_diagnostics.max_attempts, 3)
+        self.assertEqual(len(client.last_call_diagnostics.attempts), 3)
         self.assertEqual(
             client.last_call_diagnostics.final_error_code, "PROVIDER_TIMEOUT"
         )
@@ -704,12 +704,12 @@ class OpenAIChatClientTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(len(captured), 2)
+        self.assertEqual(len(captured), 3)
         self.assertTrue(all(item["timeout_seconds"] == 20 for item in captured))
         assert client.last_call_diagnostics is not None
         self.assertEqual(client.last_call_diagnostics.request_kind, "finalization_retry")
         self.assertEqual(client.last_call_diagnostics.timeout_seconds, 20)
-        self.assertEqual(client.last_call_diagnostics.max_attempts, 2)
+        self.assertEqual(client.last_call_diagnostics.max_attempts, 3)
 
     def test_openai_5_series_accepts_first_function_call_when_responses_output_contains_multiple_calls(
         self,
@@ -893,7 +893,7 @@ class OpenAIChatClientTests(unittest.TestCase):
         client = OpenAIChatLLMClient(
             api_key="secret",
             model="gpt-4.1",
-            profile_name="openai_gpt5",
+            profile_name="openai_gpt_5_4",
             provider_name="openai",
             provider=self._provider(
                 extra_headers={"X-Fixed": "fixed"},
@@ -918,16 +918,145 @@ class OpenAIChatClientTests(unittest.TestCase):
         self.assertEqual(captured[0]["headers"]["X-Fixed"], "fixed")
         self.assertEqual(captured[0]["headers"]["X-Provider-Token"], "dynamic-token")
 
-    def test_openai_5_series_requires_provider_responses_support(self) -> None:
+    def test_openai_5_series_uses_chat_path_when_provider_disables_responses_support(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def fake_transport(
+            url: str,
+            headers: dict[str, str],
+            body: dict,
+            timeout_seconds: float = 30,
+            *,
+            stop_event=None,
+            deadline_monotonic=None,
+        ) -> dict:
+            del headers, body, timeout_seconds, stop_event, deadline_monotonic
+            calls.append(url)
+            return {"choices": [{"message": {"content": "ok"}}]}
+
         client = OpenAIChatLLMClient(
             api_key="secret",
             model="gpt-5.4",
-            profile_name="minimax_m25",
+            profile_name="openai_gpt_5_4",
+            provider_name="openai",
+            provider=self._provider(
+                base_url="https://sub.aigcnova.top/v1",
+                supports_responses_api=False,
+            ),
+            transport=fake_transport,
+        )
+
+        reply = client.complete(
+            LLMRequest(
+                session_id="sess_1",
+                trace_id="trace_1",
+                message="hello",
+                agent_id="main",
+                app_id="main_agent",
+            )
+        )
+
+        self.assertEqual(reply.final_text, "ok")
+        self.assertEqual(calls, ["https://sub.aigcnova.top/v1/chat/completions"])
+
+    def test_openai_5_series_chat_fallback_gets_longer_interactive_budget(
+        self,
+    ) -> None:
+        captured: list[float] = []
+
+        def fake_transport(
+            url: str,
+            headers: dict[str, str],
+            body: dict,
+            timeout_seconds: float,
+            *,
+            stop_event=None,
+            deadline_monotonic=None,
+        ) -> dict:
+            del url, headers, body, stop_event, deadline_monotonic
+            captured.append(timeout_seconds)
+            raise TimeoutError("timed out")
+
+        client = OpenAIChatLLMClient(
+            api_key="secret",
+            model="gpt-5.4",
+            profile_name="openai_gpt_5_4",
+            provider_name="openai",
+            provider=self._provider(
+                base_url="https://sub.aigcnova.top/v1",
+                supports_responses_api=False,
+            ),
+            transport=fake_transport,
+        )
+
+        with self.assertRaises(ProviderTransportError):
+            client.complete(
+                LLMRequest(
+                    session_id="sess_1",
+                    trace_id="trace_1",
+                    message="hello",
+                    agent_id="main",
+                    app_id="main_agent",
+                    request_kind="interactive",
+                )
+            )
+
+        self.assertEqual(captured, [40, 40, 40])
+
+    def test_subagent_request_gets_longer_provider_budget(self) -> None:
+        captured: list[float] = []
+
+        def fake_transport(
+            url: str,
+            headers: dict[str, str],
+            body: dict,
+            timeout_seconds: float,
+            *,
+            stop_event=None,
+            deadline_monotonic=None,
+        ) -> dict:
+            del url, headers, body, stop_event, deadline_monotonic
+            captured.append(timeout_seconds)
+            raise TimeoutError("timed out")
+
+        client = OpenAIChatLLMClient(
+            api_key="secret",
+            model="gpt-5.4",
+            profile_name="openai_gpt_5_4",
+            provider_name="openai",
+            provider=self._provider(supports_responses_streaming=False),
+            transport=fake_transport,
+        )
+
+        with self.assertRaises(ProviderTransportError):
+            client.complete(
+                LLMRequest(
+                    session_id="sess_1",
+                    trace_id="trace_1",
+                    message="后台检查 README",
+                    agent_id="main",
+                    app_id="main_agent",
+                    request_kind="subagent",
+                )
+            )
+
+        self.assertEqual(captured, [60, 60, 60])
+
+    def test_openai_5_series_fails_when_provider_lacks_every_supported_endpoint(
+        self,
+    ) -> None:
+        client = OpenAIChatLLMClient(
+            api_key="secret",
+            model="gpt-5.4",
+            profile_name="minimax_m2_7_highspeed",
             provider_name="minimax",
             provider=self._provider(
                 base_url="https://api.minimaxi.com/v1",
                 api_key_env="MINIMAX_API_KEY",
                 supports_responses_api=False,
+                supports_chat_completions=False,
             ),
         )
 
@@ -1161,7 +1290,7 @@ class OpenAIChatClientTests(unittest.TestCase):
         client = OpenAIChatLLMClient(
             api_key="secret",
             model="gpt-5.4",
-            profile_name="openai_gpt5",
+            profile_name="openai_gpt_5_4",
             transport=fake_transport,
         )
         declarations = get_capability_declarations()
@@ -1237,7 +1366,7 @@ class OpenAIChatClientTests(unittest.TestCase):
         client = OpenAIChatLLMClient(
             api_key="secret",
             model="gpt-5.4",
-            profile_name="openai_gpt5",
+            profile_name="openai_gpt_5_4",
             transport=fake_transport,
         )
         request = LLMRequest(
@@ -1364,8 +1493,8 @@ class OpenAIChatClientTests(unittest.TestCase):
 
         followup_messages = captured[1]["messages"]
         joined = "\n".join(str(item.get("content", "")) for item in followup_messages)
-        self.assertNotIn("Visible skills", joined)
-        self.assertNotIn("Capability catalog", joined)
+        self.assertNotIn(request.skill_heads_text, joined)
+        self.assertNotIn(request.capability_catalog_text, joined)
 
     def test_openai_client_keeps_runtime_followup_on_runtime_specific_instruction(
         self,
@@ -1435,7 +1564,8 @@ class OpenAIChatClientTests(unittest.TestCase):
         self.assertIn("以刚刚返回的 runtime 工具结果为主完成用户当前这句请求", joined)
         self.assertIn("覆盖用户当前这句消息里的全部直接要求", joined)
         self.assertIn("与当前问题直接相关的事实，可以一并回答", joined)
-        self.assertNotIn("tool_episode_summary", joined)
+        self.assertIn("finalization_contract", joined)
+        self.assertNotIn("在正常回答用户后，请在末尾追加一个 ```tool_episode_summary``` 代码块", joined)
 
     def test_openai_client_adds_combined_summary_instruction_on_non_runtime_tool_followup(
         self,
@@ -1818,7 +1948,9 @@ class OpenAIChatClientTests(unittest.TestCase):
             str(item.get("content", "")) for item in captured[0]["messages"]
         )
         self.assertNotIn("repo:CloudWide851/easy-agent", joined)
-        self.assertNotIn("{", joined)
+        self.assertNotIn("server_id", joined)
+        self.assertNotIn("tool_name", joined)
+        self.assertNotIn("arguments", joined)
 
     def test_openai_client_does_not_inject_raw_mcp_commit_scaffold_for_explicit_repo_commit_query(
         self,
@@ -1942,6 +2074,175 @@ class OpenAIChatClientTests(unittest.TestCase):
             "agent_id",
         ):
             self.assertIn(field_name, spawn_params["properties"])
+
+    def test_openai_client_compacts_large_tool_descriptions_and_schema_annotations(
+        self,
+    ) -> None:
+        declarations = get_capability_declarations()
+        spawn_full_description = render_tool_description(
+            declarations["spawn_subagent"]
+        )
+        mcp_full_description = render_tool_description(declarations["mcp"])
+        request = LLMRequest(
+            session_id="sess_compact_tool_defs",
+            trace_id="trace_compact_tool_defs",
+            message="开启子代理查询这个仓库最近一次提交。",
+            agent_id="main",
+            app_id="main_agent",
+            available_tools=["spawn_subagent", "mcp"],
+            tool_snapshot=ToolSnapshot(
+                tool_snapshot_id="tool_compact_defs",
+                builtin_tools=["spawn_subagent", "mcp"],
+                tool_metadata={
+                    "spawn_subagent": {
+                        "description": spawn_full_description,
+                        "parameters_schema": declarations[
+                            "spawn_subagent"
+                        ].parameters_schema,
+                    },
+                    "mcp": {
+                        "description": mcp_full_description,
+                        "parameters_schema": declarations["mcp"].parameters_schema,
+                    },
+                },
+            ),
+        )
+
+        payload = build_openai_chat_payload("MiniMax-M2.5", request)
+
+        spawn_def = next(
+            item["function"]
+            for item in payload["tools"]
+            if item["function"]["name"] == "spawn_subagent"
+        )
+        self.assertLess(
+            len(spawn_def["description"]),
+            len(spawn_full_description),
+        )
+        self.assertIn("Rules:", spawn_def["description"])
+        self.assertNotIn("Examples:", spawn_def["description"])
+        self.assertNotIn(
+            "description",
+            str(spawn_def["parameters"]),
+        )
+        self.assertIn("task", spawn_def["parameters"]["required"])
+
+    def test_session_resume_guidance_reaches_actual_provider_payload(self) -> None:
+        declarations = get_capability_declarations()
+        request = LLMRequest(
+            session_id="sess_session_ref_payload",
+            trace_id="trace_session_ref_payload",
+            message="恢复到旧会话。",
+            agent_id="main",
+            app_id="main_agent",
+            available_tools=["session"],
+            capability_catalog_text=render_capability_catalog(declarations),
+            tool_snapshot=ToolSnapshot(
+                tool_snapshot_id="tool_session_ref_payload",
+                builtin_tools=["session"],
+                tool_metadata={
+                    "session": {
+                        "parameters_schema": declarations["session"].parameters_schema,
+                    },
+                },
+            ),
+        )
+
+        payload = build_openai_chat_payload("MiniMax-M2.7-highspeed", request)
+        transcript = str(payload)
+        session_def = next(
+            item["function"]
+            for item in payload["tools"]
+            if item["function"]["name"] == "session"
+        )
+
+        self.assertIn("session_ref", transcript)
+        self.assertIn("go directly to resume/show instead of listing first", transcript)
+        self.assertIn("do not repeat resume/show/list", transcript)
+        self.assertIn("session_ref", session_def["description"])
+        self.assertNotIn("description", str(session_def["parameters"]))
+
+    def test_spawn_subagent_guidance_reaches_actual_provider_payload(self) -> None:
+        declarations = get_capability_declarations()
+        request = LLMRequest(
+            session_id="sess_spawn_payload",
+            trace_id="trace_spawn_payload",
+            message="开启子代理在后台看一下 README 的结构。",
+            agent_id="main",
+            app_id="main_agent",
+            available_tools=["spawn_subagent", "mcp"],
+            capability_catalog_text=render_capability_catalog(declarations),
+            tool_snapshot=ToolSnapshot(
+                tool_snapshot_id="tool_spawn_payload",
+                builtin_tools=["spawn_subagent", "mcp"],
+                tool_metadata={
+                    "spawn_subagent": {
+                        "parameters_schema": declarations["spawn_subagent"].parameters_schema,
+                    },
+                    "mcp": {
+                        "parameters_schema": declarations["mcp"].parameters_schema,
+                    },
+                },
+            ),
+        )
+
+        payload = build_openai_chat_payload("MiniMax-M2.7-highspeed", request)
+        transcript = str(payload)
+        spawn_def = next(
+            item["function"]
+            for item in payload["tools"]
+            if item["function"]["name"] == "spawn_subagent"
+        )
+
+        self.assertIn("explicitly requests delegation/background execution", transcript)
+        self.assertIn("answer from that attached state directly", transcript)
+        self.assertIn("Use spawn_subagent only for launching a new child task", transcript)
+        self.assertIn("explicitly requests delegation/background execution", spawn_def["description"])
+        self.assertNotIn("description", str(spawn_def["parameters"]))
+
+    def test_mcp_latest_commit_guidance_reaches_actual_provider_payload(self) -> None:
+        declarations = get_capability_declarations()
+        request = LLMRequest(
+            session_id="sess_mcp_latest_commit_payload",
+            trace_id="trace_mcp_latest_commit_payload",
+            message="调用 github mcp 查询 tiezhuli001/codex-skills 最近一次提交",
+            agent_id="main",
+            app_id="main_agent",
+            available_tools=["mcp"],
+            capability_catalog_text=render_capability_catalog(
+                declarations,
+                mcp_catalog_text=(
+                    "MCP family contract:\n"
+                    "MCP capability catalog:\n"
+                    "- github: tools=[get_commit, list_commits]"
+                ),
+            ),
+            tool_snapshot=ToolSnapshot(
+                tool_snapshot_id="tool_mcp_latest_commit_payload",
+                builtin_tools=["mcp"],
+                tool_metadata={
+                    "mcp": {
+                        "parameters_schema": declarations["mcp"].parameters_schema,
+                    },
+                },
+            ),
+        )
+
+        payload = build_openai_chat_payload("MiniMax-M2.7-highspeed", request)
+        transcript = str(payload)
+        mcp_def = next(
+            item["function"]
+            for item in payload["tools"]
+            if item["function"]["name"] == "mcp"
+        )
+
+        self.assertIn("exact visible MCP tools", transcript)
+        self.assertIn("latest commit", transcript)
+        self.assertIn("avoid invented convenience names", transcript)
+        self.assertIn("list_commits", transcript)
+        self.assertIn("get_commit", transcript)
+        self.assertIn("exact visible MCP tools", mcp_def["description"])
+        self.assertNotIn("description", str(mcp_def["parameters"]))
 
     def test_openai_client_does_not_add_time_specific_instruction_for_live_time_query(self) -> None:
         captured: list[dict] = []

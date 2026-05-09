@@ -11,12 +11,13 @@ from marten_runtime.self_improve.review_dispatcher import SelfImproveReviewDispa
 from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
 from tests.http_app_support import build_test_app
 from tests.support.feishu_builders import FakeDeliveryClient
+from tests.support.finalization_contracts import contracted_final_reply
 
 
 class SelfImproveIntegrationTests(unittest.TestCase):
     def test_successful_turn_can_trigger_hidden_review_and_persist_skill_candidate(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            app = build_test_app()
+            app = build_test_app(emit_explicit_empty_contract=True)
             runtime = app.state.runtime
             isolated_store = SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3")
             recorder = SelfImproveRecorder(isolated_store)
@@ -35,17 +36,15 @@ class SelfImproveIntegrationTests(unittest.TestCase):
 
             scripted = ScriptedLLMClient(
                 [
-                    LLMReply(final_text="已经处理完成。"),
-                    LLMReply(
-                        final_text=(
-                            '{"lesson_proposals":[],"skill_proposals":[{"title":"Provider Timeout Recovery","slug":"provider-timeout-recovery","summary":"Narrow the path after repeated timeout.","trigger_conditions":["repeated provider timeout"],"body_markdown":"# Provider Timeout Recovery\\n\\n- Keep the path narrow.","rationale":"Observed repeated timeout followed by a successful narrow retry.","source_run_ids":["run_source"],"source_fingerprints":["main|请总结今天的问题"],"confidence":0.94}],"confidence":0.94,"classification_rationale":"Reusable workflow"}'
-                        )
+                    contracted_final_reply("已经处理完成。"),
+                    contracted_final_reply(
+                        '{"lesson_proposals":[],"skill_proposals":[{"title":"Provider Timeout Recovery","slug":"provider-timeout-recovery","summary":"Narrow the path after repeated timeout.","trigger_conditions":["repeated provider timeout"],"body_markdown":"# Provider Timeout Recovery\\n\\n- Keep the path narrow.","rationale":"Observed repeated timeout followed by a successful narrow retry.","source_run_ids":["run_source"],"source_fingerprints":["main|请总结今天的问题"],"confidence":0.94}],"confidence":0.94,"classification_rationale":"Reusable workflow"}'
                     ),
                 ]
             )
             runtime.runtime_loop.llm = scripted
-            runtime.llm_client_factory.cache_client("openai_gpt5", scripted)
-            runtime.llm_client_factory.cache_client("minimax_m25", scripted)
+            runtime.llm_client_factory.cache_client("openai_gpt_5_4", scripted)
+            runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", scripted)
 
             runtime.session_store.create(
                 session_id="sess_seed",
@@ -125,7 +124,7 @@ class SelfImproveIntegrationTests(unittest.TestCase):
 
     def test_feishu_turn_keeps_main_reply_clean_and_emits_followup_skill_candidate_notification(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            app = build_test_app()
+            app = build_test_app(emit_explicit_empty_contract=True)
             runtime = app.state.runtime
             isolated_store = SQLiteSelfImproveStore(Path(tmpdir) / "self_improve.sqlite3")
             recorder = SelfImproveRecorder(isolated_store)
@@ -149,17 +148,15 @@ class SelfImproveIntegrationTests(unittest.TestCase):
 
             scripted = ScriptedLLMClient(
                 [
-                    LLMReply(final_text="已经处理完成。"),
-                    LLMReply(
-                        final_text=(
-                            '{"lesson_proposals":[],"skill_proposals":[{"title":"Provider Timeout Recovery","slug":"provider-timeout-recovery","summary":"Narrow the path after repeated timeout.","trigger_conditions":["repeated provider timeout"],"body_markdown":"# Provider Timeout Recovery\\n\\n- Keep the path narrow.","rationale":"Observed repeated timeout followed by a successful narrow retry.","source_run_ids":["run_source"],"source_fingerprints":["main|请总结今天的问题"],"confidence":0.94}],"confidence":0.94,"classification_rationale":"Reusable workflow"}'
-                        )
+                    contracted_final_reply("已经处理完成。"),
+                    contracted_final_reply(
+                        '{"lesson_proposals":[],"skill_proposals":[{"title":"Provider Timeout Recovery","slug":"provider-timeout-recovery","summary":"Narrow the path after repeated timeout.","trigger_conditions":["repeated provider timeout"],"body_markdown":"# Provider Timeout Recovery\\n\\n- Keep the path narrow.","rationale":"Observed repeated timeout followed by a successful narrow retry.","source_run_ids":["run_source"],"source_fingerprints":["main|请总结今天的问题"],"confidence":0.94}],"confidence":0.94,"classification_rationale":"Reusable workflow"}'
                     ),
                 ]
             )
             runtime.runtime_loop.llm = scripted
-            runtime.llm_client_factory.cache_client("openai_gpt5", scripted)
-            runtime.llm_client_factory.cache_client("minimax_m25", scripted)
+            runtime.llm_client_factory.cache_client("openai_gpt_5_4", scripted)
+            runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", scripted)
 
             runtime.session_store.create(
                 session_id="sess_seed",

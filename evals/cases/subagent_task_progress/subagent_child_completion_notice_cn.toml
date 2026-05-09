@@ -1,0 +1,37 @@
+case_id = "subagent_child_completion_notice_cn"
+suite_id = "subagent_task_progress"
+family = "subagent_task_progress"
+enabled = true
+required = true
+description = "父会话能够收到子任务完成摘要"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "subagent", "completion_notice"]
+gate_components = ["child_completion", "parent_integration"]
+
+[[turns]]
+role = "user"
+content = "把这个仓库的结构梳理放到后台做，完成后通知我。"
+
+[[turns]]
+role = "user"
+content = "子任务完成了吗？直接给我一句中文摘要，明确它梳理的对象和结论。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+delegation_quality = 20
+child_progress = 20
+child_completion = 30
+parent_integration = 30
+
+
+[grader_case]
+expected_spawn_count = 1
+await_child_completion = true
+integration_contains_all = ["仓库结构"]
+integration_anchor_groups = [["仓库结构", "项目结构"], ["顶层目录", "主要模块", "关键配置", "测试与文档"]]
+timeout_ms = 180000

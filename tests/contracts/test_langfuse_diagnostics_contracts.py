@@ -53,7 +53,7 @@ class ThrowingLangfuseClient:
 
 class LangfuseDiagnosticsContractTests(unittest.TestCase):
     def test_runtime_diagnostics_expose_langfuse_status(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
 
         with TestClient(app) as client:
             body = client.get("/diagnostics/runtime").json()
@@ -67,7 +67,7 @@ class LangfuseDiagnosticsContractTests(unittest.TestCase):
         )
 
     def test_run_and_trace_diagnostics_expose_langfuse_refs_when_observer_is_enabled(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         observer = build_langfuse_observer(
             env={
                 "LANGFUSE_PUBLIC_KEY": "pk-test",
@@ -113,7 +113,7 @@ class LangfuseDiagnosticsContractTests(unittest.TestCase):
         self.assertGreaterEqual(len(trace_diag["event_ids"]), 1)
 
     def test_runtime_diagnostics_mark_langfuse_unhealthy_after_client_error(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         observer = build_langfuse_observer(
             env={
                 "LANGFUSE_PUBLIC_KEY": "pk-test",

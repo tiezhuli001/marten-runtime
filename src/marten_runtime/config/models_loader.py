@@ -25,16 +25,16 @@ def load_models_config(path: str) -> ModelsConfig:
     resolved = resolve_config_path(path)
     if resolved is None:
         data = {
-            "default_profile": "openai_gpt5",
+            "default_profile": "openai_gpt_5_4",
             "profiles": {
-                "openai_gpt5": {
+                "openai_gpt_5_4": {
                     "provider_ref": "openai",
                     "model": "gpt-5.4",
-                    "fallback_profiles": ["minimax_m25"],
+                    "fallback_profiles": ["minimax_m2_7_highspeed"],
                 },
-                "minimax_m25": {
+                "minimax_m2_7_highspeed": {
                     "provider_ref": "minimax",
-                    "model": "MiniMax-M2.5",
+                    "model": "MiniMax-M2.7-highspeed",
                 },
             },
         }

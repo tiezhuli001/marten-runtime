@@ -7,7 +7,7 @@ from tests.http_app_support import build_test_app
 
 class SubagentContractTests(unittest.TestCase):
     def test_subagent_diagnostics_endpoints_expose_task_and_lineage(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         session = runtime.session_store.create(
             session_id="sess_contract_parent",
@@ -51,7 +51,7 @@ class SubagentContractTests(unittest.TestCase):
         self.assertTrue(item["child_run_id"])
 
     def test_parent_session_receives_terminal_system_message_after_subagent_completion(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         session = runtime.session_store.create(
             session_id="sess_contract_parent_2",

@@ -7,6 +7,8 @@ class ContextSnapshot(BaseModel):
     snapshot_id: str
     session_id: str
     active_goal: str
+    recent_user_messages: list[str] = Field(default_factory=list)
+    recent_assistant_messages: list[str] = Field(default_factory=list)
     user_constraints: list[str] = Field(default_factory=list)
     recent_files: list[str] = Field(default_factory=list)
     open_todos: list[str] = Field(default_factory=list)
@@ -21,6 +23,8 @@ class ContextSnapshot(BaseModel):
 def compact_context(
     session_id: str,
     active_goal: str,
+    recent_user_messages: list[str] | None = None,
+    recent_assistant_messages: list[str] | None = None,
     user_constraints: list[str] | None = None,
     recent_files: list[str] | None = None,
     open_todos: list[str] | None = None,
@@ -29,6 +33,8 @@ def compact_context(
     pending_risks: list[str] | None = None,
     source_message_range: list[int] | None = None,
 ) -> ContextSnapshot:
+    recent_user_messages = recent_user_messages or []
+    recent_assistant_messages = recent_assistant_messages or []
     user_constraints = user_constraints or []
     recent_files = recent_files or []
     open_todos = open_todos or []
@@ -40,6 +46,8 @@ def compact_context(
         snapshot_id=f"ctx_{session_id}",
         session_id=session_id,
         active_goal=active_goal,
+        recent_user_messages=recent_user_messages,
+        recent_assistant_messages=recent_assistant_messages,
         user_constraints=user_constraints,
         recent_files=recent_files,
         open_todos=open_todos,

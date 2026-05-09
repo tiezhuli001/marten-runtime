@@ -1,0 +1,41 @@
+case_id = "direct_answer_followup_cn"
+suite_id = "main_chain_core"
+family = "direct_answer_multi_turn"
+enabled = true
+required = true
+description = "多轮 direct answer continuity"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "direct", "multi_turn"]
+
+[[turns]]
+role = "user"
+content = "先简单打个招呼，后面我还要继续跟进部署告警排查任务。"
+
+[[turns]]
+role = "user"
+content = "继续跟进上一轮那个部署告警排查任务。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_all = ["继续"]
+
+[expectations.efficiency]
+max_llm_requests = 2
+max_tool_calls = 0
+
+[expectations.context]
+expect_compaction = false
+
+[expectations.diagnostics]
+expect_provider_ref = "openai"
+
+[weights]
+outcome = 80
+tool_path = 0
+efficiency = 15
+context = 5

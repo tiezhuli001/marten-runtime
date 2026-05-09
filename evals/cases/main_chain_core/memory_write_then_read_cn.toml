@@ -1,0 +1,46 @@
+case_id = "memory_write_then_read_cn"
+suite_id = "main_chain_core"
+family = "memory_write_read"
+enabled = true
+required = true
+description = "memory append 后再读取"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "memory", "multi_turn"]
+
+[[turns]]
+role = "user"
+content = "记住：以后始终用中文回复。"
+
+[[turns]]
+role = "user"
+content = "读取刚才记住的偏好。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_all = ["中文回复"]
+
+[[expectations.tool_path.required_calls]]
+tool_name = "memory"
+min_calls = 1
+max_calls = 2
+
+[expectations.efficiency]
+max_llm_requests = 6
+max_tool_calls = 2
+
+[expectations.context]
+expect_compaction = false
+
+[expectations.diagnostics]
+expect_provider_ref = "openai"
+
+[weights]
+outcome = 60
+tool_path = 20
+efficiency = 15
+context = 5

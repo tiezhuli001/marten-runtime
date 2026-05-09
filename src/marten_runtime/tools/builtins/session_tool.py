@@ -42,9 +42,15 @@ def run_session_tool(
             "current_session": current_session,
         }
     if action == "show":
-        session_id = str(payload.get("session_id") or current_session_id or "").strip()
+        session_id = _resolve_requested_session_id(
+            payload,
+            action=action,
+            current_session_id=current_session_id,
+            session_store=session_store,
+            current_user_id=current_user_id,
+        )
         if not session_id:
-            raise ValueError("session_id is required")
+            raise ValueError("session_id or session_ref is required")
         record = session_store.get(session_id)
         _require_session_visibility(record, current_user_id=current_user_id)
         return {
@@ -79,9 +85,15 @@ def run_session_tool(
         }
     if action == "resume":
         context = _require_context(tool_context)
-        session_id = str(payload.get("session_id", "")).strip()
+        session_id = _resolve_requested_session_id(
+            payload,
+            action=action,
+            current_session_id=context["session_id"],
+            session_store=session_store,
+            current_user_id=current_user_id,
+        )
         if not session_id:
-            raise ValueError("session_id is required")
+            raise ValueError("session_id or session_ref is required")
         target = session_store.get(session_id)
         _require_session_visibility(target, current_user_id=current_user_id)
         transition = execute_session_transition(
@@ -133,6 +145,75 @@ def _require_context(tool_context: dict | None) -> dict[str, str | int | LLMClie
 
 def _stable_user_id(tool_context: dict | None) -> str:
     return str((tool_context or {}).get("user_id") or "").strip()
+
+
+def _resolve_requested_session_id(
+    payload: dict,
+    *,
+    action: str,
+    current_session_id: str,
+    session_store: SessionStore,
+    current_user_id: str,
+) -> str:
+    session_id = str(payload.get("session_id") or "").strip()
+    if session_id:
+        return session_id
+    session_ref = str(payload.get("session_ref") or "").strip()
+    if session_ref:
+        return _resolve_session_ref(
+            session_ref,
+            session_store=session_store,
+            current_user_id=current_user_id,
+        )
+    if action == "show":
+        return current_session_id
+    return ""
+
+
+def _resolve_session_ref(
+    session_ref: str,
+    *,
+    session_store: SessionStore,
+    current_user_id: str,
+) -> str:
+    normalized_ref = _normalize_session_lookup_value(session_ref)
+    if not normalized_ref:
+        raise ValueError("session_ref is required")
+    visible = [
+        record
+        for record in session_store.list_sessions()
+        if _is_session_visible_to_user(record, current_user_id=current_user_id)
+    ]
+    exact_id_matches = [
+        record for record in visible if _normalize_session_lookup_value(record.session_id) == normalized_ref
+    ]
+    if len(exact_id_matches) == 1:
+        return exact_id_matches[0].session_id
+    if len(exact_id_matches) > 1:
+        raise ValueError("session_ref matched multiple visible sessions")
+    title_matches = [
+        record
+        for record in visible
+        if _normalize_session_lookup_value(record.session_title) == normalized_ref
+    ]
+    if len(title_matches) == 1:
+        return title_matches[0].session_id
+    if len(title_matches) > 1:
+        raise ValueError("session_ref matched multiple visible sessions")
+    preview_matches = [
+        record
+        for record in visible
+        if _normalize_session_lookup_value(record.session_preview) == normalized_ref
+    ]
+    if len(preview_matches) == 1:
+        return preview_matches[0].session_id
+    if len(preview_matches) > 1:
+        raise ValueError("session_ref matched multiple visible sessions")
+    raise ValueError("session_ref did not match a visible session")
+
+
+def _normalize_session_lookup_value(value: object) -> str:
+    return " ".join(str(value or "").split()).strip().lower()
 
 
 def _is_session_visible_to_user(

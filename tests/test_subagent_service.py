@@ -331,7 +331,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                 app_id="main_agent",
                 allowed_tools=["runtime", "skill", "time"],
                 prompt_mode="child",
-                model_profile="openai_gpt5",
+                model_profile="openai_gpt_5_4",
             )
         )
         app_runtime = SimpleNamespace(
@@ -350,9 +350,9 @@ class SubagentServiceContractTests(unittest.TestCase):
             app_runtimes={"main_agent": app_runtime},
             llm_client_factory=FakeLLMFactory(),
             models_config=ModelsConfig(
-                default_profile="openai_gpt5",
+                default_profile="openai_gpt_5_4",
                 profiles={
-                    "openai_gpt5": ModelProfile(
+                    "openai_gpt_5_4": ModelProfile(
                         provider_ref="openai",
                         model="gpt-4.1",
                         tokenizer_family="openai_o200k",
@@ -385,10 +385,10 @@ class SubagentServiceContractTests(unittest.TestCase):
         self.assertEqual(agent.allowed_tools, ["runtime", "skill", "time"])
         self.assertEqual(captured["system_prompt"], "coding child prompt")
         self.assertEqual(captured["bootstrap_manifest_id"], "boot_main_agent_child")
-        self.assertEqual(captured["model_profile_name"], "openai_gpt5")
+        self.assertEqual(captured["model_profile_name"], "openai_gpt_5_4")
         self.assertEqual(captured["tokenizer_family"], "openai_o200k")
-        self.assertEqual(captured["factory_profile_name"], "openai_gpt5")
-        self.assertEqual(captured["llm_client"], {"profile_name": "openai_gpt5"})
+        self.assertEqual(captured["factory_profile_name"], "openai_gpt_5_4")
+        self.assertEqual(captured["llm_client"], {"profile_name": "openai_gpt_5_4"})
 
     def test_spawn_persists_target_agent_app_id_in_task_record(self) -> None:
         from marten_runtime.agents.registry import AgentRegistry
@@ -410,7 +410,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                 app_id="code_assistant",
                 allowed_tools=["runtime", "skill", "time"],
                 prompt_mode="child",
-                model_profile="openai_gpt5",
+                model_profile="openai_gpt_5_4",
             )
         )
         service = SubagentService(
@@ -472,7 +472,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                 app_id="code_assistant",
                 allowed_tools=["runtime", "skill", "time"],
                 prompt_mode="child",
-                model_profile="openai_gpt5",
+                model_profile="openai_gpt_5_4",
             )
         )
         service = SubagentService(
@@ -913,6 +913,100 @@ class SubagentServiceContractTests(unittest.TestCase):
         self.assertIsNone(task.result_summary)
         self.assertIsNone(task.child_run_id)
 
+    def test_running_task_exposes_child_run_id_before_terminal_event(self) -> None:
+        from marten_runtime.subagents.service import SubagentService
+
+        entered = Event()
+        release = Event()
+
+        history = InMemoryRunHistory()
+
+        class BlockingRuntimeLoop:
+            def run(
+                self,
+                session_id,
+                message,
+                trace_id=None,
+                agent=None,
+                session_messages=None,
+                compacted_context=None,
+                request_kind="interactive",
+                parent_run_id=None,
+                session_store=None,
+                on_run_started=None,
+            ):  # noqa: ANN001,E501
+                run = history.start(
+                    session_id=session_id,
+                    trace_id=trace_id or "trace_child_running",
+                    config_snapshot_id="cfg_bootstrap",
+                    bootstrap_manifest_id="boot_default",
+                    parent_run_id=parent_run_id,
+                )
+                if on_run_started is not None:
+                    on_run_started(run.run_id, run.started_at)
+                entered.set()
+                release.wait(timeout=1.0)
+                return [
+                    OutboundEvent(
+                        session_id=session_id,
+                        run_id=run.run_id,
+                        event_id="evt_child_running",
+                        event_type="final",
+                        sequence=2,
+                        trace_id=trace_id or "trace_child_running",
+                        payload={"text": "child finished"},
+                        created_at=datetime.now(timezone.utc),
+                    )
+                ]
+
+        session_store = self._session_store()
+        session_store.create(
+            session_id="sess_parent",
+            conversation_id="conv-parent",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        service = SubagentService(
+            session_store=session_store,
+            run_history=history,
+            tool_registry=ToolRegistry(),
+            runtime_loop=BlockingRuntimeLoop(),
+            max_concurrent_subagents=1,
+            max_queued_subagents=4,
+            subagent_timeout_seconds=5,
+        )
+        result = service.spawn(
+            task="background followup",
+            label="running-child-run-id",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            parent_allowed_tools=["runtime", "skill", "time"],
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        worker = Thread(target=service.run_next_queued_task)
+        worker.start()
+        self.assertTrue(entered.wait(timeout=1.0))
+
+        task = service.store.get(result["task_id"])
+        self.assertEqual(task.status, "running")
+        self.assertTrue(str(task.child_run_id or "").startswith("run_"))
+        child_session = session_store.get(task.child_session_id)
+        self.assertEqual(child_session.last_run_id, task.child_run_id)
+
+        release.set()
+        worker.join(timeout=2.0)
+
+        task = service.store.get(result["task_id"])
+        self.assertEqual(task.status, "succeeded")
+        child_session = session_store.get(task.child_session_id)
+        self.assertEqual(child_session.last_run_id, task.child_run_id)
+
     def test_timeout_marks_task_timed_out_and_ignores_late_success(self) -> None:
         from marten_runtime.subagents.service import SubagentService
 
@@ -971,6 +1065,200 @@ class SubagentServiceContractTests(unittest.TestCase):
         self.assertEqual(task.status, "timed_out")
         self.assertIsNone(task.result_summary)
         self.assertIsNone(task.child_run_id)
+
+    def test_timeout_keeps_task_running_until_parent_timeout_message_is_persisted(self) -> None:
+        from marten_runtime.session.sqlite_store import SQLiteSessionStore
+        from marten_runtime.subagents.service import SubagentService
+
+        release_runtime = Event()
+
+        class BlockingRuntimeLoop:
+            def run(self, session_id, message, trace_id=None, agent=None, session_messages=None, compacted_context=None, request_kind="interactive", parent_run_id=None):  # noqa: ANN001,E501
+                release_runtime.wait(timeout=1.0)
+                return [
+                    OutboundEvent(
+                        session_id=session_id,
+                        run_id="run_child_timeout_ordering",
+                        event_id="evt_child_timeout_ordering",
+                        event_type="final",
+                        sequence=2,
+                        trace_id=trace_id or "trace_child_timeout_ordering",
+                        payload={"text": "child finished too late"},
+                        created_at=datetime.now(timezone.utc),
+                    )
+                ]
+
+        class BlockingTimeoutMessageStore(SQLiteSessionStore):
+            def __init__(self, path) -> None:  # noqa: ANN001
+                super().__init__(path)
+                self.append_entered = Event()
+                self.release_append = Event()
+
+            def append_message(self, session_id, message):  # noqa: ANN001
+                if (
+                    session_id == "sess_parent"
+                    and getattr(message, "role", "") == "system"
+                    and "subagent task timed out" in str(getattr(message, "content", ""))
+                ):
+                    self.append_entered.set()
+                    self.release_append.wait(timeout=1.0)
+                return super().append_message(session_id, message)
+
+        session_store = self.enterContext(
+            temporary_sqlite_session_store(store_cls=BlockingTimeoutMessageStore)
+        )
+        session_store.create(
+            session_id="sess_parent",
+            conversation_id="conv-parent",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        service = SubagentService(
+            session_store=session_store,
+            run_history=InMemoryRunHistory(),
+            tool_registry=ToolRegistry(),
+            runtime_loop=BlockingRuntimeLoop(),
+            max_concurrent_subagents=1,
+            max_queued_subagents=4,
+            subagent_timeout_seconds=0,
+        )
+        result = service.spawn(
+            task="background followup",
+            label="timeout-ordering",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            parent_allowed_tools=["runtime", "skill", "time"],
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        worker = Thread(target=service.run_next_queued_task)
+        worker.start()
+        self.assertTrue(session_store.append_entered.wait(timeout=1.0))
+
+        self.assertEqual(service.store.get(result["task_id"]).status, "running")
+        parent_while_blocked = session_store.get("sess_parent")
+        self.assertFalse(
+            any(
+                "subagent task timed out" in str(item.content)
+                for item in parent_while_blocked.history
+                if item.role == "system"
+            )
+        )
+
+        session_store.release_append.set()
+        release_runtime.set()
+        worker.join(timeout=2.0)
+
+        task = service.store.get(result["task_id"])
+        self.assertEqual(task.status, "timed_out")
+        parent_final = session_store.get("sess_parent")
+        self.assertTrue(
+            any(
+                "subagent task timed out" in str(item.content)
+                for item in parent_final.history
+                if item.role == "system"
+            )
+        )
+
+    def test_success_keeps_task_running_until_parent_completion_message_is_persisted(self) -> None:
+        from marten_runtime.session.sqlite_store import SQLiteSessionStore
+        from marten_runtime.subagents.service import SubagentService
+
+        class SuccessRuntimeLoop:
+            def run(self, session_id, message, trace_id=None, agent=None, session_messages=None, compacted_context=None, request_kind="interactive", parent_run_id=None):  # noqa: ANN001,E501
+                return [
+                    OutboundEvent(
+                        session_id=session_id,
+                        run_id="run_child_success",
+                        event_id="evt_child_success",
+                        event_type="final",
+                        sequence=2,
+                        trace_id=trace_id or "trace_child_success",
+                        payload={"text": "child finished"},
+                        created_at=datetime.now(timezone.utc),
+                    )
+                ]
+
+        class BlockingCompletionMessageStore(SQLiteSessionStore):
+            def __init__(self, path) -> None:  # noqa: ANN001
+                super().__init__(path)
+                self.append_entered = Event()
+                self.release_append = Event()
+
+            def append_message(self, session_id, message):  # noqa: ANN001
+                if (
+                    session_id == "sess_parent"
+                    and getattr(message, "role", "") == "system"
+                    and "subagent task completed" in str(getattr(message, "content", ""))
+                ):
+                    self.append_entered.set()
+                    self.release_append.wait(timeout=1.0)
+                return super().append_message(session_id, message)
+
+        session_store = self.enterContext(
+            temporary_sqlite_session_store(store_cls=BlockingCompletionMessageStore)
+        )
+        session_store.create(
+            session_id="sess_parent",
+            conversation_id="conv-parent",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        service = SubagentService(
+            session_store=session_store,
+            run_history=InMemoryRunHistory(),
+            tool_registry=ToolRegistry(),
+            runtime_loop=SuccessRuntimeLoop(),
+            max_concurrent_subagents=1,
+            max_queued_subagents=4,
+            subagent_timeout_seconds=5,
+        )
+        result = service.spawn(
+            task="background success",
+            label="success-ordering",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            parent_allowed_tools=["runtime", "skill", "time"],
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        worker = Thread(target=service.run_next_queued_task)
+        worker.start()
+        self.assertTrue(session_store.append_entered.wait(timeout=1.0))
+
+        self.assertEqual(service.store.get(result["task_id"]).status, "running")
+        parent_while_blocked = session_store.get("sess_parent")
+        self.assertFalse(
+            any(
+                "subagent task completed" in str(item.content)
+                for item in parent_while_blocked.history
+                if item.role == "system"
+            )
+        )
+
+        session_store.release_append.set()
+        worker.join(timeout=2.0)
+
+        task = service.store.get(result["task_id"])
+        self.assertEqual(task.status, "succeeded")
+        parent_final = session_store.get("sess_parent")
+        self.assertTrue(
+            any(
+                "subagent task completed" in str(item.content)
+                for item in parent_final.history
+                if item.role == "system"
+            )
+        )
 
     def test_error_terminal_event_marks_task_failed_instead_of_succeeded(self) -> None:
         from marten_runtime.subagents.service import SubagentService
@@ -1157,6 +1445,410 @@ class SubagentServiceContractTests(unittest.TestCase):
         self.assertEqual(task.status, "succeeded")
         self.assertEqual(task.result_summary, "child finished")
         self.assertNotIn(task.task_id, service._running_tasks)
+
+    def test_successful_task_prefers_richer_invalid_final_text_over_recovery_fallback_summary(
+        self,
+    ) -> None:
+        from marten_runtime.subagents.service import SubagentService
+
+        history = InMemoryRunHistory()
+        richer_summary = (
+            "已通过 GitHub MCP 读取 `tiezhuli001/marten-runtime` 默认分支的 `README.md`。"
+            "主要章节包括快速开始、离线评测、仓库结构。"
+        )
+        fallback_summary = "successfully downloaded text file (SHA: deadbeef)"
+
+        class FinalRuntimeLoop:
+            def __init__(self, run_history: InMemoryRunHistory) -> None:
+                self._history = run_history
+
+            def run(self, session_id, message, trace_id=None, agent=None, session_messages=None, compacted_context=None, request_kind="interactive", parent_run_id=None):  # noqa: ANN001,E501
+                run = self._history.start(
+                    session_id=session_id,
+                    trace_id=trace_id or "trace_child_final",
+                    config_snapshot_id="cfg_bootstrap",
+                    bootstrap_manifest_id="boot_default",
+                    parent_run_id=parent_run_id,
+                )
+                self._history.record_tool_call(
+                    run.run_id,
+                    tool_name="mcp",
+                    tool_payload={
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "get_file_contents",
+                        "arguments": {
+                            "owner": "tiezhuli001",
+                            "repo": "marten-runtime",
+                            "path": "README.md",
+                        },
+                    },
+                    tool_result={
+                        "ok": True,
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "get_file_contents",
+                        "payload": {
+                            "owner": "tiezhuli001",
+                            "repo": "marten-runtime",
+                            "path": "README.md",
+                        },
+                        "result_text": fallback_summary,
+                    },
+                )
+                self._history.set_llm_request_count(run.run_id, 4)
+                self._history.set_finalization_state(
+                    run.run_id,
+                    assessment="retryable_degraded",
+                    request_kind="finalization_retry",
+                    recovered_from_fragments=True,
+                    invalid_final_text=richer_summary,
+                )
+                return [
+                    OutboundEvent(
+                        session_id=session_id,
+                        run_id=run.run_id,
+                        event_id="evt_child_final",
+                        event_type="final",
+                        sequence=2,
+                        trace_id=trace_id or "trace_child_final",
+                        payload={"text": fallback_summary},
+                        created_at=datetime.now(timezone.utc),
+                    )
+                ]
+
+        session_store = self._session_store()
+        session_store.create(
+            session_id="sess_parent",
+            conversation_id="conv-parent",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        service = SubagentService(
+            session_store=session_store,
+            run_history=history,
+            tool_registry=ToolRegistry(),
+            runtime_loop=FinalRuntimeLoop(history),
+            max_concurrent_subagents=1,
+            max_queued_subagents=4,
+            subagent_timeout_seconds=5,
+        )
+        accepted = service.spawn(
+            task="查看当前任务所指仓库的 README 结构，概括主要章节与组织方式，保留可复述摘要。",
+            label="readme-summary-child",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            parent_allowed_tools=["mcp", "runtime", "skill", "time"],
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        service.run_next_queued_task()
+
+        task = service.store.get(accepted["task_id"])
+        self.assertEqual(task.status, "succeeded")
+        self.assertEqual(task.result_summary, richer_summary)
+        parent_history = session_store.get("sess_parent").history
+        self.assertIn(richer_summary, parent_history[-1].content)
+
+    def test_successful_task_persists_model_authored_readme_summary_over_mcp_receipt_fallback(
+        self,
+    ) -> None:
+        from marten_runtime.subagents.service import SubagentService
+
+        history = InMemoryRunHistory()
+        richer_summary = (
+            "已检查当前仓库 `tiezhuli001/marten-runtime` 的 `README.md`。"
+            "主要章节包括项目概览、仓库结构、快速开始。"
+        )
+        fallback_summary = (
+            "当前可用 MCP 服务共 2 个。\n"
+            "- 1. github（38 个工具，状态 discovered）\n"
+            "- 2. github_trending（1 个工具，状态 configured）\n"
+            "successfully downloaded text file (SHA: deadbeef)"
+        )
+
+        class FinalRuntimeLoop:
+            def __init__(self, run_history: InMemoryRunHistory) -> None:
+                self._history = run_history
+
+            def run(self, session_id, message, trace_id=None, agent=None, session_messages=None, compacted_context=None, request_kind="interactive", parent_run_id=None):  # noqa: ANN001,E501
+                run = self._history.start(
+                    session_id=session_id,
+                    trace_id=trace_id or "trace_child_final",
+                    config_snapshot_id="cfg_bootstrap",
+                    bootstrap_manifest_id="boot_default",
+                    parent_run_id=parent_run_id,
+                )
+                self._history.record_tool_call(
+                    run.run_id,
+                    tool_name="mcp",
+                    tool_payload={"action": "list"},
+                    tool_result={
+                        "ok": True,
+                        "action": "list",
+                        "servers": [
+                            {
+                                "server_id": "github",
+                                "tool_count": 38,
+                                "state": "discovered",
+                            },
+                            {
+                                "server_id": "github_trending",
+                                "tool_count": 1,
+                                "state": "configured",
+                            },
+                        ],
+                    },
+                )
+                self._history.record_tool_call(
+                    run.run_id,
+                    tool_name="mcp",
+                    tool_payload={
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "get_file_contents",
+                        "arguments": {
+                            "owner": "tiezhuli001",
+                            "repo": "marten-runtime",
+                            "path": "README.md",
+                        },
+                    },
+                    tool_result={
+                        "ok": True,
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "get_file_contents",
+                        "payload": {
+                            "owner": "tiezhuli001",
+                            "repo": "marten-runtime",
+                            "path": "README.md",
+                        },
+                        "content": [
+                            {"type": "text", "text": "successfully downloaded text file (SHA: deadbeef)"},
+                            {
+                                "type": "resource",
+                                "resource": {
+                                    "uri": "repo://tiezhuli001/marten-runtime/sha/deadbeef/contents/README.md",
+                                    "mimeType": "text/plain; charset=utf-8",
+                                    "text": "# marten-runtime\n\n## 项目概览\n\n## 仓库结构\n\n## 快速开始\n",
+                                },
+                            },
+                        ],
+                        "result_text": "successfully downloaded text file (SHA: deadbeef)",
+                    },
+                )
+                self._history.set_llm_request_count(run.run_id, 4)
+                self._history.set_finalization_state(
+                    run.run_id,
+                    assessment="retryable_degraded",
+                    request_kind="finalization_retry",
+                    recovered_from_fragments=True,
+                    invalid_final_text=richer_summary,
+                )
+                return [
+                    OutboundEvent(
+                        session_id=session_id,
+                        run_id=run.run_id,
+                        event_id="evt_child_final",
+                        event_type="final",
+                        sequence=2,
+                        trace_id=trace_id or "trace_child_final",
+                        payload={"text": fallback_summary},
+                        created_at=datetime.now(timezone.utc),
+                    )
+                ]
+
+        session_store = self._session_store()
+        session_store.create(
+            session_id="sess_parent",
+            conversation_id="conv-parent",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        service = SubagentService(
+            session_store=session_store,
+            run_history=history,
+            tool_registry=ToolRegistry(),
+            runtime_loop=FinalRuntimeLoop(history),
+            max_concurrent_subagents=1,
+            max_queued_subagents=4,
+            subagent_timeout_seconds=5,
+        )
+        accepted = service.spawn(
+            task="检查当前仓库 tiezhuli001/marten-runtime 的 README 结构。输出 README 的主要章节层级、每部分大意，以及是否存在明显的结构问题或可优化点。给出简洁结论。",
+            label="readme-structure-child",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            parent_allowed_tools=["mcp", "runtime", "skill", "time"],
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        service.run_next_queued_task()
+
+        task = service.store.get(accepted["task_id"])
+        self.assertEqual(task.status, "succeeded")
+        self.assertEqual(task.result_summary, richer_summary)
+        self.assertNotIn("github_trending", task.result_summary)
+        self.assertNotIn("successfully downloaded text file", task.result_summary)
+        parent_history = session_store.get("sess_parent").history
+        self.assertIn(richer_summary, parent_history[-1].content)
+
+    def test_preferred_child_result_summary_returns_invalid_final_text_without_tool_history(
+        self,
+    ) -> None:
+        from types import SimpleNamespace
+
+        from marten_runtime.subagents.models import SubagentTask
+        from marten_runtime.subagents.service import SubagentService
+
+        history = InMemoryRunHistory()
+        session_store = self._session_store()
+        service = SubagentService(
+            session_store=session_store,
+            run_history=history,
+            tool_registry=ToolRegistry(),
+            runtime_loop=None,
+            max_concurrent_subagents=1,
+            max_queued_subagents=4,
+            subagent_timeout_seconds=5,
+        )
+        task = SubagentTask(
+            task_id="task_1",
+            child_session_id="sess_child",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            label="child",
+            tool_profile="restricted",
+            effective_tool_profile="restricted",
+            parent_allowed_tools=["runtime", "skill", "time"],
+            context_mode="brief_only",
+            task_prompt="梳理仓库结构",
+            notify_on_finish=False,
+            include_parent_session_message=False,
+        )
+        child_run = SimpleNamespace(
+            finalization=SimpleNamespace(
+                recovered_from_fragments=True,
+                invalid_final_text="模型总结覆盖了顶层目录、主要模块和关键配置。",
+                invalid_final_text_full=None,
+            ),
+            tool_calls=[],
+            llm_request_count=3,
+        )
+
+        summary = service._preferred_child_result_summary(
+            task=task,
+            child_run=child_run,
+            terminal_text="已完成。",
+        )
+
+        self.assertEqual(summary, "模型总结覆盖了顶层目录、主要模块和关键配置。")
+
+    def test_successful_task_keeps_long_recovered_invalid_final_text_without_diagnostic_truncation(
+        self,
+    ) -> None:
+        from marten_runtime.subagents.service import SubagentService
+
+        history = InMemoryRunHistory()
+        richer_summary = (
+            "仓库结构梳理如下：顶层目录覆盖 src、tests、docs、config；"
+            "主要模块覆盖 runtime、session、tools、channels；"
+            "关键配置集中在 config/*.toml；"
+            "测试与文档分别位于 tests/ 与 docs/。"
+        )
+        fallback_summary = "已完成。"
+
+        class FinalRuntimeLoop:
+            def run(
+                self,
+                session_id,
+                message,
+                trace_id=None,
+                agent=None,
+                session_messages=None,
+                compacted_context=None,
+                request_kind="interactive",
+                parent_run_id=None,
+            ):  # noqa: ANN001,E501
+                run = history.start(
+                    session_id=session_id,
+                    trace_id=trace_id or "trace_child_final_long",
+                    config_snapshot_id="cfg_bootstrap",
+                    bootstrap_manifest_id="boot_default",
+                    parent_run_id=parent_run_id,
+                )
+                history.set_llm_request_count(run.run_id, 3)
+                history.set_finalization_state(
+                    run.run_id,
+                    assessment="retryable_degraded",
+                    request_kind="finalization_retry",
+                    recovered_from_fragments=True,
+                    invalid_final_text=richer_summary,
+                )
+                return [
+                    OutboundEvent(
+                        session_id=session_id,
+                        run_id=run.run_id,
+                        event_id="evt_child_final_long",
+                        event_type="final",
+                        sequence=2,
+                        trace_id=trace_id or "trace_child_final_long",
+                        payload={"text": fallback_summary},
+                        created_at=datetime.now(timezone.utc),
+                    )
+                ]
+
+        session_store = self._session_store()
+        session_store.create(
+            session_id="sess_parent",
+            conversation_id="conv-parent",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+        )
+        service = SubagentService(
+            session_store=session_store,
+            run_history=history,
+            tool_registry=ToolRegistry(),
+            runtime_loop=FinalRuntimeLoop(),
+            max_concurrent_subagents=1,
+            max_queued_subagents=4,
+            subagent_timeout_seconds=5,
+        )
+        accepted = service.spawn(
+            task="梳理仓库结构",
+            label="repo-structure-child",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            parent_allowed_tools=["runtime", "skill", "time"],
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        service.run_next_queued_task()
+
+        task = service.store.get(accepted["task_id"])
+        self.assertEqual(task.status, "succeeded")
+        self.assertIn("顶层目录", task.result_summary or "")
+        self.assertIn("主要模块", task.result_summary or "")
+        self.assertIn("关键配置", task.result_summary or "")
+        self.assertIn("测试与文档", task.result_summary or "")
 
     def test_terminal_callback_failure_does_not_escape_cancel_path(self) -> None:
         from marten_runtime.subagents.service import SubagentService

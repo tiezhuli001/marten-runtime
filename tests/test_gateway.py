@@ -8,13 +8,19 @@ from fastapi.testclient import TestClient
 from marten_runtime.gateway.dedupe import build_dedupe_key
 from marten_runtime.gateway.ingress import ingest_message
 from marten_runtime.gateway.models import InboundEnvelope
+from marten_runtime.config.models_loader import resolve_model_profile
 from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.session.models import SessionMessage
 from tests.http_app_support import build_test_app
+from tests.support.finalization_contracts import contracted_final_reply
 
 
 class GatewayTests(unittest.TestCase):
+    @staticmethod
+    def _non_summary_requests(llm: ScriptedLLMClient) -> list:
+        return [request for request in llm.requests if request.request_kind != "session_summary"]
+
     def test_build_dedupe_key_is_stable(self) -> None:
         key_a = build_dedupe_key(
             channel_id="http",
@@ -65,7 +71,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(envelope.dedupe_key, "dedupe_1")
 
     def test_http_sessions_endpoint_returns_session_id(self) -> None:
-        with TestClient(build_test_app()) as client:
+        with TestClient(build_test_app(emit_explicit_empty_contract=True)) as client:
             response = client.post("/sessions", json={})
 
         self.assertEqual(response.status_code, 200)
@@ -74,7 +80,7 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(payload["session_id"].startswith("sess_"))
 
     def test_http_messages_endpoint_returns_progress_and_final_events(self) -> None:
-        with TestClient(build_test_app()) as client:
+        with TestClient(build_test_app(emit_explicit_empty_contract=True)) as client:
             response = client.post(
                 "/messages",
                 json={
@@ -103,7 +109,8 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(payload["text"], payload["events"][1]["payload"]["text"])
         self.assertIsNone(payload["card"])
         self.assertIsNone(payload["error_code"])
-        self.assertEqual(run_payload["attempted_profiles"], ["openai_gpt5"])
+        expected_profile_name, _ = resolve_model_profile(client.app.state.runtime.models_config)
+        self.assertEqual(run_payload["attempted_profiles"], [expected_profile_name])
         self.assertEqual(run_payload["attempted_providers"], ["test-demo"])
         self.assertEqual(run_payload["provider_ref"], "test-demo")
         self.assertEqual(run_payload["final_provider_ref"], "test-demo")
@@ -113,17 +120,17 @@ class GatewayTests(unittest.TestCase):
         self.assertFalse(run_payload["finalization"]["retry_triggered"])
 
     def test_http_messages_endpoint_isolates_same_conversation_by_user(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         scripted = ScriptedLLMClient(
             [
-                LLMReply(final_text="alice answer"),
-                LLMReply(final_text="bob answer"),
+                contracted_final_reply("alice answer"),
+                contracted_final_reply("bob answer"),
             ]
         )
         runtime.runtime_loop.llm = scripted
-        runtime.llm_client_factory.cache_client("openai_gpt5", scripted)
-        runtime.llm_client_factory.cache_client("minimax_m25", scripted)
+        runtime.llm_client_factory.cache_client("openai_gpt_5_4", scripted)
+        runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", scripted)
         runtime.llm_client_factory.cache_client("kimi_k2", scripted)
 
         with TestClient(app) as client:
@@ -150,9 +157,12 @@ class GatewayTests(unittest.TestCase):
 
         self.assertEqual(alice.status_code, 200)
         self.assertEqual(bob.status_code, 200)
-        self.assertEqual(len(scripted.requests), 2)
+        interactive_requests = [
+            request for request in scripted.requests if request.request_kind != "session_summary"
+        ]
+        self.assertEqual(len(interactive_requests), 2)
         bob_history = [
-            item.content for item in scripted.requests[1].conversation_messages
+            item.content for item in interactive_requests[1].conversation_messages
         ]
         self.assertNotIn("alice secret", bob_history)
         self.assertNotIn("alice answer", bob_history)
@@ -165,7 +175,7 @@ class GatewayTests(unittest.TestCase):
     def test_http_messages_endpoint_keeps_single_tool_direct_render_finalization_state(
         self,
     ) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         scripted = ScriptedLLMClient(
             [
@@ -176,8 +186,8 @@ class GatewayTests(unittest.TestCase):
             ]
         )
         runtime.runtime_loop.llm = scripted
-        runtime.llm_client_factory.cache_client("openai_gpt5", scripted)
-        runtime.llm_client_factory.cache_client("minimax_m25", scripted)
+        runtime.llm_client_factory.cache_client("openai_gpt_5_4", scripted)
+        runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", scripted)
 
         with TestClient(app) as client:
             response = client.post(
@@ -203,7 +213,7 @@ class GatewayTests(unittest.TestCase):
     def test_http_messages_endpoint_passes_current_user_message_in_sqlite_history_to_runtime(
         self,
     ) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         captured_session_messages: list[SessionMessage] = []
 
@@ -253,7 +263,7 @@ class GatewayTests(unittest.TestCase):
         )
 
     def test_feishu_session_history_preserves_ingress_and_enqueue_timestamps_for_queued_turns(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         first_started = threading.Event()
         release_first = threading.Event()
@@ -333,7 +343,7 @@ class GatewayTests(unittest.TestCase):
         self.assertLessEqual(second_user["received_at"], second_user["started_at"])
 
     def test_http_messages_endpoint_queues_same_conversation_overlap(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         first_started = threading.Event()
         release_first = threading.Event()
@@ -414,7 +424,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(entered, [first_response.json()["trace_id"], second_response.json()["trace_id"]])
 
     def test_feishu_messages_endpoint_returns_rendered_card_in_final_event_payload(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
 
         def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
@@ -465,7 +475,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(payload["card"], final_event["payload"]["card"])
 
     def test_feishu_messages_can_write_and_reuse_thin_memory(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         scripted = ScriptedLLMClient(
             [
@@ -473,12 +483,14 @@ class GatewayTests(unittest.TestCase):
                     tool_name="memory",
                     tool_payload={
                         "action": "append",
+                        "intent": "durable_write",
+                        "source_excerpt": "记住：以后始终用中文回复",
                         "section": "preferences",
                         "content": "Always answer in Chinese.",
                     },
                 ),
-                LLMReply(final_text="已记住。"),
-                LLMReply(final_text="继续处理中。"),
+                contracted_final_reply("已记住。"),
+                contracted_final_reply("继续处理中。"),
             ]
         )
         runtime.runtime_loop.llm = scripted
@@ -510,17 +522,18 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 200)
         self.assertIn("Always answer in Chinese.", runtime.memory_service.load("demo").text)
-        self.assertIn("User memory:", scripted.requests[-1].memory_text or "")
-        self.assertIn("Always answer in Chinese.", scripted.requests[-1].memory_text or "")
+        interactive_requests = self._non_summary_requests(scripted)
+        self.assertIn("User memory:", interactive_requests[-1].memory_text or "")
+        self.assertIn("Always answer in Chinese.", interactive_requests[-1].memory_text or "")
 
     def test_http_session_resume_detaches_old_conversation_from_target_session(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
 
-        seed_old = ScriptedLLMClient([LLMReply(final_text="seed old")])
+        seed_old = ScriptedLLMClient([contracted_final_reply("seed old")])
         runtime.runtime_loop.llm = seed_old
-        runtime.llm_client_factory.cache_client("openai_gpt5", seed_old)
-        runtime.llm_client_factory.cache_client("minimax_m25", seed_old)
+        runtime.llm_client_factory.cache_client("openai_gpt_5_4", seed_old)
+        runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", seed_old)
         runtime.llm_client_factory.cache_client("kimi_k2", seed_old)
 
         with TestClient(app) as client:
@@ -536,9 +549,9 @@ class GatewayTests(unittest.TestCase):
             )
             old_session_id = old_first.json()["session_id"]
 
-            seed_current = ScriptedLLMClient([LLMReply(final_text="seed current")])
+            seed_current = ScriptedLLMClient([contracted_final_reply("seed current")])
             runtime.runtime_loop.llm = seed_current
-            runtime.llm_client_factory.cache_client("openai_gpt5", seed_current)
+            runtime.llm_client_factory.cache_client("openai_gpt_5_4", seed_current)
             current_first = client.post(
                 "/messages",
                 json={
@@ -560,7 +573,7 @@ class GatewayTests(unittest.TestCase):
                 ]
             )
             runtime.runtime_loop.llm = resume_llm
-            runtime.llm_client_factory.cache_client("openai_gpt5", resume_llm)
+            runtime.llm_client_factory.cache_client("openai_gpt_5_4", resume_llm)
             resumed = client.post(
                 "/messages",
                 json={
@@ -574,12 +587,12 @@ class GatewayTests(unittest.TestCase):
 
             followup_llm = ScriptedLLMClient(
                 [
-                    LLMReply(final_text="from old"),
-                    LLMReply(final_text="from current"),
+                    contracted_final_reply("from old"),
+                    contracted_final_reply("from current"),
                 ]
             )
             runtime.runtime_loop.llm = followup_llm
-            runtime.llm_client_factory.cache_client("openai_gpt5", followup_llm)
+            runtime.llm_client_factory.cache_client("openai_gpt_5_4", followup_llm)
             old_followup = client.post(
                 "/messages",
                 json={
@@ -617,7 +630,7 @@ class GatewayTests(unittest.TestCase):
     def test_http_session_new_strips_switch_control_message_from_source_history_with_sqlite_store(
         self,
     ) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         source = runtime.session_store.create(
             session_id="sess_memory_switch",
@@ -641,8 +654,8 @@ class GatewayTests(unittest.TestCase):
             [LLMReply(tool_name="session", tool_payload={"action": "new"})]
         )
         runtime.runtime_loop.llm = switch_llm
-        runtime.llm_client_factory.cache_client("openai_gpt5", switch_llm)
-        runtime.llm_client_factory.cache_client("minimax_m25", switch_llm)
+        runtime.llm_client_factory.cache_client("openai_gpt_5_4", switch_llm)
+        runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", switch_llm)
         runtime.llm_client_factory.cache_client("kimi_k2", switch_llm)
 
         with TestClient(app) as client:
@@ -665,8 +678,59 @@ class GatewayTests(unittest.TestCase):
         )
         self.assertEqual(reloaded_source.history[-1].content, previous_assistant.content)
 
+    def test_http_session_new_does_not_persist_pure_control_reply_to_target_history(self) -> None:
+        app = build_test_app(emit_explicit_empty_contract=True)
+        runtime = app.state.runtime
+        source = runtime.session_store.create(
+            session_id="sess_target_switch",
+            conversation_id="conv-target-switch",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+        )
+        runtime.session_store.set_catalog_metadata(
+            source.session_id,
+            user_id="demo",
+            agent_id="main",
+            session_title="target switch",
+            session_preview="target switch preview",
+        )
+        runtime.session_store.append_message(source.session_id, SessionMessage.user("历史任务"))
+        runtime.session_store.append_message(source.session_id, SessionMessage.assistant("历史结果"))
+        switch_llm = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="session",
+                    tool_payload={"action": "new", "finalize_response": True},
+                )
+            ]
+        )
+        runtime.runtime_loop.llm = switch_llm
+        runtime.llm_client_factory.cache_client("openai_gpt_5_4", switch_llm)
+        runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", switch_llm)
+        runtime.llm_client_factory.cache_client("kimi_k2", switch_llm)
+
+        with TestClient(app) as client:
+            switched = client.post(
+                "/messages",
+                json={
+                    "channel_id": "http",
+                    "user_id": "demo",
+                    "conversation_id": source.conversation_id,
+                    "message_id": "msg-target-switch-1",
+                    "body": "切换到新会话",
+                },
+            )
+
+        self.assertEqual(switched.status_code, 200)
+        target_session = runtime.session_store.get(switched.json()["active_session_id"])
+        self.assertEqual(
+            [(item.role, item.content) for item in target_session.history],
+            [("system", "created")],
+        )
+
     def test_feishu_messages_endpoint_strips_trailing_followup_offer_from_payload_and_history(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
 
         def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
@@ -723,7 +787,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(session.history[-1].content, "最近一次提交时间是：`2026-04-17T09:55:00Z`")
 
     def test_feishu_terminal_durable_text_stays_aligned_across_response_event_and_history(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
 
         def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
@@ -791,7 +855,7 @@ class GatewayTests(unittest.TestCase):
     def test_feishu_messages_endpoint_keeps_plain_xml_like_trailing_line_in_response_payload_and_history(
         self,
     ) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
 
         def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
@@ -848,7 +912,7 @@ class GatewayTests(unittest.TestCase):
     def test_feishu_error_terminal_durable_text_stays_aligned_across_response_event_and_history(
         self,
     ) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
 
         def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
@@ -903,7 +967,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(session.history[-1].content, expected_durable_text)
 
     def test_feishu_messages_endpoint_strips_malformed_feishu_card_block_before_persisting_history(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
 
         def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
@@ -960,7 +1024,7 @@ class GatewayTests(unittest.TestCase):
         self.assertNotIn("```feishu_card", session.history[-1].content)
 
     def test_feishu_messages_endpoint_strips_unclosed_feishu_card_block_before_persisting_history(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
 
         def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
@@ -1015,7 +1079,7 @@ class GatewayTests(unittest.TestCase):
         self.assertNotIn("```feishu_card", session.history[-1].content)
 
     def test_http_messages_endpoint_still_runs_for_different_conversation(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         with TestClient(app) as client:
             left = client.post(
                 "/messages",
@@ -1073,7 +1137,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(envelope.requested_agent_id, "main")
 
     def test_http_messages_endpoint_falls_back_when_requested_agent_is_disabled(self) -> None:
-        with TestClient(build_test_app()) as client:
+        with TestClient(build_test_app(emit_explicit_empty_contract=True)) as client:
             response = client.post(
                 "/messages",
                 json={
@@ -1093,7 +1157,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(session_response.json()["active_agent_id"], "main")
 
     def test_http_messages_endpoint_routes_requested_agent_id_from_request(self) -> None:
-        with TestClient(build_test_app()) as client:
+        with TestClient(build_test_app(emit_explicit_empty_contract=True)) as client:
             response = client.post(
                 "/messages",
                 json={

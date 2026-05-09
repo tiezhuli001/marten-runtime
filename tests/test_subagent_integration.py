@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from marten_runtime.runtime.llm_client import LLMReply
 from marten_runtime.runtime.usage_models import NormalizedUsage
 from tests.http_app_support import build_test_app
+from tests.support.finalization_contracts import contracted_final_reply
 
 PARENT_SUBAGENT_ACK = "已受理，子 agent 正在后台执行，完成后会通知你结果。"
 QUEUED_SUBAGENT_ACK = "已受理，子 agent 已进入队列，开始后会通知你结果。"
@@ -23,7 +24,7 @@ class SubagentEndToEndLLM:
     def complete(self, request):  # noqa: ANN001
         self.requests.append(request)
         if request.request_kind == "subagent":
-            return LLMReply(final_text="child finished")
+            return contracted_final_reply("child finished")
         if request.tool_result is None:
             return LLMReply(
                 tool_name="spawn_subagent",
@@ -33,7 +34,7 @@ class SubagentEndToEndLLM:
                     "finalize_response": True,
                 },
             )
-        return LLMReply(final_text="background subagent accepted")
+        return contracted_final_reply("background subagent accepted")
 
 
 class SubagentUsageEndToEndLLM:
@@ -46,8 +47,8 @@ class SubagentUsageEndToEndLLM:
     def complete(self, request):  # noqa: ANN001
         self.requests.append(request)
         if request.request_kind == "subagent":
-            return LLMReply(
-                final_text="child finished with usage",
+            return contracted_final_reply(
+                "child finished with usage",
                 usage=NormalizedUsage(
                     input_tokens=321,
                     output_tokens=45,
@@ -65,7 +66,7 @@ class SubagentUsageEndToEndLLM:
                     "finalize_response": True,
                 },
             )
-        return LLMReply(final_text="background subagent accepted")
+        return contracted_final_reply("background subagent accepted")
 
 
 class InvalidSubagentAgentIdLLM:
@@ -78,7 +79,7 @@ class InvalidSubagentAgentIdLLM:
     def complete(self, request):  # noqa: ANN001
         self.requests.append(request)
         if request.request_kind == "subagent":
-            return LLMReply(final_text="child finished after invalid agent fallback")
+            return contracted_final_reply("child finished after invalid agent fallback")
         if request.tool_result is None:
             return LLMReply(
                 tool_name="spawn_subagent",
@@ -90,16 +91,16 @@ class InvalidSubagentAgentIdLLM:
                     "finalize_response": True,
                 },
             )
-        return LLMReply(final_text="background subagent accepted")
+        return contracted_final_reply("background subagent accepted")
 
 
 class SubagentHTTPIntegrationTests(unittest.TestCase):
     def _configure_runtime_with_llm(self, llm):  # noqa: ANN001
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         runtime.runtime_loop.llm = llm
-        runtime.llm_client_factory.cache_client("openai_gpt5", llm)
-        runtime.llm_client_factory.cache_client("minimax_m25", llm)
+        runtime.llm_client_factory.cache_client("openai_gpt_5_4", llm)
+        runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", llm)
         return app
 
     def _wait_for_task_status(self, client: TestClient, task_id: str, expected: set[str], *, timeout: float = 2.0) -> dict:
@@ -280,7 +281,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                 self.requests.append(request)
                 if request.request_kind == "subagent":
                     self.release.wait(timeout=2.0)
-                    return LLMReply(final_text="child finished after parent ack")
+                    return contracted_final_reply("child finished after parent ack")
                 if request.tool_result is None:
                     return LLMReply(
                         tool_name="spawn_subagent",
@@ -290,7 +291,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                             "finalize_response": True,
                         },
                     )
-                return LLMReply(final_text="parent followup should not run")
+                return contracted_final_reply("parent followup should not run")
 
         llm = BlockingChildLLM()
         app = self._configure_runtime_with_llm(llm)
@@ -395,7 +396,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                     index = self.child_call_count
                     self.child_call_count += 1
                     self.releases[index].wait(timeout=2.0)
-                    return LLMReply(final_text=f"child-{index + 1} finished")
+                    return contracted_final_reply(f"child-{index + 1} finished")
                 if request.tool_result is None:
                     self.spawn_count += 1
                     return LLMReply(
@@ -406,7 +407,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                             "finalize_response": True,
                         },
                     )
-                return LLMReply(final_text="unexpected parent followup")
+                return contracted_final_reply("unexpected parent followup")
 
         llm = ManyBlockingChildrenLLM()
         app = self._configure_runtime_with_llm(llm)
@@ -499,7 +500,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                     index = self.child_call_count
                     self.child_call_count += 1
                     self.releases[index].wait(timeout=2.0)
-                    return LLMReply(final_text=f"child-{index + 1} finished")
+                    return contracted_final_reply(f"child-{index + 1} finished")
                 if request.tool_result is None:
                     self.spawn_count += 1
                     return LLMReply(
@@ -510,7 +511,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                             "finalize_response": True,
                         },
                     )
-                return LLMReply(final_text="unexpected parent followup")
+                return contracted_final_reply("unexpected parent followup")
 
         llm = TwoBlockingChildrenLLM()
         app = self._configure_runtime_with_llm(llm)
@@ -601,7 +602,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                 self.requests.append(request)
                 if request.request_kind == "subagent":
                     self.release.wait(timeout=2.0)
-                    return LLMReply(final_text="child finished too late")
+                    return contracted_final_reply("child finished too late")
                 if request.tool_result is None:
                     if "取消" in request.message:
                         return LLMReply(
@@ -616,7 +617,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                             "finalize_response": True,
                         },
                     )
-                return LLMReply(final_text="cancel accepted")
+                return contracted_final_reply("cancel accepted")
 
         llm = SpawnThenCancelLLM()
         app = self._configure_runtime_with_llm(llm)
@@ -650,7 +651,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                 },
             )
             self.assertEqual(cancel.status_code, 200)
-            self.assertEqual(cancel.json()["events"][-1]["payload"]["text"], "cancel accepted")
+            self.assertEqual(cancel.json()["events"][-1]["payload"]["text"], "cancelled")
 
             cancelled = self._wait_for_task_status(client, task["task_id"], {"cancelled"})
             self.assertEqual(cancelled["status"], "cancelled")
@@ -680,7 +681,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                 self.requests.append(request)
                 if request.request_kind == "subagent":
                     self.release.wait(timeout=2.0)
-                    return LLMReply(final_text="child finished after timeout")
+                    return contracted_final_reply("child finished after timeout")
                 if request.tool_result is None:
                     return LLMReply(
                         tool_name="spawn_subagent",
@@ -690,7 +691,7 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
                             "finalize_response": True,
                         },
                     )
-                return LLMReply(final_text="unexpected parent followup")
+                return contracted_final_reply("unexpected parent followup")
 
         llm = TimeoutChildLLM()
         app = self._configure_runtime_with_llm(llm)

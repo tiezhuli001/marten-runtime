@@ -20,6 +20,8 @@ class CompactionRunnerTests(unittest.TestCase):
         self.assertIn("不是用来替换 system prompt、skill 描述、MCP 工具描述或 app/bootstrap 提示词", prompt)
         self.assertIn("不是下一轮行动菜单", prompt)
         self.assertIn("不要写“建议下一步 / 优先做 / 可以先做三件事”", prompt)
+        self.assertIn("保留用户可直接复述的任务锚点", prompt)
+        self.assertIn("不要只写“继续这个任务 / 直接继续 / 当前问题”", prompt)
 
     def test_history_summary_compaction_prompt_uses_historical_summary_language(self) -> None:
         prompt = build_compaction_prompt(prompt_mode="history_summary")
@@ -33,6 +35,7 @@ class CompactionRunnerTests(unittest.TestCase):
 
         self.assertIn("以下是更早历史的摘要", rendered)
         self.assertIn("当前这条用户消息优先级最高", rendered)
+        self.assertIn("优先沿用摘要里的具体任务锚点来回答", rendered)
         self.assertIn("当前进展：已完成 A。", rendered)
 
     def test_compaction_runner_returns_compacted_context_from_summary_text(self) -> None:

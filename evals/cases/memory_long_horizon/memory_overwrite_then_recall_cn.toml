@@ -1,0 +1,42 @@
+case_id = "memory_overwrite_then_recall_cn"
+suite_id = "memory_long_horizon"
+family = "memory_long_horizon"
+enabled = true
+required = true
+description = "更新长期偏好后按新值召回"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "memory", "overwrite"]
+
+[[turns]]
+role = "user"
+content = "记住：日报默认只给结论，不展开风险。"
+
+[[turns]]
+role = "user"
+content = "更新偏好：以后日报先给风险，再给结论。"
+
+[[turns]]
+role = "user"
+content = "现在日报该怎么组织？"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+gate_components = ["overwrite_correctness", "stale_rejection"]
+
+[component_weights]
+capture = 20
+overwrite_correctness = 50
+stale_rejection = 30
+
+
+[grader_case]
+expected_memory_action = "replace"
+expected_section = "preferences"
+expected_content_contains = ["先给风险", "再给结论"]
+recall_anchor_groups = [["先给风险", "先列风险", "风险在前", "风险放前面", "**1. 风险**", "1. **风险**", "1. 风险"], ["再给结论", "后给结论", "结论在后", "结论放后面", "**2. 结论**", "2. **结论**", "2. 结论"]]
+recall_forbid_all = ["日报默认只给结论", "整体只给结论", "直接给结论，不展开风险", "省略风险直接给结论"]
+max_memory_calls = 2

@@ -110,6 +110,7 @@ def finish_run_success(
         channel_id=channel_id,
     )
     history.finish(run_id, delivery_status="final")
+    history.set_final_text(run_id, final_text)
     history.finalize_total_timing(run_id, elapsed_ms=elapsed_ms(run_started_at))
     history.set_llm_request_count(run_id, llm_request_count)
     record_recovery(

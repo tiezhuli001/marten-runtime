@@ -615,6 +615,146 @@ class SessionToolTests(unittest.TestCase):
             )
         )
 
+    def test_session_tool_resume_resolves_visible_session_by_session_ref_title(self) -> None:
+        store = self._store()
+        current = store.create(
+            session_id="sess_current",
+            conversation_id="conv-current",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+            user_id="user-a",
+        )
+        target = store.create(
+            session_id="sess_target",
+            conversation_id="conv-target",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+            user_id="user-a",
+        )
+        store.set_catalog_metadata(
+            current.session_id,
+            user_id="user-a",
+            agent_id="main",
+            session_title="当前会话",
+            session_preview="current preview",
+        )
+        store.set_catalog_metadata(
+            target.session_id,
+            user_id="user-a",
+            agent_id="main",
+            session_title="旧会话",
+            session_preview="target preview",
+        )
+
+        result = run_session_tool(
+            {"action": "resume", "session_ref": "旧会话"},
+            session_store=store,
+            tool_context={
+                "channel_id": "http",
+                "conversation_id": "conv-current",
+                "session_id": current.session_id,
+                "user_id": "user-a",
+            },
+        )
+
+        self.assertEqual(result["action"], "resume")
+        self.assertEqual(result["session"]["session_id"], target.session_id)
+        self.assertEqual(
+            store.resolve_session_for_conversation(
+                channel_id="http",
+                conversation_id="conv-current",
+                user_id="user-a",
+            ),
+            target.session_id,
+        )
+
+    def test_session_tool_resume_rejects_ambiguous_visible_match_when_session_ref_title_repeats(
+        self,
+    ) -> None:
+        store = self._store()
+        current = store.create(
+            session_id="sess_current",
+            conversation_id="conv-current",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+            user_id="user-a",
+        )
+        older = store.create(
+            session_id="sess_old",
+            conversation_id="conv-old",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+            user_id="user-a",
+        )
+        newer = store.create(
+            session_id="sess_new",
+            conversation_id="conv-new",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+            user_id="user-a",
+        )
+        for record in (older, newer):
+            store.set_catalog_metadata(
+                record.session_id,
+                user_id="user-a",
+                agent_id="main",
+                session_title="旧会话",
+                session_preview="shared title",
+            )
+        store.append_message(older.session_id, SessionMessage.user("较早旧会话"))
+        store.append_message(newer.session_id, SessionMessage.user("较新旧会话"))
+
+        with self.assertRaisesRegex(ValueError, "session_ref matched multiple visible sessions"):
+            run_session_tool(
+                {"action": "resume", "session_ref": "旧会话"},
+                session_store=store,
+                tool_context={
+                    "channel_id": "http",
+                    "conversation_id": "conv-current",
+                    "session_id": current.session_id,
+                    "user_id": "user-a",
+                },
+            )
+
+    def test_session_tool_show_rejects_duplicate_preview_session_ref(self) -> None:
+        store = self._store()
+        first = store.create(
+            session_id="sess_first",
+            conversation_id="conv-first",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+            user_id="user-a",
+        )
+        second = store.create(
+            session_id="sess_second",
+            conversation_id="conv-second",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+            user_id="user-a",
+        )
+        for record in (first, second):
+            store.set_catalog_metadata(
+                record.session_id,
+                user_id="user-a",
+                agent_id="main",
+                session_title=f"title-{record.session_id}",
+                session_preview="同一预览",
+            )
+
+        with self.assertRaisesRegex(ValueError, "session_ref matched multiple visible sessions"):
+            run_session_tool(
+                {"action": "show", "session_ref": "同一预览"},
+                session_store=store,
+                tool_context={"user_id": "user-a"},
+            )
+
     def test_session_tool_resume_rejects_session_from_other_user(self) -> None:
         store = self._store()
         current = store.create(

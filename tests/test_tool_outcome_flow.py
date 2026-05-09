@@ -56,6 +56,96 @@ class ToolOutcomeFlowTests(unittest.TestCase):
             ],
         )
 
+    def test_collect_structured_hint_facts_extracts_mcp_github_repo_and_path_arguments(self) -> None:
+        facts = collect_structured_hint_facts(
+            [
+                ToolExchange(
+                    tool_name="mcp",
+                    tool_payload={
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "get_file_contents",
+                        "arguments": {
+                            "owner": "tiezhuli001",
+                            "repo": "marten-runtime",
+                            "path": "README.md",
+                        },
+                    },
+                    tool_result={
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "get_file_contents",
+                        "result_text": "successfully downloaded text file (SHA: d8f224f84cbda99c2ab3aeb2cc6abde4abccca03)",
+                    },
+                )
+            ]
+        )
+
+        values = [item.value for item in facts]
+        self.assertIn("tiezhuli001/marten-runtime", values)
+        self.assertIn("README.md", values)
+
+    def test_collect_structured_hint_facts_extracts_mcp_github_repo_and_path_from_top_level_payload(self) -> None:
+        facts = collect_structured_hint_facts(
+            [
+                ToolExchange(
+                    tool_name="mcp",
+                    tool_payload={
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "get_file_contents",
+                        "owner": "tiezhuli001",
+                        "repo": "marten-runtime",
+                        "path": "README.md",
+                    },
+                    tool_result={
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "get_file_contents",
+                        "result_text": "successfully downloaded text file (SHA: d8f224f84cbda99c2ab3aeb2cc6abde4abccca03)",
+                    },
+                )
+            ]
+        )
+
+        values = [item.value for item in facts]
+        self.assertIn("tiezhuli001/marten-runtime", values)
+        self.assertIn("README.md", values)
+
+    def test_collect_structured_hint_facts_reads_first_item_from_mcp_json_list(self) -> None:
+        facts = collect_structured_hint_facts(
+            [
+                ToolExchange(
+                    tool_name="mcp",
+                    tool_payload={
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "list_commits",
+                        "arguments": {
+                            "owner": "tiezhuli001",
+                            "repo": "marten-runtime",
+                            "perPage": 1,
+                        },
+                    },
+                    tool_result={
+                        "action": "call",
+                        "server_id": "github",
+                        "tool_name": "list_commits",
+                        "result_text": (
+                            '[{"sha":"00d03bbcee9b09a6ddaa22074d28b669939d107e",'
+                            '"commit":{"message":"docs: simplify doc surface and align provider baseline (#16)",'
+                            '"author":{"date":"2026-04-29T03:46:24Z"}}}]'
+                        ),
+                    },
+                )
+            ]
+        )
+
+        values = [item.value for item in facts]
+        self.assertIn("tiezhuli001/marten-runtime", values)
+        self.assertIn("00d03bbcee9b09a6ddaa22074d28b669939d107e", values)
+        self.assertIn("2026-04-29T03:46:24Z", values)
+
     def test_merge_tool_episode_facts_dedupes_and_preserves_order(self) -> None:
         merged = merge_tool_episode_facts(
             [
@@ -109,7 +199,7 @@ class ToolOutcomeFlowTests(unittest.TestCase):
         self.assertEqual(summary.tool_name, "skill")
         self.assertEqual(summary.summary_text, "上一轮加载了 skill test_time_skill。")
 
-    def test_build_fallback_tool_episode_summary_returns_generic_final_text_when_no_rule_summary(self) -> None:
+    def test_build_fallback_tool_episode_summary_skips_free_form_final_text_without_structured_facts(self) -> None:
         summary = build_fallback_tool_episode_summary(
             run_id="run_test",
             history=[ToolExchange(tool_name="mock_search", tool_result={"issue_count": 12})],
@@ -117,10 +207,33 @@ class ToolOutcomeFlowTests(unittest.TestCase):
             tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_test", tool_metadata={}),
         )
 
+        self.assertIsNone(summary)
+
+    def test_build_fallback_tool_episode_summary_keeps_structured_facts_without_free_form_summary(self) -> None:
+        summary = build_fallback_tool_episode_summary(
+            run_id="run_test",
+            history=[
+                ToolExchange(
+                    tool_name="mock_search",
+                    tool_result={
+                        "full_name": "CloudWide851/easy-agent",
+                        "default_branch": "main",
+                    },
+                )
+            ],
+            final_text="已完成查询",
+            tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_test", tool_metadata={}),
+        )
+
         self.assertIsNotNone(summary)
-        self.assertEqual(summary.summary_text, "上一轮工具调用完成：已完成查询")
-        self.assertEqual(summary.source_kind, "builtin")
-        self.assertFalse(summary.keep_next_turn)
+        self.assertEqual(summary.summary_text, "上一轮工具调用已完成。")
+        self.assertEqual(
+            [f"{item.key}={item.value}" for item in summary.facts],
+            [
+                "full_name=CloudWide851/easy-agent",
+                "default_branch=main",
+            ],
+        )
 
     def test_build_combined_tool_episode_summary_merges_draft_and_fallback_semantics(self) -> None:
         summary = build_combined_tool_episode_summary(

@@ -63,15 +63,16 @@ flowchart LR
 
 | 阶段 | 关注点 | 成为基线的内容 |
 | --- | --- | --- |
-| 1 | Runtime spine | 主执行链 |
-| 2 | Harness baseline | 路由、上下文回灌、skills、传输韧性 |
-| 3 | Governance | conversation lanes、provider resilience、runtime learning |
-| 4 | Capability surface | progressive disclosure、LLM-first 选择、ADR + changelog 真相 |
-| 5 | Channel boundary | generic Feishu rendering，而不是渲染器扩张 |
-| 6 | Long conversations | compaction、usage accuracy、runtime context status |
-| 7 | Continuity & extensions | tool summaries、MCP sidecars、direct render、窄扩展 |
-| 8 | Execution surfaces | `main_agent`、lightweight subagents、执行型默认 prompt |
-| 9 | Observability hardening | Langfuse tracing、run/trace correlation、实链验证 |
+| 1 | 运行时主链 | 主执行链 |
+| 2 | Harness 基线 | 路由、上下文回灌、skills、传输韧性 |
+| 3 | 治理层 | conversation lanes、provider resilience、runtime learning |
+| 4 | 能力面 | progressive disclosure、LLM-first 选择、ADR + changelog 真相 |
+| 5 | Channel 边界 | generic Feishu rendering、渲染边界收敛 |
+| 6 | 长会话治理 | compaction、usage accuracy、runtime context status |
+| 7 | 连续性与窄扩展 | tool summaries、MCP sidecars、direct render、窄扩展 |
+| 8 | 执行面 | `main_agent`、lightweight subagents、执行型默认 prompt |
+| 9 | 可观测性硬化 | Langfuse tracing、run/trace correlation、实链验证 |
+| 10 | 评测运维面 | 离线评测、专项评分族、稳定性 compare、HTML 报告 |
 
 ## 当前架构快照
 
@@ -80,21 +81,26 @@ flowchart LR
 - **执行主链**
   - `channel -> binding -> agent -> runtime context -> LLM -> builtin/MCP/skill -> LLM -> channel`
 - **治理层**
-  - same-conversation FIFO lanes
-  - provider retry/backoff normalization + profile-level failover
+  - same-conversation FIFO 队列
+  - provider 重试 / 退避归一化与 profile 级 failover
   - durable SQLite session persistence 与 bounded replay restore
   - source-session compaction、replay budgeting，以及 current-turn context-usage accounting
 - **能力面**
-  - LLM-first tool selection
-  - builtin family tools、MCP servers、file-based skills
+  - LLM-first 工具选择
+  - builtin 工具族、MCP servers、文件 skills
 - **窄扩展**
   - automation
   - self-improve
   - lightweight subagents
 - **可观测性**
   - runtime diagnostics
-  - run / trace correlation
+  - run / trace 关联
   - 可选的 Langfuse tracing
+- **运维评测面**
+  - 离线评测执行器
+  - baseline 对比与稳定性窗口
+  - memory / subagent 专项评分套件
+  - Markdown / JSON / HTML 报告
 
 当前部署相关的结论也很直接：
 
@@ -602,6 +608,70 @@ flowchart LR
 - [`2026-04-17-langfuse-observability-design.md`](./2026-04-17-langfuse-observability-design.md)
 - [`LIVE_VERIFICATION_CHECKLIST.md`](./LIVE_VERIFICATION_CHECKLIST.md)
 
+## 第 10 阶段：离线评测成为“更好用”迭代的正式运维面
+
+### 时间范围
+
+2026-04-30 到 2026-05-02。
+
+### 新增了什么
+
+项目在测试层和 tracing 层之外，补上了第三层长期能力：离线评测。
+
+这一阶段新增的不是另一条产品主链，而是一条围绕主链的运维证明面：
+
+- `scripts/run_eval.py` 作为统一入口
+- `main_chain_core`、`memory_long_horizon`、`subagent_task_progress` 三类套件
+- baseline compare、稳定性窗口、波动 case / 组件统计
+- Markdown / JSON / HTML 三种报告产物
+- shared grader helpers、suite manifest、family-scored compare 面
+
+### 为什么重要
+
+这一阶段让仓库第一次具备了系统化回答“这次改动是否真的更好用”的能力：
+
+- 测试继续证明链路是通的
+- tracing 继续证明真实运行发生了什么
+- eval 开始证明 prompt、capability 描述、记忆治理、子代理推进这些迭代是否真的带来收益
+
+更关键的是，这套能力仍然留在离线运维面，没有把 runtime 主链改造成在线评测服务。
+
+### 这一阶段的主链
+
+产品主链保持不变，新增的是围绕它的离线证明面：
+
+`operator CLI -> eval runner -> HTTP app -> runtime -> builtin / MCP / skill / subagent -> diagnostics -> compare / report`
+
+```mermaid
+flowchart LR
+    A["Operator CLI"] --> B["Eval Runner"]
+    B --> C["HTTP App"]
+    C --> D["Runtime"]
+    D --> E["LLM"]
+    E --> F["Builtin / MCP / Skill / Subagent"]
+    F --> E
+    E --> G["Diagnostics"]
+    G --> H["Compare / Stability / Report"]
+
+    I["Golden / Memory / Subagent Suites"] -.-> B
+    J["SQLite Eval History"] -.-> H
+    K["HTML / Markdown / JSON Reports"] -.-> H
+
+    style B fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+    style H fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+    style I fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+    style J fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+    style K fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a
+```
+
+### 关键引用
+
+- [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
+- [`2026-04-30-main-chain-eval-foundation-design.md`](./2026-04-30-main-chain-eval-foundation-design.md)
+- [`archive/plans/2026-04-30-main-chain-eval-foundation-execution-plan.md`](./archive/plans/2026-04-30-main-chain-eval-foundation-execution-plan.md)
+- [`archive/plans/2026-05-01-memory-subagent-eval-execution-plan.md`](./archive/plans/2026-05-01-memory-subagent-eval-execution-plan.md)
+- [`README.md`](../README.md)
+
 ## 明确未构建的能力
 
 | Capability | 状态 | 为什么暂不进入基线 |
@@ -620,7 +690,7 @@ flowchart LR
 - harness 仍然刻意保持 thin
 - capability choice 继续由模型负责
 - 长线程治理与跨轮治理已经进入基线，但都以 bounded runtime slice 的形式存在
-- channel formatting、automation、self-improve、lightweight subagents、deterministic recovery、Langfuse tracing 都被视为 narrow extension，而不是系统中心重构的理由
+- channel formatting、automation、self-improve、lightweight subagents、deterministic recovery、Langfuse tracing、离线评测运维面都被视为 narrow extension 或 support slice，而不是系统中心重构的理由
 
 换句话说，新工作更容易被接受，如果它能做到三件事之一：
 
@@ -628,9 +698,9 @@ flowchart LR
 2. 让主链周围的 runtime 更稳
 3. 新增一个有价值但不会重塑系统中心的窄扩展边界
 
-## Harness 工程化经验总结 / Lessons
+## Harness 工程化经验总结
 
-这 9 个阶段可以压缩成一组可复用的 agent runtime harness 工程化经验：
+这 10 个阶段可以压缩成一组可复用的 agent runtime harness 工程化经验：
 
 1. **先把一条执行主链打稳，再考虑横向扩张**
    - 这个仓库一直反复回到同一条路径：`channel -> binding -> agent -> runtime -> LLM -> tool/skill -> channel`。

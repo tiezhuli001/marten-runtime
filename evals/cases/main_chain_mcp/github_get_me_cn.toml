@@ -1,0 +1,27 @@
+case_id = "github_get_me_cn"
+suite_id = "main_chain_mcp"
+family = "mcp"
+enabled = true
+required = true
+description = "GitHub MCP get_me"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "mcp", "github"]
+
+[[turns]]
+role = "user"
+content = "调用 github mcp 查询当前用户。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_any = ["GitHub", "用户"]
+
+[weights]
+outcome = 100
+tool_path = 0
+efficiency = 0
+context = 0

@@ -12,11 +12,20 @@ from marten_runtime.interfaces.http.app import create_app
 from marten_runtime.mcp.models import MCPServerSpec, MCPToolSpec
 from marten_runtime.observability.langfuse import build_langfuse_observer
 from marten_runtime.runtime.events import OutboundEvent
-from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
+from marten_runtime.runtime.finalization_contract_prompt import (
+    FinalizationContractDraft,
+    SessionSwitchClaimDraft,
+)
+from marten_runtime.runtime.llm_client import (
+    LLMReply,
+    ScriptedLLMClient,
+    _normalize_reply_contract_metadata,
+)
 from marten_runtime.session.compacted_context import CompactedContext
 from marten_runtime.session.models import SessionMessage
 from marten_runtime.tools.builtins.mcp_tool import run_mcp_tool
 from tests.http_app_support import build_test_app
+from tests.support.finalization_contracts import contracted_final_reply
 
 
 def _write_test_app(
@@ -64,27 +73,27 @@ def _write_test_repo(root: Path) -> None:
             'app_id = "main_agent"\n'
             'allowed_tools = ["automation", "mcp", "runtime", "self_improve", "skill", "time", "spawn_subagent", "cancel_subagent"]\n'
             'prompt_mode = "full"\n'
-            'model_profile = "minimax_m25"\n\n'
+            'model_profile = "minimax_m2_7_highspeed"\n\n'
             '[agents.coding]\n'
             'role = "coding_agent"\n'
             'app_id = "code_assistant"\n'
             'allowed_tools = ["runtime", "skill", "time"]\n'
             'prompt_mode = "child"\n'
-            'model_profile = "openai_gpt5"\n'
+            'model_profile = "openai_gpt_5_4"\n'
         ),
         encoding="utf-8",
     )
     (root / "config" / "models.toml").write_text(
         (
-            'default_profile = "openai_gpt5"\n\n'
-            '[profiles.openai_gpt5]\n'
+            'default_profile = "openai_gpt_5_4"\n\n'
+            '[profiles.openai_gpt_5_4]\n'
             'provider_ref = "openai"\n'
             'model = "gpt-5.4"\n'
-            'fallback_profiles = ["kimi_k2", "minimax_m25"]\n\n'
+            'fallback_profiles = ["kimi_k2", "minimax_m2_7_highspeed"]\n\n'
             '[profiles.kimi_k2]\n'
             'provider_ref = "kimi"\n'
             'model = "kimi-k2"\n\n'
-            '[profiles.minimax_m25]\n'
+            '[profiles.minimax_m2_7_highspeed]\n'
             'provider_ref = "minimax"\n'
             'model = "MiniMax-M2.5"\n'
         ),
@@ -138,13 +147,13 @@ def _write_session_enabled_coding_repo(root: Path) -> None:
             'app_id = "main_agent"\n'
             'allowed_tools = ["automation", "mcp", "runtime", "self_improve", "session", "skill", "time", "spawn_subagent", "cancel_subagent"]\n'
             'prompt_mode = "full"\n'
-            'model_profile = "minimax_m25"\n\n'
+            'model_profile = "minimax_m2_7_highspeed"\n\n'
             '[agents.coding]\n'
             'role = "coding_agent"\n'
             'app_id = "code_assistant"\n'
             'allowed_tools = ["session", "runtime", "skill", "time"]\n'
             'prompt_mode = "child"\n'
-            'model_profile = "openai_gpt5"\n'
+            'model_profile = "openai_gpt_5_4"\n'
         ),
         encoding="utf-8",
     )
@@ -206,13 +215,23 @@ class PromptTooLongThenCompactThenFinalLLMClient:
         if self._calls == 1:
             raise RuntimeError("provider_http_error:400:prompt too long")
         if request.agent_id == "compaction":
-            return LLMReply(final_text="当前进展：旧历史已经压缩。\n明确下一步：继续回答用户问题。")
-        return LLMReply(final_text="reactive compact final")
+            return _normalize_reply_contract_metadata(
+                request,
+                contracted_final_reply("当前进展：旧历史已经压缩。\n明确下一步：继续回答用户问题。"),
+            )
+        return _normalize_reply_contract_metadata(
+            request,
+            contracted_final_reply("reactive compact final"),
+        )
 
 
 class AcceptanceTests(unittest.TestCase):
+    @staticmethod
+    def _non_summary_requests(llm) -> list:  # noqa: ANN001
+        return [request for request in llm.requests if request.request_kind != "session_summary"]
+
     def test_feishu_second_turn_reuses_durable_detail_from_previous_structured_reply(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         captured_second_turn_history: list[SessionMessage] = []
 
@@ -307,7 +326,7 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(second.json()["events"][-1]["payload"]["text"], "第二轮已读取到 mcp 正常")
 
     def test_langfuse_full_chain_covers_plain_builtin_and_mcp_turns(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         fake_langfuse = _AcceptanceFakeLangfuseClient()
         observer = build_langfuse_observer(
@@ -371,11 +390,14 @@ class AcceptanceTests(unittest.TestCase):
             server_id="github",
         )
 
-        plain_llm = ScriptedLLMClient([LLMReply(final_text="plain-ok")])
+        plain_llm = ScriptedLLMClient([contracted_final_reply("plain-ok")])
         builtin_llm = ScriptedLLMClient(
             [
-                LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
-                LLMReply(final_text="runtime-ok"),
+                LLMReply(
+                    tool_name="runtime",
+                    tool_payload={"action": "context_status", "finalize_response": True},
+                ),
+                contracted_final_reply("runtime-ok"),
             ]
         )
         mcp_llm = ScriptedLLMClient(
@@ -389,14 +411,14 @@ class AcceptanceTests(unittest.TestCase):
                         "arguments": {"query": "release notes"},
                     },
                 ),
-                LLMReply(final_text="mcp-ok"),
+                contracted_final_reply("repo_count=42"),
             ]
         )
 
         with TestClient(app) as client:
             runtime.runtime_loop.llm = plain_llm
-            runtime.llm_client_factory.cache_client("openai_gpt5", plain_llm)
-            runtime.llm_client_factory.cache_client("minimax_m25", plain_llm)
+            runtime.llm_client_factory.cache_client("openai_gpt_5_4", plain_llm)
+            runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", plain_llm)
             plain = client.post(
                 "/messages",
                 json={
@@ -415,8 +437,8 @@ class AcceptanceTests(unittest.TestCase):
             ).json()
 
             runtime.runtime_loop.llm = builtin_llm
-            runtime.llm_client_factory.cache_client("openai_gpt5", builtin_llm)
-            runtime.llm_client_factory.cache_client("minimax_m25", builtin_llm)
+            runtime.llm_client_factory.cache_client("openai_gpt_5_4", builtin_llm)
+            runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", builtin_llm)
             builtin = client.post(
                 "/messages",
                 json={
@@ -435,8 +457,8 @@ class AcceptanceTests(unittest.TestCase):
             ).json()
 
             runtime.runtime_loop.llm = mcp_llm
-            runtime.llm_client_factory.cache_client("openai_gpt5", mcp_llm)
-            runtime.llm_client_factory.cache_client("minimax_m25", mcp_llm)
+            runtime.llm_client_factory.cache_client("openai_gpt_5_4", mcp_llm)
+            runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", mcp_llm)
             mcp = client.post(
                 "/messages",
                 json={
@@ -521,11 +543,11 @@ class AcceptanceTests(unittest.TestCase):
         self.assertFalse(runtime.channels_config.feishu.auto_start)
 
     def test_http_runtime_bootstrap_fails_closed_without_provider_key(self) -> None:
-        with self.assertRaisesRegex(ValueError, "missing_llm_api_key:OPENAI_API_KEY"):
+        with self.assertRaisesRegex(ValueError, r"missing_llm_api_key:(OPENAI_API_KEY|MINIMAX_API_KEY)"):
             build_http_runtime(env={}, load_env_file=False)
 
     def test_feishu_websocket_service_starts_with_app_when_channel_enabled(self) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         enabled_channels_config = runtime.channels_config.model_copy(
             update={
@@ -546,7 +568,7 @@ class AcceptanceTests(unittest.TestCase):
         stop_mock.assert_awaited_once()
 
     def test_http_messages_cover_plain_chat_mcp_and_generic_repo_request_paths(self) -> None:
-        with TestClient(build_test_app()) as client:
+        with TestClient(build_test_app(emit_explicit_empty_contract=True)) as client:
             chat = client.post(
                 "/messages",
                 json={
@@ -590,22 +612,22 @@ class AcceptanceTests(unittest.TestCase):
     def test_http_messages_retryable_thin_summary_recovers_and_exposes_finalization_diagnostics(
         self,
     ) -> None:
-        app = build_test_app()
+        app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
         scripted = ScriptedLLMClient(
             [
                 LLMReply(tool_name="time", tool_payload={"timezone": "Asia/Shanghai"}),
                 LLMReply(tool_name="runtime", tool_payload={"action": "context_status"}),
                 LLMReply(tool_name="mcp", tool_payload={"action": "list"}),
-                LLMReply(
-                    final_text="当前可用 MCP 服务共 1 个。\n- 1. github（38 个工具，状态 discovered）"
+                contracted_final_reply(
+                    "当前可用 MCP 服务共 1 个。\n- 1. github（38 个工具，状态 discovered）"
                 ),
-                LLMReply(final_text="工具执行失败，请重试。"),
+                contracted_final_reply("工具执行失败，请重试。"),
             ]
         )
         runtime.runtime_loop.llm = scripted
-        runtime.llm_client_factory.cache_client("openai_gpt5", scripted)
-        runtime.llm_client_factory.cache_client("minimax_m25", scripted)
+        runtime.llm_client_factory.cache_client("openai_gpt_5_4", scripted)
+        runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", scripted)
 
         with TestClient(app) as client:
             response = client.post(
@@ -641,12 +663,12 @@ class AcceptanceTests(unittest.TestCase):
     def test_http_runtime_switches_llm_client_by_selected_agent_model_profile(self) -> None:
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
-            _write_test_repo(repo_root)
+            _write_session_enabled_coding_repo(repo_root)
             test_app = _build_repo_backed_test_app(repo_root)
-            assistant_llm = ScriptedLLMClient([LLMReply(final_text="assistant profile")])
-            coding_llm = ScriptedLLMClient([LLMReply(final_text="coding profile")])
-            test_app.state.runtime.llm_client_factory.cache_client("minimax_m25", assistant_llm)
-            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt5", coding_llm)
+            assistant_llm = ScriptedLLMClient([contracted_final_reply("assistant profile")])
+            coding_llm = ScriptedLLMClient([contracted_final_reply("coding profile")])
+            test_app.state.runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", assistant_llm)
+            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt_5_4", coding_llm)
             test_app.state.runtime.runtime_loop.llm = assistant_llm
 
             with TestClient(test_app) as client:
@@ -684,18 +706,18 @@ class AcceptanceTests(unittest.TestCase):
             repo_root = Path(tmpdir)
             _write_session_enabled_coding_repo(repo_root)
             test_app = _build_repo_backed_test_app(repo_root)
-            main_llm = ScriptedLLMClient([LLMReply(final_text="main route")])
+            main_llm = ScriptedLLMClient([contracted_final_reply("main route")])
             coding_llm = ScriptedLLMClient(
                 [
                     LLMReply(
                         tool_name="session",
                         tool_payload={"action": "new", "finalize_response": True},
                     ),
-                    LLMReply(final_text="coding route retained"),
+                    contracted_final_reply("coding route retained"),
                 ]
             )
-            test_app.state.runtime.llm_client_factory.cache_client("minimax_m25", main_llm)
-            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt5", coding_llm)
+            test_app.state.runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", main_llm)
+            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt_5_4", coding_llm)
             test_app.state.runtime.runtime_loop.llm = main_llm
 
             with TestClient(test_app) as client:
@@ -728,6 +750,122 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(second.json()["events"][-1]["payload"]["text"], "coding route retained")
         self.assertEqual(coding_llm.requests[0].agent_id, "coding")
         self.assertEqual(coding_llm.requests[1].agent_id, "coding")
+
+    def test_http_session_new_continuation_reuses_bound_session_task_anchor(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            _write_session_enabled_coding_repo(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
+            runtime = test_app.state.runtime
+            source = runtime.session_store.create(
+                session_id="sess_source_continuation",
+                conversation_id="session-new-continuation",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+                channel_id="http",
+                user_id="demo",
+            )
+            runtime.session_store.bind_conversation(
+                channel_id="http",
+                conversation_id="session-new-continuation",
+                session_id=source.session_id,
+                user_id="demo",
+            )
+            runtime.session_store.set_catalog_metadata(
+                source.session_id,
+                user_id="demo",
+                agent_id="main",
+                session_title="部署告警排查",
+                session_preview="当前目标：排查部署告警。",
+            )
+            runtime.session_store.append_message(
+                source.session_id,
+                SessionMessage.user("我正在排查部署告警，请记住这个任务。"),
+            )
+            runtime.session_store.append_message(
+                source.session_id,
+                SessionMessage.assistant("已记住，当前目标：排查部署告警。"),
+            )
+
+            class SessionContinuationProbeLLM:
+                provider_name = "scripted"
+                model_name = "scripted-local"
+
+                def __init__(self) -> None:
+                    self.requests = []
+
+                def complete(self, request):  # noqa: ANN001
+                    self.requests.append(request)
+                    if request.request_kind == "session_summary":
+                        return _normalize_reply_contract_metadata(
+                            request,
+                            contracted_final_reply(
+                                "Title: 部署告警排查\nPreview: 当前目标：排查部署告警。"
+                            ),
+                        )
+                    if request.message == "切换到新会话。":
+                        return LLMReply(
+                            tool_name="session",
+                            tool_payload={"action": "new", "finalize_response": True},
+                        )
+                    if request.message == "在新会话里继续刚才那个部署告警排查任务。":
+                        if "部署告警" in str(request.compact_summary_text or ""):
+                            return contracted_final_reply(
+                                "已在新会话继续部署告警排查。请补充最小必要信息。"
+                            )
+                        return LLMReply(
+                            tool_name="session",
+                            tool_payload={"action": "new", "finalize_response": True},
+                        )
+                    return contracted_final_reply("ok")
+
+            llm = SessionContinuationProbeLLM()
+            runtime.runtime_loop.llm = llm
+            runtime.llm_client_factory.cache_client("openai_gpt_5_4", llm)
+            runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", llm)
+            runtime.llm_client_factory.cache_client("kimi_k2", llm)
+
+            with TestClient(test_app) as client:
+                switched = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": "session-new-continuation",
+                        "message_id": "1",
+                        "body": "切换到新会话。",
+                    },
+                )
+                third = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": "session-new-continuation",
+                        "message_id": "2",
+                        "body": "在新会话里继续刚才那个部署告警排查任务。",
+                    },
+                )
+
+        self.assertEqual(switched.status_code, 200)
+        self.assertEqual(third.status_code, 200)
+        interactive_requests = [request for request in llm.requests if request.request_kind == "interactive"]
+        self.assertEqual(
+            [request.message for request in interactive_requests],
+            [
+                "切换到新会话。",
+                "在新会话里继续刚才那个部署告警排查任务。",
+            ],
+        )
+        self.assertEqual(
+            [call.get("tool_name") for call in runtime.run_history.get(switched.json()["events"][-1]["run_id"]).tool_calls],
+            ["session"],
+        )
+        self.assertEqual(
+            runtime.run_history.get(third.json()["events"][-1]["run_id"]).tool_calls,
+            [],
+        )
+        self.assertIn("已在新会话继续", third.json()["events"][-1]["payload"]["text"])
 
     def test_http_session_resume_switches_immediately_and_completes_source_compaction_in_background(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -774,11 +912,11 @@ class AcceptanceTests(unittest.TestCase):
                         tool_name="session",
                         tool_payload={"action": "resume", "session_id": target.session_id},
                     ),
-                    LLMReply(final_text=f"已切换到会话 `{target.session_id}`。"),
+                    contracted_final_reply(f"已切换到会话 `{target.session_id}`。"),
                 ]
             )
-            compaction_llm = ScriptedLLMClient([LLMReply(final_text="当前进展：source 已压缩。")])
-            runtime.llm_client_factory.cache_client("openai_gpt5", resume_llm)
+            compaction_llm = ScriptedLLMClient([contracted_final_reply("当前进展：source 已压缩。")])
+            runtime.llm_client_factory.cache_client("openai_gpt_5_4", resume_llm)
             runtime.runtime_loop.llm = resume_llm
             runtime.llm_client_factory.create_isolated = lambda profile_name: compaction_llm
 
@@ -846,7 +984,7 @@ class AcceptanceTests(unittest.TestCase):
                     )
                 ]
             )
-            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt5", resume_llm)
+            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt_5_4", resume_llm)
             test_app.state.runtime.runtime_loop.llm = resume_llm
 
             with TestClient(test_app) as client:
@@ -875,11 +1013,11 @@ class AcceptanceTests(unittest.TestCase):
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             _write_test_repo(repo_root)
-            coding_llm = ScriptedLLMClient([LLMReply(final_text="coding profile")])
-            assistant_llm = ScriptedLLMClient([LLMReply(final_text="assistant profile")])
+            coding_llm = ScriptedLLMClient([contracted_final_reply("coding profile")])
+            assistant_llm = ScriptedLLMClient([contracted_final_reply("assistant profile")])
             test_app = _build_repo_backed_test_app(repo_root)
-            test_app.state.runtime.llm_client_factory.cache_client("minimax_m25", assistant_llm)
-            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt5", coding_llm)
+            test_app.state.runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", assistant_llm)
+            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt_5_4", coding_llm)
             test_app.state.runtime.runtime_loop.llm = assistant_llm
 
             with TestClient(test_app) as client:
@@ -899,8 +1037,11 @@ class AcceptanceTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(run_diag.status_code, 200)
-        self.assertIn("CODE APP bootstrap", coding_llm.requests[0].system_prompt)
-        self.assertIn("你是 `code_assistant`", coding_llm.requests[0].system_prompt)
+        coding_requests = [
+            request for request in coding_llm.requests if request.request_kind != "session_summary"
+        ]
+        self.assertIn("CODE APP bootstrap", coding_requests[0].system_prompt)
+        self.assertIn("你是 `code_assistant`", coding_requests[0].system_prompt)
         self.assertEqual(run_diag.json()["bootstrap_manifest_id"], "boot_code_assistant_child")
 
     def test_http_messages_proactively_compact_long_history_and_persist_checkpoint(self) -> None:
@@ -908,11 +1049,11 @@ class AcceptanceTests(unittest.TestCase):
             repo_root = Path(tmpdir)
             _write_test_repo(repo_root)
             test_app = _build_repo_backed_test_app(repo_root)
-            seed_llm = ScriptedLLMClient([LLMReply(final_text="seed-1"), LLMReply(final_text="seed-2")])
-            test_app.state.runtime.llm_client_factory.cache_client("minimax_m25", seed_llm)
+            seed_llm = ScriptedLLMClient([contracted_final_reply("seed-1"), contracted_final_reply("seed-2")])
+            test_app.state.runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", seed_llm)
             test_app.state.runtime.runtime_loop.llm = seed_llm
-            test_app.state.runtime.models_config.profiles["minimax_m25"] = test_app.state.runtime.models_config.profiles[
-                "minimax_m25"
+            test_app.state.runtime.models_config.profiles["minimax_m2_7_highspeed"] = test_app.state.runtime.models_config.profiles[
+                "minimax_m2_7_highspeed"
             ].model_copy(update={"context_window_tokens": 80, "reserve_output_tokens": 0, "compact_trigger_ratio": 0.2})
 
             with TestClient(test_app) as client:
@@ -939,11 +1080,11 @@ class AcceptanceTests(unittest.TestCase):
                 test_app.state.runtime.platform_config.runtime.session_replay_user_turns = 1
                 compacting_llm = ScriptedLLMClient(
                     [
-                        LLMReply(final_text="当前进展：较早历史已压缩。\n关键决策：保留最近原始尾部。"),
-                        LLMReply(final_text="proactive compact final"),
+                        contracted_final_reply("当前进展：较早历史已压缩。\n关键决策：保留最近原始尾部。"),
+                        contracted_final_reply("proactive compact final"),
                     ]
                 )
-                test_app.state.runtime.llm_client_factory.cache_client("minimax_m25", compacting_llm)
+                test_app.state.runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", compacting_llm)
                 test_app.state.runtime.runtime_loop.llm = compacting_llm
                 third = client.post(
                     "/messages",
@@ -965,17 +1106,18 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(third.json()["events"][-1]["payload"]["text"], "proactive compact final")
         self.assertIsNotNone(session.latest_compacted_context)
         self.assertIn("当前进展", session.latest_compacted_context.summary_text)
-        self.assertGreaterEqual(len(compacting_llm.requests), 2)
-        self.assertEqual(compacting_llm.requests[0].agent_id, "compaction")
-        self.assertIn("当前进展", compacting_llm.requests[-1].compact_summary_text or "")
+        active_requests = self._non_summary_requests(compacting_llm)
+        self.assertGreaterEqual(len(active_requests), 2)
+        self.assertEqual(active_requests[0].agent_id, "compaction")
+        self.assertIn("当前进展", active_requests[-1].compact_summary_text or "")
 
     def test_http_messages_reactively_compact_after_prompt_too_long_and_retry(self) -> None:
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             _write_test_repo(repo_root)
             test_app = _build_repo_backed_test_app(repo_root)
-            seed_llm = ScriptedLLMClient([LLMReply(final_text="seed-1"), LLMReply(final_text="seed-2")])
-            test_app.state.runtime.llm_client_factory.cache_client("minimax_m25", seed_llm)
+            seed_llm = ScriptedLLMClient([contracted_final_reply("seed-1"), contracted_final_reply("seed-2")])
+            test_app.state.runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", seed_llm)
             test_app.state.runtime.runtime_loop.llm = seed_llm
 
             with TestClient(test_app) as client:
@@ -1001,7 +1143,7 @@ class AcceptanceTests(unittest.TestCase):
                 )
                 test_app.state.runtime.platform_config.runtime.session_replay_user_turns = 1
                 llm = PromptTooLongThenCompactThenFinalLLMClient()
-                test_app.state.runtime.llm_client_factory.cache_client("minimax_m25", llm)
+                test_app.state.runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", llm)
                 test_app.state.runtime.runtime_loop.llm = llm
                 response = client.post(
                     "/messages",
@@ -1020,9 +1162,89 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["events"][-1]["payload"]["text"], "reactive compact final")
-        self.assertEqual(len(llm.requests), 3)
-        self.assertEqual(llm.requests[1].agent_id, "compaction")
-        self.assertIn("当前进展", llm.requests[-1].compact_summary_text or "")
+        active_requests = self._non_summary_requests(llm)
+        self.assertEqual(len(active_requests), 3)
+        self.assertEqual(active_requests[1].agent_id, "compaction")
+        self.assertIn("当前进展", active_requests[-1].compact_summary_text or "")
+        self.assertIsNotNone(session.latest_compacted_context)
+        self.assertIn("当前进展", session.latest_compacted_context.summary_text)
+
+    def test_http_messages_proactive_compaction_uses_isolated_client_for_fallback_profile(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            _write_test_repo(repo_root)
+            test_app = _build_repo_backed_test_app(repo_root)
+            openai_llm = ScriptedLLMClient(
+                [
+                    contracted_final_reply("seed-1"),
+                    contracted_final_reply("seed-2"),
+                    contracted_final_reply("fallback-profile final"),
+                ]
+            )
+            compaction_llm = ScriptedLLMClient(
+                [contracted_final_reply("当前进展：fallback profile 已压缩。")]
+            )
+            test_app.state.runtime.llm_client_factory.cache_client("openai_gpt_5_4", openai_llm)
+            test_app.state.runtime.runtime_loop.llm = openai_llm
+            test_app.state.runtime.models_config.profiles["openai_gpt_5_4"] = (
+                test_app.state.runtime.models_config.profiles["openai_gpt_5_4"].model_copy(
+                    update={
+                        "context_window_tokens": 80,
+                        "reserve_output_tokens": 0,
+                        "compact_trigger_ratio": 0.2,
+                    }
+                )
+            )
+            test_app.state.runtime.llm_client_factory.create_isolated = (
+                lambda profile_name: compaction_llm
+            )
+
+            with TestClient(test_app) as client:
+                first = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": "openai-proactive-compact",
+                        "message_id": "1",
+                        "body": "第一轮历史内容" * 10,
+                        "requested_agent_id": "coding",
+                    },
+                )
+                second = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": "openai-proactive-compact",
+                        "message_id": "2",
+                        "body": "第二轮历史内容" * 10,
+                        "requested_agent_id": "coding",
+                    },
+                )
+                test_app.state.runtime.platform_config.runtime.session_replay_user_turns = 1
+                third = client.post(
+                    "/messages",
+                    json={
+                        "channel_id": "http",
+                        "user_id": "demo",
+                        "conversation_id": "openai-proactive-compact",
+                        "message_id": "3",
+                        "body": "继续执行当前任务，并基于前文给出下一步" * 10,
+                        "requested_agent_id": "coding",
+                    },
+                )
+
+            session = test_app.state.runtime.session_store.get(third.json()["session_id"])
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(third.status_code, 200)
+        self.assertEqual(third.json()["events"][-1]["payload"]["text"], "fallback-profile final")
+        self.assertEqual(len(compaction_llm.requests), 1)
+        self.assertEqual(compaction_llm.requests[0].agent_id, "compaction")
+        openai_requests = self._non_summary_requests(openai_llm)
+        self.assertIn("当前进展", openai_requests[-1].compact_summary_text or "")
         self.assertIsNotNone(session.latest_compacted_context)
         self.assertIn("当前进展", session.latest_compacted_context.summary_text)
 

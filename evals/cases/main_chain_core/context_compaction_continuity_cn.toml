@@ -1,0 +1,33 @@
+case_id = "context_compaction_continuity_cn"
+suite_id = "main_chain_core"
+family = "context_compaction"
+enabled = true
+required = true
+description = "长线程 continuation 触发 compaction，并保住任务锚点"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "compaction", "continuity"]
+
+[[turns]]
+role = "user"
+content = "继续这个长线程任务。"
+
+[setup]
+session_history_fixture = "context_pressure_long_thread.md"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_any = ["压缩后", "日报同步", "告警排查"]
+
+[expectations.context]
+expect_compaction = true
+
+[expectations.diagnostics]
+expect_provider_ref = "openai"
+
+[weights]
+outcome = 60
+tool_path = 0
+efficiency = 0
+context = 40

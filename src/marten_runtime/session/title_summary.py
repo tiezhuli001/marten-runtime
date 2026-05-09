@@ -5,6 +5,10 @@ import re
 from marten_runtime.runtime.llm_client import LLMRequest, ToolSnapshot
 
 
+def default_session_catalog_metadata() -> tuple[str, str]:
+    return _default_summary()
+
+
 def build_session_title_summary(
     *,
     llm_client,
@@ -15,7 +19,7 @@ def build_session_title_summary(
     user_message: str,
 ) -> tuple[str, str]:
     cleaned_message = _clean_summary_source(user_message)
-    fallback_title, fallback_preview = _fallback_summary(cleaned_message)
+    fallback_title, fallback_preview = _default_summary()
     try:
         reply = llm_client.complete(
             LLMRequest(
@@ -45,18 +49,27 @@ def build_session_title_summary(
     preview_match = re.search(r"(?im)^preview:\s*(.+)$", text)
     title = _normalize(title_match.group(1) if title_match else fallback_title)
     preview = _normalize(preview_match.group(1) if preview_match else fallback_preview)
+    if session_catalog_metadata_needs_refresh(title=title, preview=preview):
+        return fallback_title, fallback_preview
     return title or fallback_title, preview or fallback_preview
+def session_catalog_metadata_needs_refresh(*, title: str, preview: str) -> bool:
+    normalized_title = _normalize(title)
+    normalized_preview = _normalize(preview)
+    fallback_title, fallback_preview = default_session_catalog_metadata()
+    return (
+        not normalized_title
+        or not normalized_preview
+        or (
+            normalized_title == fallback_title
+            and normalized_preview == fallback_preview
+        )
+        or _is_title_template_placeholder(normalized_title)
+        or _is_preview_template_placeholder(normalized_preview)
+    )
 
 
-def _fallback_summary(user_message: str) -> tuple[str, str]:
-    normalized = _normalize(user_message)
-    if not normalized:
-        return "新会话", "用户开启了一个新会话。"
-    title = _truncate(normalized, 36)
-    preview = _truncate(normalized, 100)
-    if preview[-1:] not in {"。", "！", "？", ".", "!", "?"}:
-        preview = f"{preview}。"
-    return title, preview
+def _default_summary() -> tuple[str, str]:
+    return "新会话", "用户开启了一个新会话。"
 
 
 def _normalize(value: str) -> str:
@@ -67,11 +80,12 @@ def _clean_summary_source(user_message: str) -> str:
     cleaned = str(user_message or "")
     cleaned = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"\1", cleaned)
     cleaned = re.sub(r"(?:^|\s)@(?:_user_\d+|[^\s]+)", " ", cleaned)
-    cleaned = _normalize(cleaned)
-    return cleaned
+    return _normalize(cleaned)
 
 
-def _truncate(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    return text[: max(1, limit - 1)].rstrip() + "…"
+def _is_title_template_placeholder(value: str) -> bool:
+    return _normalize(value).lower() == "<short title>"
+
+
+def _is_preview_template_placeholder(value: str) -> bool:
+    return _normalize(value).lower() == "<one sentence>"

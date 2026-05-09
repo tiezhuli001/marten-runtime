@@ -39,6 +39,7 @@ pip-wheel-metadata/
 
 # Local runtime data
 data/
+reports/evals/
 *.db
 *.sqlite
 *.sqlite3

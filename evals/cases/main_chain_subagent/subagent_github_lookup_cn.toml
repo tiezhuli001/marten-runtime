@@ -1,0 +1,27 @@
+case_id = "subagent_github_lookup_cn"
+suite_id = "main_chain_subagent"
+family = "subagent"
+enabled = true
+required = true
+description = "子代理后台查 GitHub"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "subagent", "github"]
+
+[[turns]]
+role = "user"
+content = "开一个子代理去查 GitHub 信息。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_any = ["子 agent", "GitHub"]
+
+[weights]
+outcome = 100
+tool_path = 0
+efficiency = 0
+context = 0

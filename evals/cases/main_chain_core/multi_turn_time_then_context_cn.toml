@@ -1,0 +1,52 @@
+case_id = "multi_turn_time_then_context_cn"
+suite_id = "main_chain_core"
+family = "multi_turn_tool"
+enabled = true
+required = true
+description = "先 time 再 runtime"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "multi_turn", "time", "runtime"]
+
+[[turns]]
+role = "user"
+content = "先告诉我现在北京时间。"
+
+[[turns]]
+role = "user"
+content = "再告诉我当前上下文窗口使用情况。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[expectations.final_text]
+contains_all = ["当前上下文使用详情"]
+contains_any = ["tokens"]
+
+[[expectations.tool_path.required_calls]]
+tool_name = "time"
+min_calls = 1
+max_calls = 1
+
+[[expectations.tool_path.required_calls]]
+tool_name = "runtime"
+min_calls = 1
+max_calls = 1
+
+[expectations.efficiency]
+max_llm_requests = 2
+max_tool_calls = 2
+
+[expectations.context]
+expect_compaction = false
+
+[expectations.diagnostics]
+expect_provider_ref = "openai"
+
+[weights]
+outcome = 50
+tool_path = 30
+efficiency = 15
+context = 5

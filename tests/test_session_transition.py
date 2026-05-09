@@ -61,7 +61,7 @@ class SessionTransitionTests(unittest.TestCase):
             conversation_id="conv-current",
             current_user_id="user-a",
             current_message="切到新会话",
-            llm=SimpleNamespace(profile_name="minimax_m25"),
+            llm=SimpleNamespace(profile_name="minimax_m2_7_highspeed"),
             replay_user_turns=1,
         )
 
@@ -73,7 +73,7 @@ class SessionTransitionTests(unittest.TestCase):
         self.assertEqual(result.compaction_job["source_session_id"], source.session_id)
         self.assertEqual(result.compaction_job["current_message"], "切到新会话")
         self.assertEqual(result.compaction_job["preserved_tail_user_turns"], 1)
-        self.assertEqual(result.compaction_job["compaction_profile_name"], "minimax_m25")
+        self.assertEqual(result.compaction_job["compaction_profile_name"], "minimax_m2_7_highspeed")
         self.assertEqual(
             store.resolve_session_for_conversation(
                 channel_id="http",
@@ -265,6 +265,62 @@ class SessionTransitionTests(unittest.TestCase):
         self.assertEqual(result.compaction_reason, "no_prefix")
         self.assertIsNone(result.compaction_job)
 
+    def test_session_new_carryover_ignores_last_control_message_via_current_message_only(self) -> None:
+        store = self._store()
+        source = store.create(
+            session_id="sess_source_anchor",
+            conversation_id="conv-current",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+        )
+        store.set_catalog_metadata(
+            source.session_id,
+            user_id="user-a",
+            agent_id="coding",
+            session_title="部署告警排查",
+            session_preview="排查部署告警",
+        )
+        store.append_message(source.session_id, SessionMessage.user("排查部署告警，先看最近部署记录。"))
+        store.append_message(source.session_id, SessionMessage.assistant("已定位到最近一次部署。"))
+        store.append_message(source.session_id, SessionMessage.user("切换到新会话。"))
+
+        result = execute_session_transition(
+            action="new",
+            session_store=store,
+            source_session_id=source.session_id,
+            channel_id="http",
+            conversation_id="conv-current",
+            current_user_id="user-a",
+            current_message="切换到新会话。",
+            llm=None,
+            replay_user_turns=1,
+        )
+
+        carried = store.get(result.session.session_id).latest_compacted_context
+        self.assertIsNotNone(carried)
+        self.assertIn("排查部署告警，先看最近部署记录。", carried.summary_text)
+        self.assertNotIn("切换到新会话。", carried.summary_text)
+
+
+    def test_replay_keeps_subagent_completion_system_messages_visible(self) -> None:
+        from marten_runtime.session.replay import replay_session_messages
+
+        history = [
+            SessionMessage.user("把 README 结构梳理放后台。"),
+            SessionMessage.assistant("已受理，后台执行。"),
+            SessionMessage.system("subagent task completed: README 结构梳理\nsummary: README 包含快速开始、配置和评测入口。"),
+            SessionMessage.user("子任务完成了吗？"),
+        ]
+
+        replay = replay_session_messages(
+            history,
+            current_message="子任务完成了吗？",
+            user_turns=2,
+        )
+
+        self.assertIn("subagent task completed", "\n".join(item.content for item in replay))
+
     def test_session_transition_skips_compaction_when_existing_checkpoint_is_up_to_date(self) -> None:
         store = self._store()
         source = store.create(
@@ -305,6 +361,69 @@ class SessionTransitionTests(unittest.TestCase):
         self.assertFalse(result.compaction_succeeded)
         self.assertEqual(result.compaction_reason, "up_to_date")
         self.assertIsNone(result.compaction_job)
+
+
+    def test_replay_omits_generic_system_messages(self) -> None:
+        from marten_runtime.session.replay import replay_session_messages
+
+        history = [
+            SessionMessage.system("created"),
+            SessionMessage.user("继续"),
+        ]
+
+        replay = replay_session_messages(
+            history,
+            current_message="继续",
+            user_turns=2,
+        )
+
+        self.assertNotIn("created", "\n".join(item.content for item in replay))
+
+    def test_session_new_carries_task_anchor_checkpoint_into_target_session(self) -> None:
+        store = self._store()
+        source = store.create(
+            session_id="sess_source",
+            conversation_id="conv-current",
+            config_snapshot_id="cfg_bootstrap",
+            bootstrap_manifest_id="boot_default",
+            channel_id="http",
+            user_id="user-a",
+        )
+        store.set_catalog_metadata(
+            source.session_id,
+            user_id="user-a",
+            agent_id="main",
+            session_title="部署告警排查",
+            session_preview="当前目标：排查部署告警。",
+        )
+        store.append_message(
+            source.session_id,
+            SessionMessage.user("我正在排查部署告警，请记住这个任务。"),
+        )
+        store.append_message(
+            source.session_id,
+            SessionMessage.assistant("已记住，当前目标：排查部署告警。"),
+        )
+
+        result = execute_session_transition(
+            action="new",
+            session_store=store,
+            source_session_id=source.session_id,
+            channel_id="http",
+            conversation_id="conv-current",
+            current_user_id="user-a",
+            current_message="切换到新会话",
+            llm=None,
+            replay_user_turns=8,
+        )
+
+        target = store.get(result.target_session_id)
+        self.assertIsNotNone(target.latest_compacted_context)
+        assert target.latest_compacted_context is not None
+        self.assertIn("当前目标：排查部署告警。", target.latest_compacted_context.summary_text)
+        self.assertIn("在新会话里继续", target.latest_compacted_context.next_step or "")
+        self.assertIn("部署告警排查", target.latest_compacted_context.next_step or "")
+        self.assertIn("部署告警排查", target.latest_compacted_context.open_todos)
 
 
 if __name__ == "__main__":

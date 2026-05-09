@@ -6,6 +6,7 @@ from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.session.compacted_context import CompactedContext
 from marten_runtime.session.models import SessionMessage
+from tests.support.finalization_contracts import contracted_final_reply
 from tests.support.session_store_fixtures import temporary_sqlite_session_store
 from marten_runtime.tools.registry import ToolRegistry
 
@@ -39,7 +40,7 @@ class SubagentRuntimeLoopIntegrationTests(unittest.TestCase):
     def _session_store(self):
         return self.enterContext(temporary_sqlite_session_store())
 
-    def _build_service_with_runtime(self):
+    def _build_service_with_runtime(self, *, repository_context=None):
         from marten_runtime.subagents.service import SubagentService
 
         session_store = self._session_store()
@@ -51,7 +52,7 @@ class SubagentRuntimeLoopIntegrationTests(unittest.TestCase):
         )
         run_history = InMemoryRunHistory()
         runtime_loop = RuntimeLoop(
-            ScriptedLLMClient([LLMReply(final_text="child finished")]),
+            ScriptedLLMClient([contracted_final_reply("child finished")]),
             ToolRegistry(),
             run_history,
             langfuse_observer=build_langfuse_observer(
@@ -71,6 +72,7 @@ class SubagentRuntimeLoopIntegrationTests(unittest.TestCase):
             max_concurrent_subagents=1,
             max_queued_subagents=4,
             subagent_timeout_seconds=5,
+            repository_context=repository_context,
         )
         return service, runtime_loop, session_store, run_history
 
@@ -102,7 +104,7 @@ class SubagentRuntimeLoopIntegrationTests(unittest.TestCase):
             ScriptedLLMClient(
                 [
                     LLMReply(tool_name="mcp", tool_payload={"action": "call"}),
-                    LLMReply(final_text="child mcp summary: repo_count=42"),
+                    contracted_final_reply("child mcp summary: repo_count=42"),
                 ]
             ),
             tool_registry,
@@ -175,6 +177,39 @@ class SubagentRuntimeLoopIntegrationTests(unittest.TestCase):
             f"https://langfuse.example/trace/{child_run.trace_id}",
         )
 
+    def test_child_run_includes_repository_context_in_subagent_prompt(self) -> None:
+        from marten_runtime.subagents.repo_context import RepositoryContext
+
+        service, runtime_loop, _session_store, _run_history = self._build_service_with_runtime(
+            repository_context=RepositoryContext(
+                slug="tiezhuli001/marten-runtime",
+                url="https://github.com/tiezhuli001/marten-runtime",
+                branch="codex/eval-foundation-design-20260430",
+            )
+        )
+        accepted = service.spawn(
+            task="inspect repo in background",
+            label="inspect",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        service.run_next_queued_task()
+
+        task = service.store.get(accepted["task_id"])
+        self.assertEqual(task.status, "succeeded")
+        request = runtime_loop.llm.requests[-1]
+        self.assertIn("inspect repo in background", request.message)
+        self.assertIn("tiezhuli001/marten-runtime", request.message)
+        self.assertIn("https://github.com/tiezhuli001/marten-runtime", request.message)
+        self.assertNotIn("codex/eval-foundation-design-20260430", request.message)
+
     def test_parent_session_receives_only_terminal_system_summary(self) -> None:
         service, _runtime_loop, session_store, _run_history = self._build_service_with_runtime()
         accepted = service.spawn(
@@ -201,6 +236,31 @@ class SubagentRuntimeLoopIntegrationTests(unittest.TestCase):
         child = session_store.get(task.child_session_id)
         self.assertTrue(all(item.role != "assistant" for item in parent.history[1:-1]))
         self.assertGreaterEqual(len(child.history), 1)
+
+    def test_parent_session_receives_subagent_completion_tool_outcome_summary(self) -> None:
+        service, _runtime_loop, session_store, _run_history = self._build_service_with_runtime()
+        accepted = service.spawn(
+            task="inspect repo in background",
+            label="inspect",
+            parent_session_id="sess_parent",
+            parent_run_id="run_parent",
+            parent_agent_id="main",
+            app_id="main_agent",
+            agent_id="main",
+            requested_tool_profile="restricted",
+            context_mode="brief_only",
+            notify_on_finish=True,
+        )
+
+        service.run_next_queued_task()
+
+        summaries = session_store.list_recent_tool_outcome_summaries("sess_parent", limit=5)
+        self.assertTrue(summaries)
+        latest = summaries[-1]
+        self.assertEqual(latest.source_kind, "subagent")
+        self.assertEqual(latest.tool_name, "spawn_subagent")
+        self.assertIn("后台子任务《inspect》已完成", latest.summary_text)
+        self.assertIn("child finished", latest.summary_text)
 
     def test_brief_plus_snapshot_includes_compacted_context_without_forking_parent_history(self) -> None:
         service, runtime_loop, session_store, _run_history = self._build_service_with_runtime()
@@ -291,6 +351,10 @@ class SubagentRuntimeLoopIntegrationTests(unittest.TestCase):
         self.assertEqual(task.status, "succeeded")
         self.assertEqual([item.role for item in parent.history], ["system"])
         self.assertEqual(parent.history[0].content, "created")
+        self.assertEqual(
+            session_store.list_recent_tool_outcome_summaries("sess_parent", limit=5),
+            [],
+        )
 
 
 if __name__ == "__main__":

@@ -574,7 +574,7 @@ class FeishuRenderingTests(unittest.TestCase):
             "- 时区：`Asia/Shanghai`\n"
             "- 当前时间：`2026-04-21T19:34:28.355765+08:00`\n\n"
             "2. 再调用 `runtime` 查看 `context_status`\n"
-            "- 模型配置：`openai_gpt5`\n"
+            "- 模型配置：`openai_gpt_5_4`\n"
             "- 上下文窗口：`200000`\n"
             "- 有效窗口：`184000`\n\n"
             "3. 最后调用 `mcp` 列出 github server 可用工具\n"
