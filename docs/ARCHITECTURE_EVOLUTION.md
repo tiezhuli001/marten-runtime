@@ -668,8 +668,7 @@ flowchart LR
 
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 - [`2026-04-30-main-chain-eval-foundation-design.md`](./2026-04-30-main-chain-eval-foundation-design.md)
-- [`archive/plans/2026-04-30-main-chain-eval-foundation-execution-plan.md`](./archive/plans/2026-04-30-main-chain-eval-foundation-execution-plan.md)
-- [`archive/plans/2026-05-01-memory-subagent-eval-execution-plan.md`](./archive/plans/2026-05-01-memory-subagent-eval-execution-plan.md)
+- [`archive/plans/2026-05-01-eval-foundation-summary.md`](./archive/plans/2026-05-01-eval-foundation-summary.md)
 - [`README.md`](../README.md)
 
 ## 明确未构建的能力

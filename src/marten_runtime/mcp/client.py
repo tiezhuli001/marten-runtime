@@ -29,9 +29,6 @@ class MCPClient:
         self._servers = {server.server_id: server for server in (servers or [])}
         self._env = dict(os.environ if env is None else env)
 
-    def register_server(self, server: MCPServerSpec) -> None:
-        self._servers[server.server_id] = server
-
     def list_tools(
         self,
         server_id: str,

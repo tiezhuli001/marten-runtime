@@ -59,14 +59,13 @@
 - 2026-04-11 repo slimming 工作已压缩到 `docs/archive/plans/2026-04-11-repo-slimming-summary.md`
 - 2026-04-17 Langfuse observability design 保留在 `docs/2026-04-17-langfuse-observability-design.md`
 - 2026-04-30 主链评测基础能力设计保留在 `docs/2026-04-30-main-chain-eval-foundation-design.md`
-- 已完成的评测执行计划已归档到 `docs/archive/plans/2026-04-30-main-chain-eval-foundation-execution-plan.md` 与 `docs/archive/plans/2026-05-01-memory-subagent-eval-execution-plan.md`
+- 已完成的评测执行计划已压缩到 `docs/archive/plans/2026-05-01-eval-foundation-summary.md`
 - 本地忽略的 `STATUS.md` 继续只承担分支执行看板角色
 
 ## 离线评测入口
 
 - 背景设计：`docs/2026-04-30-main-chain-eval-foundation-design.md`
-- 过程归档：`docs/archive/plans/2026-04-30-main-chain-eval-foundation-execution-plan.md`
-- 专项归档：`docs/archive/plans/2026-05-01-memory-subagent-eval-execution-plan.md`
+- 过程归档：`docs/archive/plans/2026-05-01-eval-foundation-summary.md`
 - 命令入口：`PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite main_chain_core --mode scripted --profile openai_gpt_5_4`
 - 主链套件：`main_chain_core`
 - memory 专项套件：`memory_long_horizon`

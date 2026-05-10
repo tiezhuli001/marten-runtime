@@ -2200,6 +2200,44 @@ class OpenAIChatClientTests(unittest.TestCase):
         self.assertIn("explicitly requests delegation/background execution", spawn_def["description"])
         self.assertNotIn("description", str(spawn_def["parameters"]))
 
+    def test_chat_payload_all_object_schemas_include_properties_for_gateway_compatibility(self) -> None:
+        declarations = get_capability_declarations()
+        request = LLMRequest(
+            session_id="sess_schema_payload",
+            trace_id="trace_schema_payload",
+            message="hello",
+            agent_id="main",
+            app_id="main_agent",
+            available_tools=list(declarations),
+            capability_catalog_text=render_capability_catalog(declarations),
+            tool_snapshot=ToolSnapshot(
+                tool_snapshot_id="tool_schema_payload",
+                builtin_tools=list(declarations),
+                tool_metadata={
+                    name: {
+                        "parameters_schema": declaration.parameters_schema,
+                    }
+                    for name, declaration in declarations.items()
+                },
+            ),
+        )
+
+        payload = build_openai_chat_payload("gpt-5.4", request)
+
+        def assert_object_schemas_have_properties(schema: object) -> None:
+            if isinstance(schema, dict):
+                if schema.get("type") == "object":
+                    self.assertIn("properties", schema)
+                    self.assertIsInstance(schema["properties"], dict)
+                for value in schema.values():
+                    assert_object_schemas_have_properties(value)
+            elif isinstance(schema, list):
+                for item in schema:
+                    assert_object_schemas_have_properties(item)
+
+        for tool in payload["tools"]:
+            assert_object_schemas_have_properties(tool["function"]["parameters"])
+
     def test_mcp_latest_commit_guidance_reaches_actual_provider_payload(self) -> None:
         declarations = get_capability_declarations()
         request = LLMRequest(

@@ -377,7 +377,7 @@ def _tool_parameters_schema_for_provider(
     request: "LLMRequest",
 ) -> dict[str, object]:
     schema = _tool_parameters_schema(tool_name, request)
-    return _strip_schema_descriptions(schema)
+    return _normalize_provider_schema(_strip_schema_descriptions(schema))
 
 
 def _strip_schema_descriptions(schema: object) -> object:
@@ -390,6 +390,19 @@ def _strip_schema_descriptions(schema: object) -> object:
         return cleaned
     if isinstance(schema, list):
         return [_strip_schema_descriptions(item) for item in schema]
+    return schema
+
+
+def _normalize_provider_schema(schema: object) -> object:
+    if isinstance(schema, dict):
+        normalized = {key: _normalize_provider_schema(value) for key, value in schema.items()}
+        if str(normalized.get("type") or "") == "object":
+            properties = normalized.get("properties")
+            if not isinstance(properties, dict):
+                normalized["properties"] = {}
+        return normalized
+    if isinstance(schema, list):
+        return [_normalize_provider_schema(item) for item in schema]
     return schema
 
 

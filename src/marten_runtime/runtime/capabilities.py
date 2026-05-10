@@ -237,7 +237,7 @@ def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
             actions=["resume", "new", "show", "list"],
             usage_rules=[
                 "Use this when the user wants to switch to an existing session, start a fresh session, inspect the current bound session or one known session record, or browse the session catalog.",
-                "Use action=new for requests to start a fresh session in the current channel conversation. Treat a new session request such as 新开一个会话 as one direct session.new call.",
+                "Use action=new only when the current turn itself asks to create/start/open/switch to a fresh session. Treat that as the new session request. A later turn that says it is already in the new session and wants to continue work is plain task continuation.",
                 "Use action=resume with an exact session_id for requests to continue or switch back to an existing session.",
                 "Use action=show for requests to inspect the current bound session or one known session summary/detail.",
                 "Use action=list only for explicit catalog requests such as 会话列表, 列出会话, or 有哪些会话. action=list is not a safe fallback for switching or runtime questions.",
@@ -246,6 +246,7 @@ def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
                 "Runtime context size belongs to runtime, and scheduled job lists belong to automation.",
                 "After a successful session.new or session.resume, follow-up requests such as 在新会话里继续这个任务 or 继续旧会话 belong to plain task execution in the now-bound session. Use session again only when the user wants session metadata or another switch.",
                 "Across later turns, cues like 继续旧会话, 在新会话里继续, or 继续刚切换的会话 still mean continue work inside the already bound session; do not repeat resume/show/list unless the user asks for another switch or explicit session metadata.",
+                "Phrases such as 在新会话里继续, 在刚才新会话继续, or 继续刚切换的会话 state the already-bound workspace for the task. They are not a fresh-session creation request by themselves.",
                 "When the current turn is only one of those continuation cues, answer with task continuation or a brief continuation confirmation. Do not turn it into a current-session detail card with title, message_count, or session_id unless the user explicitly asked for session metadata.",
                 "If the resumed/newly bound session still lacks enough task detail, keep the brief continuation confirmation and ask for the minimum task anchor needed. Do not switch to session.show/list or runtime just to fill empty detail.",
                 "Compaction continuation requests such as 在压缩后的上下文里继续执行, 压缩后继续, or 继续这个长线程任务 also belong to plain task execution when the compact summary already provides the task anchor and unfinished items.",

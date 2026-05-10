@@ -51,7 +51,7 @@ The active short-form local continuity board now lives in:
 
 - current execution board:
   - `STATUS.md`
-- active cleanup backlog:
+- 2026-04-28 cleanup-wave summary:
   - `docs/2026-04-28-deep-repo-cleanup-checklist.md`
 - durable runtime and architecture timeline:
   - `docs/ARCHITECTURE_CHANGELOG.md`

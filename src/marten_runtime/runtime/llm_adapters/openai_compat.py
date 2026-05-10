@@ -548,21 +548,6 @@ def _select_single_responses_function_call(
     return first
 
 
-def _responses_function_call_signature(
-    function_call: dict[str, object],
-) -> tuple[str, str]:
-    name = str(function_call.get("name") or "")
-    arguments = function_call.get("arguments", "{}")
-    raw_arguments = arguments if isinstance(arguments, str) else json.dumps(arguments, sort_keys=True)
-    try:
-        parsed = json.loads(raw_arguments)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        normalized_arguments = str(raw_arguments)
-    else:
-        normalized_arguments = json.dumps(parsed, sort_keys=True, ensure_ascii=True)
-    return name, normalized_arguments
-
-
 def _raise_for_responses_error(payload: dict[str, object]) -> None:
     error = payload.get("error")
     if error:

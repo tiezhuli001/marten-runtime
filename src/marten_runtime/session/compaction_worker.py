@@ -39,9 +39,6 @@ class SessionCompactionWorker:
         if thread is not None:
             thread.join(timeout=2.0)
 
-    def wake(self) -> None:
-        self._wake_event.set()
-
     def run_once(self) -> bool:
         claimed = self.session_store.claim_next_compaction_job()
         if claimed is None:

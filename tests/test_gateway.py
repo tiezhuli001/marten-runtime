@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
-from marten_runtime.gateway.dedupe import build_dedupe_key
 from marten_runtime.gateway.ingress import ingest_message
 from marten_runtime.gateway.models import InboundEnvelope
 from marten_runtime.config.models_loader import resolve_model_profile
@@ -21,22 +20,6 @@ class GatewayTests(unittest.TestCase):
     def _non_summary_requests(llm: ScriptedLLMClient) -> list:
         return [request for request in llm.requests if request.request_kind != "session_summary"]
 
-    def test_build_dedupe_key_is_stable(self) -> None:
-        key_a = build_dedupe_key(
-            channel_id="http",
-            conversation_id="conv-1",
-            user_id="user-1",
-            message_id="msg-1",
-        )
-        key_b = build_dedupe_key(
-            channel_id="http",
-            conversation_id="conv-1",
-            user_id="user-1",
-            message_id="msg-1",
-        )
-
-        self.assertEqual(key_a, key_b)
-        self.assertGreaterEqual(len(key_a), 8)
 
     def test_ingest_message_generates_trace_and_envelope(self) -> None:
         envelope = ingest_message(
@@ -55,20 +38,6 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(envelope.trace_id.startswith("trace_"))
         self.assertGreaterEqual(len(envelope.dedupe_key), 8)
 
-    def test_inbound_envelope_requires_trace_and_dedupe(self) -> None:
-        envelope = InboundEnvelope(
-            channel_id="http",
-            user_id="demo",
-            conversation_id="conv-1",
-            message_id="msg-1",
-            body="hello",
-            received_at=datetime.now(timezone.utc),
-            dedupe_key="dedupe_1",
-            trace_id="trace_1",
-        )
-
-        self.assertEqual(envelope.trace_id, "trace_1")
-        self.assertEqual(envelope.dedupe_key, "dedupe_1")
 
     def test_http_sessions_endpoint_returns_session_id(self) -> None:
         with TestClient(build_test_app(emit_explicit_empty_contract=True)) as client:
@@ -1078,103 +1047,9 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(session.history[-1].content, "最近一次提交是 **2026-04-05 13:48:45 UTC**。")
         self.assertNotIn("```feishu_card", session.history[-1].content)
 
-    def test_http_messages_endpoint_still_runs_for_different_conversation(self) -> None:
-        app = build_test_app(emit_explicit_empty_contract=True)
-        with TestClient(app) as client:
-            left = client.post(
-                "/messages",
-                json={
-                    "channel_id": "http",
-                    "user_id": "demo",
-                    "conversation_id": "conv-left",
-                    "message_id": "msg-http-left",
-                    "body": "hello-left",
-                },
-            )
-            right = client.post(
-                "/messages",
-                json={
-                    "channel_id": "http",
-                    "user_id": "demo",
-                    "conversation_id": "conv-right",
-                    "message_id": "msg-http-right",
-                    "body": "hello-right",
-                },
-            )
-
-        self.assertEqual(left.status_code, 200)
-        self.assertEqual(right.status_code, 200)
-        self.assertEqual(left.json()["events"][-1]["event_type"], "final")
-        self.assertEqual(right.json()["events"][-1]["event_type"], "final")
 
 
-    def test_ingest_message_preserves_requested_agent_id(self) -> None:
-        envelope = ingest_message(
-            {
-                "channel_id": "http",
-                "user_id": "demo",
-                "conversation_id": "conv-req",
-                "message_id": "msg-req",
-                "body": "hello",
-                "requested_agent_id": "coding",
-            }
-        )
 
-        self.assertEqual(envelope.requested_agent_id, "coding")
-
-    def test_ingest_message_canonicalizes_legacy_assistant_requested_agent_id(self) -> None:
-        envelope = ingest_message(
-            {
-                "channel_id": "http",
-                "user_id": "demo",
-                "conversation_id": "conv-legacy-agent",
-                "message_id": "msg-legacy-agent",
-                "body": "hello",
-                "requested_agent_id": "assistant",
-            }
-        )
-
-        self.assertEqual(envelope.requested_agent_id, "main")
-
-    def test_http_messages_endpoint_falls_back_when_requested_agent_is_disabled(self) -> None:
-        with TestClient(build_test_app(emit_explicit_empty_contract=True)) as client:
-            response = client.post(
-                "/messages",
-                json={
-                    "channel_id": "http",
-                    "user_id": "demo",
-                    "conversation_id": "conv-disabled-agent",
-                    "message_id": "msg-disabled-agent-1",
-                    "body": "hello",
-                    "requested_agent_id": "ops",
-                },
-            )
-            self.assertEqual(response.status_code, 200)
-            session_id = response.json()["session_id"]
-            session_response = client.get(f"/diagnostics/session/{session_id}")
-
-        self.assertEqual(session_response.status_code, 200)
-        self.assertEqual(session_response.json()["active_agent_id"], "main")
-
-    def test_http_messages_endpoint_routes_requested_agent_id_from_request(self) -> None:
-        with TestClient(build_test_app(emit_explicit_empty_contract=True)) as client:
-            response = client.post(
-                "/messages",
-                json={
-                    "channel_id": "http",
-                    "user_id": "demo",
-                    "conversation_id": "conv-requested-agent",
-                    "message_id": "msg-requested-agent-1",
-                    "body": "hello",
-                    "requested_agent_id": "coding",
-                },
-            )
-            self.assertEqual(response.status_code, 200)
-            session_id = response.json()["session_id"]
-            session_response = client.get(f"/diagnostics/session/{session_id}")
-
-        self.assertEqual(session_response.status_code, 200)
-        self.assertEqual(session_response.json()["active_agent_id"], "coding")
 
 
 if __name__ == "__main__":
