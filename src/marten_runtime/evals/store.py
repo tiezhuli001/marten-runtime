@@ -222,6 +222,23 @@ class SQLiteEvalStore:
             ).fetchall()
         return [self._row_to_run_summary(row) for row in rows]
 
+    def list_runs(self, *, limit: int = 20) -> list[EvalRunSummary]:
+        capped_limit = max(1, min(int(limit), 200))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT eval_run_id, suite_id, git_branch, git_sha, git_dirty, eval_mode,
+                       agent_id, profile_name, provider_ref, model_name, config_fingerprint,
+                       suite_fingerprint, baseline_eval_run_id, total_score, pass_rate, status,
+                       artifact_root, started_at, finished_at
+                FROM eval_runs
+                ORDER BY started_at DESC, eval_run_id DESC
+                LIMIT ?
+                """,
+                (capped_limit,),
+            ).fetchall()
+        return [self._row_to_run_summary(row) for row in rows]
+
     def list_case_results(self, eval_run_id: str) -> list[EvalCaseResult]:
         with self._connect() as conn:
             rows = conn.execute(

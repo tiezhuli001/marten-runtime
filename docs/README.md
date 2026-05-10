@@ -62,23 +62,46 @@
 - 已完成的评测执行计划已压缩到 `docs/archive/plans/2026-05-01-eval-foundation-summary.md`
 - 本地忽略的 `STATUS.md` 继续只承担分支执行看板角色
 
-## 离线评测入口
+## 评测运维入口
 
-- 背景设计：`docs/2026-04-30-main-chain-eval-foundation-design.md`
-- 过程归档：`docs/archive/plans/2026-05-01-eval-foundation-summary.md`
-- 命令入口：`PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite main_chain_core --mode scripted --profile openai_gpt_5_4`
-- 主链套件：`main_chain_core`
-- memory 专项套件：`memory_long_horizon`
-- subagent 专项套件：`subagent_task_progress`
-- memory compare 命令：`PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite memory_long_horizon --mode scripted --profile openai_gpt_5_4 --baseline latest_passed`
-- subagent compare 命令：`PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite subagent_task_progress --mode scripted --profile openai_gpt_5_4 --baseline latest_passed`
-- 默认历史库：`data/evals.sqlite3`
-- 默认报告目录：`reports/evals/`
-- 汇总 Markdown：`reports/evals/<eval_run_id>/summary.md`
-- 汇总 JSON：`reports/evals/<eval_run_id>/summary.json`
-- 汇总 HTML：`reports/evals/<eval_run_id>/summary.html`
-- 单 case 详情：`reports/evals/<eval_run_id>/cases/<case_id>.json`
-- 稳定性统计：汇总报告会额外展示最近 5 次同 suite/profile/mode + 同 `git_sha` / `config_fingerprint` / `suite_fingerprint` 的分数波动、组件波动、波动 case、锚点强度
+主 HTTP 服务启动后，访问 `/evals` 查看当前评测链路状态、suite、历史 runs、分数变化、基线对比和报告入口。
+
+![Eval 运维总览](./assets/eval-ops-home.png)
+
+| 入口 | 内容 |
+| --- | --- |
+| `/evals` | 评测总览、最近运行、套件、分数变化 |
+| `/evals/suites` | HTML 套件清单；`Accept: application/json` 返回 JSON |
+| `/evals/runs` | HTML 历史运行；`Accept: application/json` 返回 JSON |
+| `/evals/runs/{eval_run_id}/view` | 单次运行详情、对比结果、稳定性、用例明细 |
+| `/evals/reports/{eval_run_id}` | 完整 HTML 报告 |
+
+CLI 入口：
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
+  --suite main_chain_core \
+  --mode scripted \
+  --profile openai_gpt_5_4 \
+  --baseline latest_passed
+```
+
+主要套件：
+
+- `main_chain_core`：主链黄金任务
+- `main_chain_mcp`：MCP 工具链路
+- `main_chain_subagent`：主线程与子代理链路
+- `memory_long_horizon`：长期记忆收益
+- `subagent_task_progress`：子代理任务推进
+
+产物位置：
+
+- SQLite 历史：`data/evals.sqlite3`
+- 报告目录：`reports/evals/<eval_run_id>/`
+- 汇总报告：`summary.md`、`summary.json`、`summary.html`
+- 单 case 详情：`cases/<case_id>.json`
+
+边界：eval 运维面只复用 eval harness、SQLite store、报告层和 HTTP diagnostics；`/messages` 主链仍由 runtime loop 与 LLM 工具选择驱动。
 
 ## 当前状态
 

@@ -1,6 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -17,6 +18,7 @@ from marten_runtime.interfaces.http.bootstrap import (
     build_http_runtime,
     render_metrics,
 )
+from marten_runtime.interfaces.http.eval_routes import build_eval_router
 from marten_runtime.interfaces.http.runtime_diagnostics import (
     serialize_runtime_diagnostics,
 )
@@ -108,6 +110,13 @@ def create_app(
 
     app = FastAPI(title="marten-runtime", lifespan=lifespan)
     app.state.runtime = runtime
+    app.include_router(
+        build_eval_router(
+            getattr(runtime, "repo_root", Path.cwd()),
+            env=getattr(runtime, "env", {}),
+        ),
+        prefix="/evals",
+    )
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

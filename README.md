@@ -12,105 +12,61 @@
 
 </div>
 
-`marten-runtime` 是一个收敛的 agent runtime harness。它的目标是先把你自己的 agent、MCP 和 skill 托管到一条稳定、可诊断、可扩展的执行主链上。
-
-## 项目概览
-
-- `LLM + agent + MCP + skill` first
-- `harness-thin, policy-hard, workflow-light`
-- 支持 channel/user/conversation 级绑定与多 agent 路由
-- 支持受治理的 runtime context assembly、会话回放与 working context 压缩
-- skills 作为运行时一等输入，而不是静态文件摆设
-- 支持 OpenAI-compatible provider，并带最小 retry/backoff 韧性
-- 提供 Feishu websocket 接入和轻量 HTTP operator surface
-
-## 为什么做这个项目
-
-很多 agent 项目要么停在 prompt demo，要么过早扩张到 queue、planner、复杂 worker 编排。`marten-runtime` 刻意不走那条路线，而是先把真正要跑通的 agent runtime 主链打稳。
-
-当前唯一优先的链路是：
+`marten-runtime` 是一个自托管 agent runtime harness，目标是把 agent、MCP、skill、provider 和诊断面放进一条稳定主链：
 
 `channel -> binding -> runtime loop -> builtin tool / MCP / skill -> delivery / diagnostics`
 
-如果一个改动不能直接增强这条链路，它就不应该排到高优先级。
+## 核心能力
 
-## 一眼看清
+- LLM-first：意图理解、工具选择和能力组合留在模型路径中
+- Thin harness：host 侧负责配置、执行、安全检查、持久化、投递和诊断
+- 多入口：HTTP `/messages` 与 Feishu websocket 共享同一 runtime 主链
+- 多 agent：支持 channel / user / conversation 绑定与 selected-agent profile 切换
+- 上下文治理：支持会话恢复、working context 压缩、thin memory continuity slice
+- 工具能力：支持 builtin tools、MCP tools、文件型 skills
+- Provider 韧性：支持 OpenAI-compatible provider、retry/backoff 与 profile failover
+- 运维面：提供 diagnostics、automation、eval 等轻量 HTTP 页面和 API
 
-| 层 | 职责 |
-| --- | --- |
-| `channel` | HTTP / Feishu 输入、进度事件和最终回包 |
-| `binding` | 把 channel/user/conversation 稳定绑定到正确 agent |
-| `agent` | app 层策略、可用工具和 bootstrap prompt |
-| `runtime` | 上下文拼装、模型调用、tool loop、诊断 |
-| `capabilities` | MCP 工具和文件型 skills |
-
-## 主链流程
+## 运行主链
 
 ```mermaid
 flowchart LR
-    A["HTTP / Feishu 消息"] --> B["Gateway + Binding"]
-    B --> C["Runtime Context Assembly"]
+    A["HTTP / Feishu"] --> B["Gateway + Binding"]
+    B --> C["Runtime Context"]
     C --> D["Runtime Loop / LLM"]
-    D -->|"tool call"| E["Builtin Tool / MCP / Skill"]
+    D -->|"tool call"| E["Builtin / MCP / Skill"]
     E --> D
     D --> F["Delivery + Diagnostics"]
 ```
 
-## 当前范围
+## 评测运维面
 
-当前 MVP 的 A/B 主线已经实现：
+主 HTTP 服务启动后，访问 `/evals` 可以查看评测链路状态、套件清单、历史运行、基线对比、分数变化和 HTML 报告入口。
 
-- 多主 agent 私有配置加载与稳定路由优先级
-- HTTP 入站 `requested_agent_id` 已能真实命中选中的 agent
-- selected agent 身份已真实下沉到 LLM request
-- selected agent 的 app manifest / bootstrap 已能在运行时切换
-- selected agent 的 model profile 已能通过 `config/agents.toml` 切换
-- runtime context assembly 已具备受治理 replay、working context 压缩和长对话回归测试
-- durable SQLite session persistence 已进入 baseline，并支持跨重启有界 restore
-- `session.new` / `session.resume` 已成为显式会话切换控制面
-- thin file-backed memory 已作为受限 continuity slice 接入
-- skills first-class runtime integration
-- provider retry/backoff resilience
-- profile-level provider failover 已由 `provider_ref` 和 `fallback_profiles` 驱动
+![Eval 运维总览](./docs/assets/eval-ops-home.png)
 
-同样明确暂不做：
+| 页面 | 用途 |
+| --- | --- |
+| `/evals` | 总览、套件、最近运行、分数变化 |
+| `/evals/suites` | 套件清单、默认模式、依赖、用例数 |
+| `/evals/runs` | 历史运行记录、状态、基线、变化趋势 |
+| `/evals/runs/{eval_run_id}/view` | 单次运行详情、对比结果、用例明细 |
+| `/evals/reports/{eval_run_id}` | 评测报告 HTML |
 
-- queue-first execution
-- durable delivery outbox
-- heartbeat / cron / proactive jobs
-- hybrid memory promotion
-- planner / swarm 编排
+JSON API 通过 `Accept: application/json` 保持可用。
 
-当前正在收敛实现的 MVP 例外：
+## 当前基线
 
-- 一个通过聊天注册的 GitHub 热门仓库日报路径
-- 该路径要求已经配置 GitHub MCP，且 MCP 至少提供 `search_repositories` 这类 repo discovery 能力
-- 业务逻辑仍放在 skill 中，runtime 只保留收敛的 builtin tool / store 边界
-- 自动任务查询能力保持收敛：模型侧只暴露 `automation` family tool；operator 侧保留 `GET /automations`
-- 自动任务增删改停恢复同样保持收敛，只通过 builtin tools 完成，不额外引入本地 automation MCP
-- 这不代表仓库正在扩成通用 proactive jobs / workflow 平台
-
-## 升级日志
-
-最近一轮 MVP 收敛更新：
-
-- 默认 runtime app 已切到 `main_agent`，prompt 姿态同步收敛到 execution-first 主代理
-- selected-agent app/profile 切换已进入真实 runtime 路径
-- session persistence 已标准化到 SQLite，并补齐 `session.new` / `session.resume`
-- provider 配置已拆分为 `config/providers.toml` 与 `config/models.toml`，failover 由 `provider_ref` / `fallback_profiles` 驱动
-- 运行时已移除 legacy routable `assistant` alias，runtime agent id 统一 canonical 到 `main`
-- GitHub 热榜已收敛到 repo-local MCP sidecar：`github_trending.trending_repositories`
-- 已从 active 代码、测试、automation 数据中移除 legacy `github_hot_repos_digest` skill 面
-- 历史 `github_hot_repos_digest` automation 记录已不再属于当前受支持的运行时输入；当前受支持 automation 数据均已 canonical 到 `github_trending_digest`
-- GitHub 热榜 Feishu 卡片现在会明确说明“按 GitHub Trending 页面顺序”，且不会重复展示抓取时间
-- 自动任务 `automation` family tool 统一承载 `register/list/detail/update/delete/pause/resume`
-- 自动任务 CRUD 与展示已直接回到 runtime-owned store 边界
-- self-improve 管理面也已回到 direct store-backed runtime ownership
-- 保持 `LLM + agent + skill + MCP first`，没有为 GitHub 热榜增加 runtime 业务特判
-- 增加会话级 conversation lanes，同一 `channel_id + conversation_id` 的 HTTP `/messages` 和 Feishu interactive turn 会按 FIFO 串行处理
-- 增强 provider resilience，对 `429`、`502`、`503`、`504` 做 retryable 归一化，并输出稳定的 provider-specific error code
-- 增强 Feishu 诊断面，能直接看到最近一次入站对应的 `session_id`、`run_id`、`llm_request_count` 和 `tool_calls`
-- 修复 Feishu 实链不稳定因素：重复语义重放、单次 runtime 异常打断 websocket、空白消息触发错误可见回复，以及重复 websocket 事件覆盖最近 accepted 状态
+- 默认 runtime app：`main_agent`
+- canonical runtime agent id：`main`
+- session persistence：SQLite
+- 会话控制：`session.new` / `session.resume`
+- provider 配置：`config/providers.toml` + `config/models.toml`
+- agent 配置：`config/agents.toml` + `apps/<app_id>/`
+- 自动任务：`automation` family builtin tool + operator HTTP surface
+- GitHub Trending：repo-local MCP sidecar + skill 行为资产
+- Observability：diagnostics + optional Langfuse tracing
+- Eval：CLI runner + same-service `/evals` 运维面
 
 ## 仓库结构
 
@@ -237,36 +193,34 @@ Langfuse 可观测性现在已经是可选的 tracing 面：
 - `enabled` 表示当前 runtime 仍然具备 Langfuse 接线能力，`healthy` 表示最近一次 Langfuse client 调用是否成功
 - 当前环境的 live 验证已经确认 plain chat、多轮 tool、以及 parent/child subagent tracing 可以在 Langfuse cloud 中看到
 
-## 离线评测
+## 评测
 
-主链评测基础能力保持在离线运维面，通过 `scripts/run_eval.py` 复用现有 HTTP app surface、诊断端点和 runtime 主链。
-
-最小命令：
+评测同时支持 CLI 和同服务 HTML 运维面。CLI 负责运行，`/evals` 负责查看状态、历史、基线对比和报告。
 
 ```bash
 PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
   --suite main_chain_core \
   --mode scripted \
-  --profile openai_gpt_5_4
+  --profile openai_gpt_5_4 \
+  --baseline latest_passed
 ```
 
-默认产物：
+![Eval 历史运行记录](./docs/assets/eval-runs-history.png)
+
+| 套件 | 覆盖范围 |
+| --- | --- |
+| `main_chain_core` | direct answer、builtin tool、多轮 continuity、上下文压缩 |
+| `main_chain_mcp` | GitHub MCP 主链回放 |
+| `main_chain_subagent` | 主线程委派、子任务完成通知、父线程总结回放 |
+| `memory_long_horizon` | 记住、隔轮召回、跨会话召回、覆盖更新、抗干扰召回 |
+| `subagent_task_progress` | 子代理受理、执行、回传、父线程吸收子结果 |
+
+产物位置：
 
 - SQLite 历史：`data/evals.sqlite3`
 - 报告目录：`reports/evals/<eval_run_id>/`
-- 汇总 Markdown：`reports/evals/<eval_run_id>/summary.md`
-- 汇总 JSON：`reports/evals/<eval_run_id>/summary.json`
-- 汇总 HTML：`reports/evals/<eval_run_id>/summary.html`
-- 单 case 详情：`reports/evals/<eval_run_id>/cases/<case_id>.json`
-- 稳定性统计：三种汇总文件都会带最近 5 次同 suite/profile/mode + 同 `git_sha` / `config_fingerprint` / `suite_fingerprint` 的波动统计、波动 case、组件波动、锚点强度
-
-当前套件分层：
-
-- `main_chain_core`：默认黄金任务基线，覆盖 direct answer、builtin tool、多轮 continuity、上下文压缩
-- `main_chain_mcp`：GitHub MCP 主链回放，依赖 MCP 与对应凭据
-- `main_chain_subagent`：主线程委派、子任务完成通知、父线程总结回放，依赖 subagent surface 和外部能力
-- `memory_long_horizon`：长期记忆收益专项，覆盖记住、隔轮召回、跨会话召回、覆盖更新、抗干扰召回
-- `subagent_task_progress`：子代理任务推进专项，覆盖受理、子任务完成、父线程吸收子结果、多子任务推进
+- 汇总报告：`summary.md`、`summary.json`、`summary.html`
+- 单 case 详情：`cases/<case_id>.json`
 
 ## 测试
 

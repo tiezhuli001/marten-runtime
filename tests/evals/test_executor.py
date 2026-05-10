@@ -435,6 +435,52 @@ class EvalExecutorTests(unittest.TestCase):
 
         self.assertEqual(captured, [True])
 
+    def test_execute_suite_scripted_skips_local_mcp_bootstrap(self) -> None:
+        case = EvalCaseSpec(
+            case_id="subagent_scripted_probe",
+            suite_id="subagent_task_progress",
+            family="subagent_task_progress",
+            grader_id="subagent_task_progress",
+            description="probe",
+            agent_id="main",
+            profile_name="openai_gpt_5_4",
+            turns=[EvalTurnSpec(role="user", content="probe")],
+            component_weights={"delegation_quality": 100},
+            gate_components=["delegation_quality"],
+        )
+        suite = EvalSuiteSpec(
+            suite_id="subagent_task_progress",
+            grader_id="subagent_task_progress",
+            description="probe",
+            default_mode="live",
+            scripted_supported=True,
+            required_dependencies=["provider", "subagent", "mcp"],
+            baseline_policy="latest_passed_auto",
+            case_files=[],
+            cases=[case],
+            suite_fingerprint="suite123",
+        )
+        captured: list[bool] = []
+
+        def _fake_execute_case_scripted(
+            case_arg,
+            *,
+            source_repo_root,
+            effective_profile_name,
+            provider_name,
+            model_name,
+            include_mcp,
+        ):  # noqa: ANN001
+            del source_repo_root, provider_name, model_name
+            captured.append(bool(include_mcp))
+            self.assertEqual(effective_profile_name, "openai_gpt_5_4")
+            return EvalCaseObservation(case_id=case_arg.case_id, family=case_arg.family)
+
+        with patch("marten_runtime.evals.executor._execute_case_scripted", side_effect=_fake_execute_case_scripted):
+            execute_suite(suite, mode="scripted", profile_name="openai_gpt_5_4")
+
+        self.assertEqual(captured, [False])
+
     def test_execute_suite_live_provider_only_suite_skips_local_mcp_bootstrap(self) -> None:
         case = EvalCaseSpec(
             case_id="provider_only_live_probe",
