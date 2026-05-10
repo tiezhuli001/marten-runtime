@@ -309,21 +309,6 @@ def recover_tool_result_text(tool_history: list[ToolExchange]) -> str:
     )
 
 
-def is_confirmed_session_switch_reply(
-    history: list[ToolExchange],
-    final_text: str,
-    *,
-    finalization_contract_draft: FinalizationContractDraft | None = None,
-) -> bool:
-    claim = (
-        finalization_contract_draft.session_switch
-        if finalization_contract_draft is not None
-        else None
-    )
-    if claim is None:
-        return False
-    return _history_confirms_session_switch(history, claim)
-
 
 def _safe_recovery_fragments(
     history: list[ToolExchange],
@@ -524,13 +509,6 @@ def _missing_required_evidence_items(
         for item in required_items
         if not _evidence_item_is_covered(item, normalized_final_text)
     ]
-
-
-def _misses_required_evidence_coverage(
-    required_evidence: list[str],
-    final_text: str,
-) -> bool:
-    return bool(_missing_required_evidence(required_evidence, final_text))
 
 
 def _evidence_text_is_covered(

@@ -174,9 +174,6 @@ class CachedLLMClientFactory:
     def cache_client(self, profile_name: str, client: object) -> None:
         self._cache[profile_name] = client
 
-    def set_fallback_client(self, client: object) -> None:
-        self._fallback_client = client
-
     def get(
         self, profile_name: str | None, *, default_client: object | None = None
     ) -> object:

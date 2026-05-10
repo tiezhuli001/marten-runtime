@@ -119,17 +119,11 @@ class InMemoryFeishuDeliverySessionStore:
     def active_count(self) -> int:
         return len(self._active)
 
-    def list_active(self) -> list[FeishuDeliverySession]:
-        return list(self._active.values())
-
-    def closed_count(self) -> int:
-        return len(self._closed)
-
     def stats(self) -> dict[str, object]:
         return {
             "active_count": self.active_count(),
-            "closed_count": self.closed_count(),
-            "active_sessions": [item.model_dump(mode="json") for item in self.list_active()],
+            "closed_count": len(self._closed),
+            "active_sessions": [item.model_dump(mode="json") for item in self._active.values()],
         }
 
     def _finalize(

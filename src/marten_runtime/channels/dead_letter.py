@@ -1,18 +1,7 @@
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Any
 
 from pydantic import BaseModel
-
-
-class DeliveryPayloadView(Protocol):
-    chat_id: str
-    run_id: str
-    trace_id: str
-    event_type: str
-    event_id: str
-    sequence: int
-
-    def model_dump(self) -> dict[str, object]: ...
 
 
 class DeadLetterRecord(BaseModel):
@@ -34,7 +23,7 @@ class InMemoryDeadLetterQueue:
     def __init__(self) -> None:
         self._items: list[DeadLetterRecord] = []
 
-    def record(self, *, channel_id: str, conversation_id: str, payload: DeliveryPayloadView, attempts: int, error: str) -> DeadLetterRecord:
+    def record(self, *, channel_id: str, conversation_id: str, payload: Any, attempts: int, error: str) -> DeadLetterRecord:
         item = DeadLetterRecord(
             dead_letter_id=f"dlq_{len(self._items) + 1}",
             channel_id=channel_id,

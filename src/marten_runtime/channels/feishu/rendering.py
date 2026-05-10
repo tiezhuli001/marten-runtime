@@ -604,10 +604,6 @@ def _paragraph_has_list_items(lines: list[str]) -> bool:
     return any(_is_plaintext_list_item(line) for line in lines)
 
 
-def _paragraph_is_list_only(lines: list[str]) -> bool:
-    return _extract_plaintext_list_items(lines) is not None
-
-
 def _paragraph_is_heading_plus_list(lines: list[str]) -> bool:
     return (
         len(lines) >= 2

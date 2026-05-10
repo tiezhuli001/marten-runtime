@@ -48,8 +48,8 @@ _CURRENT_TURN_PRIORITY_CONTRACT = (
     "如果上一轮只是直接问候但用户同时停放了后续任务，当前消息继续那个任务时，先保留继续语义和任务名，再补最小必要输入。"
     "摘要里出现的领域名词、对象名、告警名、仓库名、卡片名都属于任务内容本身；继续任务时沿用这些名词，不要把它们自动提升成 skill 触发词。"
     "当前真的需要 skill 时，也只能使用 Visible skills 里已经出现的精确 skill_id；不要翻译、改写、或发明一个新的 skill 名称。"
-    "这类 continuation cue 只有在当前任务确实缺少外部事实、外部仓库信息、技能正文或自我改进证据时，才去调用对应工具。"
-    "如果摘要、working context、memory state 或已绑定会话历史已经足够继续当前任务，就直接继续，不要为了“先看看有没有别的线索”去调用 skill 或 self_improve。"
+    "这类 continuation cue 只有在当前消息明确要求外部事实、外部仓库信息、技能正文或自我改进证据时，才去调用对应工具。"
+    "如果当前消息只是继续/接着做/在压缩后的上下文里继续执行，并且摘要、working context、memory state 或已绑定会话历史已经给出任务名、当前状态或下一步，就直接继续任务或补问最小任务输入；不要为了“先看看有没有别的线索”去调用 mcp、skill、self_improve、session 或 runtime。"
     "当你是在继续一个已经停放过的任务、但当前仍缺少排查输入时，答复里也要显式保留“继续”和那个任务锚点，再补充所需输入。"
     "否则要重新根据当前这条消息选择工具与回答范围，不要因为上一轮刚用了某个工具族，就在本轮复用同一路径。"
     "例如：上一轮刚返回会话列表/表格/目录时，本轮若问当前时间、上下文窗口、GitHub 仓库或子代理任务，就直接按当前问题选择工具；"
@@ -149,8 +149,8 @@ _CONTRACT_REPAIR_CURRENT_TURN_CONTRACT = (
     "当前这条消息仍然定义本轮任务边界。"
     "压缩摘要、恢复摘要、memory state、已绑定会话历史与最近工具结果都只作为当前修复可直接引用的背景证据。"
     "当这些现成证据已经足够完成当前请求时，直接完成；当当前请求仍然缺少已验证的 live 事实或动作结果时，再调用最合适的可见工具。"
-    "如果当前请求是在读取已有 memory state 或已完成子任务摘要，直接基于现成证据回答。"
-    "不要把 continuation 任务改写成 session/runtime/skill 元数据查询，也不要把读取误写成写入。"
+    "如果当前请求是在读取已有 memory state、已完成子任务摘要、或压缩/恢复摘要里的任务状态，直接基于现成证据回答。"
+    "不要把 continuation 任务改写成 session/runtime/skill/mcp 元数据查询，也不要把读取误写成写入。"
 )
 
 _CONTRACT_REPAIR_FINALIZATION_CONTRACT = (
@@ -227,7 +227,10 @@ def tool_followup_instruction(
             "When the prompt already includes a compact summary, recovery summary, or bound task history with a concrete task anchor and unfinished items, use MCP only as the minimum external evidence needed for that anchored task. "
             "Once the evidence is sufficient, return to that task anchor and finish the answer directly. "
             "Do not stay in an MCP loop just because one MCP call already happened, and do not treat MCP inventory or parameter-repair churn as the final result.\n\n"
+            "For repository/file tasks, mcp.list/detail is only capability discovery. After mcp.list/detail exposes a directly relevant visible tool, the next step is an mcp.call using that exact server_id and exact tool_name. "
             "For README tasks, if the latest mcp.list/detail evidence shows github tool get_file_contents, the next needed MCP call is action=call with server_id=github, tool_name=get_file_contents, and arguments including owner, repo, path=README.md; do not stop at action=detail output. "
+            "For repository search tasks, if the latest mcp.list/detail evidence shows a search tool, the next needed MCP call is action=call with that exact search tool and arguments containing the repository query. "
+            "For repeated mcp.list/detail with no mcp.call yet, advance to a visible mcp.call when one visible tool matches the requested fact; do not repeat inventory as the answer. "
             "如果你要继续发起 mcp family 调用，必须沿用刚刚看到的精确 server_id 和精确 tool_name，"
             "保持 action 为 list/detail/call 三者之一，并让 arguments 始终是一个对象。"
             "不要自造别名、不要重命名子工具。\n\n"

@@ -254,18 +254,6 @@ def _derive_context_inputs(
     }
 
 
-def _dedupe_preserve_order(items: list[str]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for item in items:
-        normalized = item.strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        result.append(normalized)
-    return result
-
-
 def _recent_user_context_messages(
     session_messages: list[SessionMessage],
     *,

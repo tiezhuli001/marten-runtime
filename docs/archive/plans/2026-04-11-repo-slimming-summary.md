@@ -10,9 +10,10 @@ Current sources of truth:
 
 - `docs/ARCHITECTURE_CHANGELOG.md`
 - `docs/architecture/adr/`
-- `docs/2026-04-28-deep-repo-cleanup-checklist.md`
 - `src/`
 - `tests/`
+
+The 2026-04-28 cleanup wave is compressed in `docs/2026-04-28-deep-repo-cleanup-checklist.md`.
 
 Low-yield hold areas from the old review-core remain unchanged:
 

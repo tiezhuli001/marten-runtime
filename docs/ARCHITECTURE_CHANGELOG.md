@@ -95,7 +95,7 @@
   - 统一 runner / store / compare / report 可以保持评测体系薄而稳定，避免出现第二套专项框架
   - 评分差异放在离线 harness，可以继续保持 runtime 热路径和 LLM-first 边界稳定
 - 真相来源：
-  - `docs/archive/plans/2026-05-01-memory-subagent-eval-execution-plan.md`
+  - `docs/archive/plans/2026-05-01-eval-foundation-summary.md`
   - `scripts/run_eval.py`
   - `src/marten_runtime/evals/grader_registry.py`
   - `src/marten_runtime/evals/family_graders/`
@@ -125,7 +125,7 @@
   - 主链质量的下一阶段重点是 prompt、capability 描述、上下文治理、工具路径与会话连续性的可比较回放
 - 真相来源：
   - `docs/2026-04-30-main-chain-eval-foundation-design.md`
-  - `docs/archive/plans/2026-04-30-main-chain-eval-foundation-execution-plan.md`
+  - `docs/archive/plans/2026-05-01-eval-foundation-summary.md`
   - `scripts/run_eval.py`
   - `src/marten_runtime/evals/`
   - `evals/suites/`

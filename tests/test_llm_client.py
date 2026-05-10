@@ -167,6 +167,19 @@ class LLMClientInstructionTests(unittest.TestCase):
         self.assertIn("只能使用 Visible skills 里已经出现的精确 skill_id", instruction)
         self.assertIn("只有用户明确要求会话详情、当前会话 id、会话列表、上下文窗口数值或某个 skill 正文时", instruction)
 
+    def test_mcp_followup_instruction_advances_from_discovery_to_visible_call(self) -> None:
+        instruction = _tool_followup_instruction(
+            "mcp",
+            tool_history_count=2,
+            has_evidence_ledger=True,
+            required_evidence_count=1,
+        ) or ""
+
+        self.assertIn("mcp.list/detail is only capability discovery", instruction)
+        self.assertIn("After mcp.list/detail exposes a directly relevant visible tool", instruction)
+        self.assertIn("advance to a visible mcp.call", instruction)
+        self.assertIn("do not repeat inventory as the answer", instruction)
+
     def test_request_specific_instruction_uses_channel_owned_feishu_guard_text(
         self,
     ) -> None:
