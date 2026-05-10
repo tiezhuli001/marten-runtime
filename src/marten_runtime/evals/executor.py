@@ -72,7 +72,7 @@ def execute_suite(
                     effective_profile_name=resolved_profile_name,
                     provider_name=profile.provider_ref,
                     model_name=profile.model,
-                    include_mcp=include_mcp,
+                    include_mcp=False,
                 )
             )
             continue
@@ -133,6 +133,11 @@ def _execute_case_scripted(
             case,
             effective_profile_name=effective_profile_name,
         )
+        _override_eval_subagent_timeout(
+            runtime=runtime,
+            case=case,
+            mode="scripted",
+        )
         configure_scripted_runtime(
             runtime,
             case,
@@ -174,9 +179,10 @@ def _execute_case_live(
             agent_id=case.agent_id,
             profile_name=profile_name,
         )
-        _override_live_subagent_timeout(
+        _override_eval_subagent_timeout(
             runtime=runtime,
             case=case,
+            mode="live",
         )
         seed_case_state(runtime, case, effective_profile_name=profile_name)
         observation = _run_case_via_http(app, case)
@@ -252,10 +258,11 @@ def _override_eval_runtime_profiles(
     runtime.default_agent = default_override
 
 
-def _override_live_subagent_timeout(
+def _override_eval_subagent_timeout(
     *,
     runtime,
     case,
+    mode: str,
 ) -> None:  # noqa: ANN001
     grader_id = str(getattr(case, "grader_id", None) or "").strip()
     if grader_id != "subagent_task_progress":
@@ -263,7 +270,10 @@ def _override_live_subagent_timeout(
     timeout_ms = int((getattr(case, "grader_case", {}) or {}).get("timeout_ms") or 0)
     if timeout_ms <= 0:
         return
-    timeout_seconds = max(1, math.ceil(timeout_ms / 1000))
+    if mode == "scripted":
+        timeout_seconds = 1
+    else:
+        timeout_seconds = max(1, math.ceil(timeout_ms / 1000))
     current_timeout = int(getattr(runtime.subagent_service, "subagent_timeout_seconds", 0) or 0)
     runtime.subagent_service.subagent_timeout_seconds = min(
         current_timeout if current_timeout > 0 else timeout_seconds,

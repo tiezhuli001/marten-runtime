@@ -24,6 +24,33 @@
 
 ## 条目
 
+### 2026-05-10: eval 运维面随主 HTTP 服务启动
+
+- 变化：
+  - 主 FastAPI app 挂载 `/evals` 运维面，提供评测总览、suite catalog、历史 runs、后台 job 启动、job 状态、run 详情和报告查看。
+  - `/evals/suites` 与 `/evals/runs` 对浏览器请求返回 HTML；带 `Accept: application/json` 时保持 JSON API。
+  - `scripts/run_eval.py` 保留 CLI 契约，内部复用 `marten_runtime.evals.service.run_eval_suite()`。
+  - eval 历史仍写入 SQLite store，报告仍写入 `reports/evals/<eval_run_id>/`，HTML 页面只展示 harness 产物。
+- 截图：
+
+  ![Eval 运维总览](./assets/eval-ops-home.png)
+
+- 原因：
+  - eval 已成为高价值诊断资产，随主服务启动能降低查看和触发成本。
+  - HTML 页面让基线对比、分数变化、回退/提升用例和报告入口可直接查看。
+  - 这次只增加运维入口，`/messages` 主链、LLM-first 工具选择边界和 runtime loop 语义保持稳定。
+- 真相来源：
+  - `src/marten_runtime/interfaces/http/eval_routes.py`
+  - `src/marten_runtime/evals/service.py`
+  - `src/marten_runtime/evals/store.py`
+  - `scripts/run_eval.py`
+  - `tests/test_eval_http_routes.py`
+- 验证：
+  - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_eval_http_routes`
+  - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_eval_http_routes tests.evals.test_store tests.evals.test_executor.EvalExecutorTests.test_execute_suite_scripted_direct_answer_case tests.evals.test_executor.EvalExecutorTests.test_execute_suite_scripted_single_tool_case_collects_tool_calls tests.evals.test_run_eval_script.RunEvalScriptTests.test_run_eval_list_suites tests.evals.test_run_eval_script.RunEvalScriptTests.test_run_eval_scripted_core_supports_latest_passed_compare tests.evals.test_run_eval_script.RunEvalScriptTests.test_resolve_suite_dependency_block_loads_repo_env_for_provider_check tests.evals.test_run_eval_script.RunEvalScriptTests.test_run_eval_live_subagent_progress_suite_returns_blocked_when_mcp_dependency_missing tests.test_gateway.GatewayTests.test_http_messages_endpoint_returns_progress_and_final_events`
+  - `PYTHONPATH=src .venv/bin/python -m compileall -q src tests scripts/run_eval.py`
+  - `git diff --check`
+
 ### 2026-05-02: eval 子系统按职责拆分，执行器与报告层收敛成薄编排面
 
 - 变化：

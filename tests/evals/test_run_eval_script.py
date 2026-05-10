@@ -371,11 +371,13 @@ class RunEvalScriptTests(unittest.TestCase):
             env = __import__("os").environ
             old_value = env.pop("MARTEN_EVAL_DOTENV_OPENAI_KEY", None)
             try:
+                module.load_repo_env(repo_root)
                 blocked = module.resolve_suite_dependency_block(
                     repo_root=repo_root,
                     suite=suite,
                     mode="live",
                     profile_name="openai_gpt_5_4",
+                    env=dict(env),
                 )
             finally:
                 env.pop("MARTEN_EVAL_DOTENV_OPENAI_KEY", None)

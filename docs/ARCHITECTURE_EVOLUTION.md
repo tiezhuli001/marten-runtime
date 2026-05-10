@@ -620,8 +620,9 @@ flowchart LR
 
 这一阶段新增的不是另一条产品主链，而是一条围绕主链的运维证明面：
 
-- `scripts/run_eval.py` 作为统一入口
-- `main_chain_core`、`memory_long_horizon`、`subagent_task_progress` 三类套件
+- `scripts/run_eval.py` 作为 CLI 运行入口
+- 同服务 `/evals` HTML 运维面
+- `main_chain_core`、`memory_long_horizon`、`subagent_task_progress` 三类核心套件
 - baseline compare、稳定性窗口、波动 case / 组件统计
 - Markdown / JSON / HTML 三种报告产物
 - shared grader helpers、suite manifest、family-scored compare 面
@@ -634,7 +635,9 @@ flowchart LR
 - tracing 继续证明真实运行发生了什么
 - eval 开始证明 prompt、capability 描述、记忆治理、子代理推进这些迭代是否真的带来收益
 
-更关键的是，这套能力仍然留在离线运维面，没有把 runtime 主链改造成在线评测服务。
+更关键的是，这套能力仍然留在 eval harness 与运维面，没有把 runtime 主链改造成在线评测服务。
+
+![Eval 历史运行记录](./assets/eval-runs-history.png)
 
 ### 这一阶段的主链
 
