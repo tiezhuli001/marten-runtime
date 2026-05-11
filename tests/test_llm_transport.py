@@ -462,6 +462,11 @@ class OpenAIChatClientTests(unittest.TestCase):
                 )
             )
 
+        assert client.last_call_diagnostics is not None
+        self.assertEqual(client.last_call_diagnostics.final_error_code, "PROVIDER_RESPONSE_INVALID")
+        self.assertEqual(client.last_call_diagnostics.error_kind, "protocol")
+        self.assertEqual(client.last_call_diagnostics.provider_name, "openai")
+
     def test_openai_5_series_extracts_text_from_choices_fallback_shape(self) -> None:
         def fake_transport(
             url: str,
@@ -1061,7 +1066,7 @@ class OpenAIChatClientTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(
-            ValueError, "provider_missing_responses_api_support:minimax"
+            ProviderTransportError, "provider_missing_responses_api_support:minimax"
         ):
             client.complete(
                 LLMRequest(
@@ -1072,6 +1077,13 @@ class OpenAIChatClientTests(unittest.TestCase):
                     app_id="main_agent",
                 )
             )
+
+        assert client.last_call_diagnostics is not None
+        self.assertEqual(client.last_call_diagnostics.final_error_code, "PROVIDER_PROTOCOL_ERROR")
+        self.assertEqual(client.last_call_diagnostics.error_kind, "protocol")
+        self.assertEqual(client.last_call_diagnostics.timeout_seconds, 30)
+        self.assertEqual(client.last_call_diagnostics.provider_name, "minimax")
+        self.assertEqual(client.last_call_diagnostics.profile_name, "minimax_m2_7_highspeed")
 
     def test_chat_path_requires_provider_chat_support(self) -> None:
         client = OpenAIChatLLMClient(
@@ -1087,7 +1099,7 @@ class OpenAIChatClientTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(
-            ValueError, "provider_missing_chat_completions_support:kimi"
+            ProviderTransportError, "provider_missing_chat_completions_support:kimi"
         ):
             client.complete(
                 LLMRequest(
@@ -1096,8 +1108,16 @@ class OpenAIChatClientTests(unittest.TestCase):
                     message="hello",
                     agent_id="main",
                     app_id="main_agent",
+                    request_kind="interactive",
                 )
             )
+
+        assert client.last_call_diagnostics is not None
+        self.assertEqual(client.last_call_diagnostics.final_error_code, "PROVIDER_PROTOCOL_ERROR")
+        self.assertEqual(client.last_call_diagnostics.error_kind, "protocol")
+        self.assertEqual(client.last_call_diagnostics.timeout_seconds, 20)
+        self.assertEqual(client.last_call_diagnostics.provider_name, "kimi")
+        self.assertEqual(client.last_call_diagnostics.profile_name, "kimi_k2")
 
     def test_openai_client_keeps_wider_budget_for_automation_requests(self) -> None:
         captured: list[dict[str, object]] = []

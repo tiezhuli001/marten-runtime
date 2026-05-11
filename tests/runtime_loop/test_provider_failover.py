@@ -21,6 +21,21 @@ class AlwaysTimeoutLLMClient:
         raise RuntimeError("provider_transport_error:connection reset")
 
 
+class Gpt5ChatFallbackTimeoutLLMClient:
+    provider_name = "openai"
+    model_name = "gpt-5.4"
+    profile_name = "openai_gpt_5_4"
+
+    class Provider:
+        supports_responses_api = False
+        supports_chat_completions = True
+
+    provider = Provider()
+
+    def complete(self, request):  # noqa: ANN001
+        raise RuntimeError("provider_transport_error:connection reset")
+
+
 class EmptyReplyLLMClient:
     provider_name = "openai"
     model_name = "gpt-5.4"
@@ -232,6 +247,39 @@ class RuntimeLoopProviderFailoverTests(unittest.TestCase):
         self.assertEqual(run.failover_trigger, "PROVIDER_TRANSPORT_ERROR")
         self.assertEqual(run.failover_stage, "llm_first")
         self.assertEqual(run.final_provider_ref, "kimi")
+        self.assertEqual(run.provider_error_count, 1)
+        self.assertEqual(run.provider_calls[0]["final_error_code"], "PROVIDER_TRANSPORT_ERROR")
+        self.assertEqual(run.provider_calls[0]["provider_name"], "openai")
+        self.assertEqual(run.provider_calls[0]["profile_name"], "openai_gpt_5_4")
+        self.assertEqual(run.provider_calls[0]["timeout_seconds"], 20)
+        self.assertEqual(run.provider_calls[0]["error_kind"], "transient")
+
+    def test_first_turn_provider_error_records_gpt_5_chat_fallback_timeout(self) -> None:
+        history = InMemoryRunHistory()
+        fallback = ScriptedLLMClient([contracted_final_reply("fallback hello")])
+        fallback.provider_name = "kimi"
+        fallback.model_name = "kimi-k2"
+        fallback.profile_name = "kimi_k2"
+        runtime = RuntimeLoop(
+            Gpt5ChatFallbackTimeoutLLMClient(),
+            self.tools,
+            history,
+            profile_runtime_resolver=lambda name: (self._client_map(name, fallback), self.profiles[name]),
+        )
+
+        events = runtime.run(
+            session_id="sess_failover_gpt5_chat_fallback",
+            message="hello",
+            trace_id="trace_failover_gpt5_chat_fallback",
+            agent=self.agent,
+            model_profile_name="openai_gpt_5_4",
+            tokenizer_family="openai_o200k",
+        )
+
+        run = history.get(events[-1].run_id)
+        self.assertEqual(events[-1].payload["text"], "fallback hello")
+        self.assertEqual(run.provider_calls[0]["timeout_seconds"], 40)
+        self.assertEqual(run.provider_calls[0]["error_kind"], "transient")
 
     def test_first_turn_empty_output_falls_back_before_any_tool_call(self) -> None:
         history = InMemoryRunHistory()

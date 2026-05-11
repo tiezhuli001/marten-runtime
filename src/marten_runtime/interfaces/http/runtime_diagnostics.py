@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 from fastapi import Request
 
 from marten_runtime.interfaces.http.bootstrap import HTTPRuntimeState
+from marten_runtime.runtime.provider_reliability import build_provider_health_summary
 from marten_runtime.runtime.llm_provider_support import resolve_base_url
 
 RECENT_TOOL_OUTCOME_SUMMARY_LIMIT = 3
@@ -93,6 +94,10 @@ def serialize_runtime_diagnostics(
         item for item in compaction_jobs if str(item.get("status") or "").strip() == "queued"
     ]
     worker = getattr(runtime, "compaction_worker", None)
+    provider_health_summary = build_provider_health_summary(
+        runtime.runtime_loop.history.list_runs(),
+        window_size=20,
+    )
     return {
         "config_snapshot_id": runtime.config_snapshot.config_snapshot_id,
         "app_id": runtime.app_manifest.app_id,
@@ -213,6 +218,7 @@ def serialize_runtime_diagnostics(
             "session_replay_user_turns": runtime.platform_config.runtime.session_replay_user_turns,
             "recent_tool_outcome_summary_limit": RECENT_TOOL_OUTCOME_SUMMARY_LIMIT,
         },
+        "provider_reliability": provider_health_summary.model_dump(mode="json"),
         "compaction_worker": {
             "enabled": worker is not None,
             "running": bool(

@@ -10,7 +10,7 @@ from marten_runtime.observability.langfuse import (
     LangfuseObserver,
     build_langfuse_observer,
 )
-from marten_runtime.runtime.context import RuntimeContext, assemble_runtime_context
+from marten_runtime.runtime.context import assemble_runtime_context
 from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.finalization_contract_prompt import FinalizationContractDraft
 from marten_runtime.runtime.history import CompactionDiagnostics, InMemoryRunHistory
@@ -26,16 +26,13 @@ from marten_runtime.runtime.run_outcome_flow import (
 from marten_runtime.runtime.recovery_flow import (
     _apply_finalization_draft_to_evidence_ledger,
     _first_violated_finalization_contract,
-    FinalizationAssessmentDetails,
     assess_finalization_text_with_details,
-    derive_finalization_contract_flags,
     is_generic_tool_failure_text,
     recover_successful_tool_followup_text_with_meta,
     recover_tool_result_text,
 )
 from marten_runtime.runtime.llm_client import (
     ConversationMessage,
-    FinalizationEvidenceLedger,
     LLMClient,
     LLMReply,
     LLMRequest,
@@ -43,11 +40,40 @@ from marten_runtime.runtime.llm_client import (
     estimate_request_usage,
     estimate_request_tokens,
 )
-from marten_runtime.runtime.llm_failover import (
-    next_fallback_profile,
-    should_failover,
-)
 from marten_runtime.runtime.provider_retry import normalize_provider_error
+from marten_runtime.runtime.provider_reliability import build_provider_call_diagnostics
+from marten_runtime.runtime.usage_models import ProviderCallAttempt
+from marten_runtime.runtime.finalization_flow import (
+    build_contract_repair_request,
+    build_current_turn_evidence_ledger,
+    deprioritize_tool_evidence_requirements,
+    failed_tool_details,
+    final_text_masks_failed_tool_result,
+    is_duplicate_spawn_subagent_followup,
+    record_finalization_diagnostics,
+    require_latest_failed_tool_evidence,
+)
+from marten_runtime.runtime.provider_flow import (
+    build_provider_failover_state,
+    set_history_failover_state,
+    try_provider_failover,
+)
+from marten_runtime.runtime.request_timeout import (
+    resolve_request_responses_api,
+    resolve_request_timeout_seconds,
+)
+from marten_runtime.runtime.request_flow import (
+    build_request_from_context,
+    generation_input_payload,
+    generation_output_payload,
+    remaining_timeout_seconds,
+    request_for_client,
+    usage_payload,
+)
+from marten_runtime.runtime.run_lifecycle import RunLifecycleFinalizer
+from marten_runtime.runtime.session_rebind_flow import (
+    rebind_same_turn_session_context as rebind_same_turn_session_context_state,
+)
 from marten_runtime.runtime.tool_calls import (
     ToolCallRejected,
     ToolExecutionFailed,
@@ -58,10 +84,8 @@ from marten_runtime.runtime.tool_episode_summary_prompt import (
 )
 from marten_runtime.runtime.tool_followup_support import (
     append_tool_exchange,
-    build_finalization_evidence_ledger,
     build_finalization_retry_request,
     build_tool_followup_request,
-    is_intermediate_support_tool_result,
     normalize_tool_result_for_followup,
 )
 from marten_runtime.session.compaction_trigger import (
@@ -90,204 +114,8 @@ DEFAULT_ALLOWED_TOOLS = [
     "time",
 ]
 
-
-def _build_contract_repair_request(
-    base_request: LLMRequest,
-    *,
-    invalid_final_text: str,
-) -> LLMRequest:
-    return base_request.model_copy(
-        update={
-            "tool_history": [],
-            "tool_result": None,
-            "requested_tool_name": None,
-            "requested_tool_payload": {},
-            "request_kind": "contract_repair",
-            "invalid_final_text": str(invalid_final_text or "").strip(),
-        }
-    )
-
-
-def _is_duplicate_spawn_subagent_followup(
-    request: LLMRequest,
-    reply: LLMReply,
-    tool_history: list[ToolExchange],
-) -> bool:
-    if str(request.requested_tool_name or "").strip() != "spawn_subagent":
-        return False
-    if str(reply.tool_name or "").strip() != "spawn_subagent":
-        return False
-    if not tool_history:
-        return False
-    latest = tool_history[-1]
-    if latest.tool_name != "spawn_subagent":
-        return False
-    if not isinstance(latest.tool_result, dict):
-        return False
-    if str(latest.tool_result.get("status") or "").strip() != "accepted":
-        return False
-    latest_key = _spawn_subagent_duplicate_key(latest.tool_payload)
-    reply_key = _spawn_subagent_duplicate_key(reply.tool_payload)
-    if latest_key and reply_key:
-        return latest_key == reply_key
-    return True
-
-
-def _spawn_subagent_duplicate_key(payload: object) -> tuple[str, ...]:
-    if not isinstance(payload, dict):
-        return ()
-    values: list[str] = []
-    for key in ("task", "label", "tool_profile", "context_mode", "agent_id"):
-        values.append(" ".join(str(payload.get(key) or "").split()).strip().lower())
-    if not any(values):
-        return ()
-    return tuple(values)
-
-
-def _build_current_turn_evidence_ledger(
-    *,
-    user_message: str,
-    tool_history: list[ToolExchange],
-    model_request_count: int,
-    base_ledger: FinalizationEvidenceLedger | None = None,
-):
-    if base_ledger is not None:
-        requires_result_coverage = bool(base_ledger.requires_result_coverage)
-        requires_round_trip_report = bool(base_ledger.requires_round_trip_report)
-    else:
-        requires_result_coverage, requires_round_trip_report = (
-            derive_finalization_contract_flags(
-                tool_history=tool_history,
-                model_request_count=model_request_count,
-                user_message=user_message,
-            )
-        )
-    return build_finalization_evidence_ledger(
-        user_message=user_message,
-        tool_history=tool_history,
-        model_request_count=model_request_count,
-        requires_result_coverage=requires_result_coverage,
-        requires_round_trip_report=requires_round_trip_report,
-    )
-
-
-def _deprioritize_tool_evidence_requirements(
-    ledger: FinalizationEvidenceLedger,
-) -> FinalizationEvidenceLedger:
-    return ledger.model_copy(
-        update={
-            "requires_result_coverage": False,
-            "requires_round_trip_report": False,
-            "items": [],
-        }
-    )
-
-
-def _tool_history_has_failure(tool_history: list[ToolExchange]) -> bool:
-    return any(_tool_result_is_failure(item.tool_result) for item in tool_history)
-
-
-def _tool_result_is_failure(tool_result: object) -> bool:
-    return (
-        isinstance(tool_result, dict)
-        and (tool_result.get("ok") is False or tool_result.get("is_error") is True)
-    )
-
-
-def _latest_tool_failure_text(tool_history: list[ToolExchange]) -> str:
-    for item in reversed(tool_history):
-        tool_result = item.tool_result
-        if not _tool_result_is_failure(tool_result):
-            continue
-        if not isinstance(tool_result, dict):
-            continue
-        return str(
-            tool_result.get("error_text")
-            or tool_result.get("error_code")
-            or "工具执行失败，请重试。"
-        ).strip()
-    return ""
-
-
-def _require_latest_failed_tool_evidence(
-    ledger: FinalizationEvidenceLedger,
-    tool_history: list[ToolExchange],
-) -> FinalizationEvidenceLedger:
-    failed_ordinal = 0
-    for index, item in enumerate(tool_history, start=1):
-        if _tool_result_is_failure(item.tool_result):
-            failed_ordinal = index
-    if failed_ordinal <= 0:
-        return ledger
-    return ledger.model_copy(
-        update={
-            "requires_result_coverage": True,
-            "items": [
-                item.model_copy(update={"required_for_user_request": True})
-                if item.ordinal == failed_ordinal
-                else item
-                for item in ledger.items
-            ],
-        }
-    )
-
-
-def _final_text_masks_failed_tool_result(
-    tool_history: list[ToolExchange],
-    final_text: str,
-    finalization_evidence_ledger: FinalizationEvidenceLedger,
-) -> bool:
-    if not _tool_history_has_failure(tool_history):
-        return False
-    normalized_final = " ".join(str(final_text or "").split()).strip()
-    if not normalized_final:
-        return False
-    normalized_final = normalized_final.casefold()
-    for item in finalization_evidence_ledger.items:
-        if item.evidence_source != "tool_result":
-            continue
-        index = item.ordinal - 1
-        if not is_intermediate_support_tool_result(tool_history, index):
-            continue
-        evidence = " ".join(str(item.result_summary or "").split()).strip().casefold()
-        if evidence and (
-            evidence in normalized_final or normalized_final in evidence
-        ):
-            return True
-    return False
-
-
-def _failed_tool_details(
-    tool_history: list[ToolExchange],
-) -> FinalizationAssessmentDetails:
-    latest_failure = _latest_tool_failure_text(tool_history) or "工具执行失败，请重试。"
-    return FinalizationAssessmentDetails(
-        assessment="retryable_degraded",
-        required_evidence_items=(latest_failure,),
-        missing_evidence_items=(latest_failure,),
-    )
-
-
-def _record_finalization_diagnostics(
-    history: InMemoryRunHistory,
-    *,
-    run_id: str,
-    request_kind: str,
-    details: FinalizationAssessmentDetails,
-    retry_triggered: bool,
-    recovered_from_fragments: bool = False,
-    invalid_final_text: str | None = None,
-) -> None:
-    history.set_finalization_state(
-        run_id,
-        assessment=details.assessment,
-        request_kind=request_kind,
-        required_evidence_count=len(details.required_evidence_items),
-        missing_evidence_items=list(details.missing_evidence_items),
-        retry_triggered=retry_triggered,
-        recovered_from_fragments=recovered_from_fragments,
-        invalid_final_text=invalid_final_text,
-    )
+# Compatibility exports for tests and older call sites.
+_build_contract_repair_request = build_contract_repair_request
 
 
 
@@ -304,10 +132,46 @@ class RuntimeLoop:
             raise TimeoutError("SUBAGENT_TIMED_OUT")
 
     @staticmethod
-    def _remaining_timeout_seconds(deadline_monotonic: float | None) -> float | None:
-        if deadline_monotonic is None:
-            return None
-        return max(0.05, deadline_monotonic - time.monotonic())
+    def _synthesized_provider_diagnostics(
+        *,
+        request: LLMRequest,
+        llm: LLMClient,
+        normalized_error,
+        elapsed_ms: int,
+    ):
+        provider = getattr(llm, "provider", None)
+        responses_api = resolve_request_responses_api(
+            request,
+            model_name=getattr(llm, "model_name", None),
+            supports_responses_api=getattr(provider, "supports_responses_api", None),
+            supports_chat_completions=getattr(provider, "supports_chat_completions", None),
+        )
+        return build_provider_call_diagnostics(
+            request_kind=request.request_kind,
+            timeout_seconds=resolve_request_timeout_seconds(
+                request,
+                model_name=getattr(llm, "model_name", None),
+                responses_api=responses_api,
+            ),
+            max_attempts=1,
+            completed=False,
+            final_error_code=normalized_error.error_code,
+            attempts=[
+                ProviderCallAttempt(
+                    attempt=1,
+                    elapsed_ms=elapsed_ms,
+                    ok=False,
+                    error_code=normalized_error.error_code,
+                    error_detail=getattr(normalized_error, "detail", str(normalized_error)),
+                    retryable=bool(getattr(normalized_error, "retryable", False)),
+                )
+            ],
+            provider_name=getattr(llm, "provider_name", None),
+            model_name=getattr(llm, "model_name", None),
+            profile_name=getattr(llm, "profile_name", None),
+            error_detail=getattr(normalized_error, "detail", str(normalized_error)),
+            retry_after_seconds=getattr(normalized_error, "retry_after_seconds", None),
+        )
 
     def _append_post_turn_summary(
         self,
@@ -356,129 +220,6 @@ class RuntimeLoop:
         self.last_request_count = 0
         self.max_tool_rounds = 8
 
-    @staticmethod
-    def _request_for_client(
-        request: LLMRequest,
-        llm_client: LLMClient,
-        *,
-        tokenizer_family: str | None,
-        timeout_seconds_override: float | None,
-        stop_event: threading.Event | None,
-        deadline_monotonic: float | None,
-    ) -> LLMRequest:
-        return request.model_copy(
-            update={
-                "model_name": getattr(llm_client, "model_name", None),
-                "tokenizer_family": tokenizer_family,
-                "timeout_seconds_override": timeout_seconds_override
-                if timeout_seconds_override is not None
-                else RuntimeLoop._remaining_timeout_seconds(deadline_monotonic),
-                "cooperative_stop_event": stop_event,
-                "cooperative_deadline_monotonic": deadline_monotonic,
-            }
-        )
-
-    @staticmethod
-    def _usage_payload(usage) -> dict[str, int] | None:  # noqa: ANN001
-        if usage is None:
-            return None
-        return {
-            "input_tokens": int(usage.input_tokens),
-            "output_tokens": int(usage.output_tokens),
-            "total_tokens": int(usage.total_tokens),
-        }
-
-    @staticmethod
-    def _cumulative_usage_payload(run) -> dict[str, int] | None:  # noqa: ANN001
-        total_tokens = int(run.actual_cumulative_total_tokens)
-        if total_tokens <= 0:
-            return None
-        return {
-            "input_tokens": int(run.actual_cumulative_input_tokens),
-            "output_tokens": int(run.actual_cumulative_output_tokens),
-            "total_tokens": total_tokens,
-        }
-
-    @staticmethod
-    def _generation_input_payload(request: LLMRequest) -> dict[str, object]:
-        return {
-            "message": request.message,
-            "available_tools": list(request.available_tools),
-            "requested_tool_name": request.requested_tool_name,
-            "tool_history_count": len(request.tool_history),
-        }
-
-    @staticmethod
-    def _generation_output_payload(reply: LLMReply) -> dict[str, object]:
-        if reply.tool_name:
-            return {
-                "tool_name": reply.tool_name,
-                "tool_payload": dict(reply.tool_payload),
-            }
-        return {"final_text": reply.final_text or ""}
-
-    @staticmethod
-    def _build_request_from_context(
-        *,
-        session_id: str,
-        trace_id: str,
-        message: str,
-        agent_id: str,
-        app_id: str,
-        model_name: str | None,
-        tokenizer_family: str | None,
-        channel_protocol_instruction_text: str | None,
-        tool_snapshot: ToolSnapshot,
-        request_kind: str,
-        ctx: RuntimeContext,
-        include_available_tools: bool = False,
-        bootstrap_manifest_id: str | None = None,
-        prompt_mode: str | None = None,
-        **overrides: object,
-    ) -> LLMRequest:
-        fields: dict[str, object] = {
-            "session_id": session_id,
-            "trace_id": trace_id,
-            "message": message,
-            "agent_id": agent_id,
-            "app_id": app_id,
-            "model_name": model_name,
-            "tokenizer_family": tokenizer_family,
-            "system_prompt": ctx.system_prompt,
-            "conversation_messages": [
-                ConversationMessage(role=item.role, content=item.content)
-                for item in ctx.conversation_messages
-            ],
-            "compact_summary_text": ctx.compact_summary_text,
-            "tool_outcome_summary_text": ctx.tool_outcome_summary_text,
-            "memory_text": ctx.memory_text,
-            "repository_context_text": ctx.repository_context_text,
-            "working_context_text": ctx.working_context_text,
-            "skill_heads_text": ctx.skill_heads_text,
-            "capability_catalog_text": ctx.capability_catalog_text,
-            "always_on_skill_text": ctx.always_on_skill_text,
-            "channel_protocol_instruction_text": channel_protocol_instruction_text,
-            "activated_skill_bodies": ctx.activated_skill_bodies,
-            "tool_snapshot": tool_snapshot,
-            "request_kind": request_kind,
-            "cooperative_stop_event": overrides.get("cooperative_stop_event"),
-            "cooperative_deadline_monotonic": overrides.get("cooperative_deadline_monotonic"),
-        }
-        if include_available_tools:
-            fields["available_tools"] = tool_snapshot.available_tools()
-        if ctx.working_context is not None:
-            fields["working_context"] = ctx.working_context
-        if ctx.context_snapshot_id:
-            fields["context_snapshot_id"] = ctx.context_snapshot_id
-        if ctx.skill_snapshot is not None:
-            fields["skill_snapshot_id"] = ctx.skill_snapshot.skill_snapshot_id
-            fields["activated_skill_ids"] = ctx.activated_skill_ids
-        if bootstrap_manifest_id:
-            fields["bootstrap_manifest_id"] = bootstrap_manifest_id
-        if prompt_mode:
-            fields["prompt_mode"] = prompt_mode
-        fields.update(overrides)
-        return LLMRequest(**fields)
 
     def run(
         self,
@@ -531,19 +272,16 @@ class RuntimeLoop:
             allowed_tools=list(DEFAULT_ALLOWED_TOOLS),
         )
         resolved_llm = llm_client or self.llm
-        active_profile_name = (
-            model_profile_name
-            or getattr(resolved_llm, "profile_name", None)
-            or "default"
+        provider_state = build_provider_failover_state(
+            llm=resolved_llm,
+            active_profile_name=(
+                model_profile_name
+                or getattr(resolved_llm, "profile_name", None)
+                or "default"
+            ),
+            tokenizer_family=tokenizer_family,
+            profile_runtime_resolver=self.profile_runtime_resolver,
         )
-        active_tokenizer_family = tokenizer_family
-        attempted_profiles: list[str] = [active_profile_name]
-        attempted_providers: list[str] = [
-            getattr(resolved_llm, "provider_name", "unknown")
-        ]
-        failover_trigger: str | None = None
-        failover_stage: str | None = None
-        failover_candidates: list[str] = []
         resolved_compact_settings = compact_settings or CompactionSettings()
         tool_snapshot = self.tools.build_snapshot(resolved_agent.allowed_tools)
         resolved_compacted_context = compacted_context
@@ -551,19 +289,6 @@ class RuntimeLoop:
         active_session_messages = list(session_messages or [])
         active_recent_tool_outcome_summaries = list(recent_tool_outcome_summaries or [])
 
-        def register_failover_candidates(profile) -> None:  # noqa: ANN001
-            for fallback_name in list(getattr(profile, "fallback_profiles", [])):
-                if fallback_name in failover_candidates:
-                    continue
-                failover_candidates.append(fallback_name)
-
-        if self.profile_runtime_resolver is not None:
-            try:
-                _, initial_profile = self.profile_runtime_resolver(active_profile_name)
-            except ValueError:
-                initial_profile = None
-            if initial_profile is not None:
-                register_failover_candidates(initial_profile)
         rough_request = LLMRequest(
             session_id=session_id,
             trace_id=trace_id,
@@ -571,7 +296,7 @@ class RuntimeLoop:
             agent_id=resolved_agent.agent_id,
             app_id=resolved_agent.app_id,
             model_name=getattr(resolved_llm, "model_name", None),
-            tokenizer_family=active_tokenizer_family,
+            tokenizer_family=provider_state.active_tokenizer_family,
             system_prompt=system_prompt,
             conversation_messages=[
                 ConversationMessage(role=item.role, content=item.content)
@@ -711,19 +436,19 @@ class RuntimeLoop:
             agent_id=resolved_agent.agent_id,
             app_id=resolved_agent.app_id,
             model_name=getattr(resolved_llm, "model_name", None),
-            tokenizer_family=active_tokenizer_family,
+            tokenizer_family=provider_state.active_tokenizer_family,
             channel_protocol_instruction_text=channel_protocol_instruction_text,
             tool_snapshot=tool_snapshot,
             request_kind=request_kind,
         )
         pre_compact_request_estimate = estimate_request_tokens(
-            self._build_request_from_context(
+            build_request_from_context(
                 **request_base,
                 ctx=pre_compact_runtime_context,
             )
         )
         first_request_estimate = estimate_request_tokens(
-            self._build_request_from_context(
+            build_request_from_context(
                 **request_base,
                 ctx=runtime_context,
             )
@@ -767,7 +492,7 @@ class RuntimeLoop:
                 channel_id=channel_id,
             )
         first_request_usage = estimate_request_usage(
-            self._build_request_from_context(
+            build_request_from_context(
                 **request_base,
                 ctx=runtime_context,
                 include_available_tools=True,
@@ -780,13 +505,10 @@ class RuntimeLoop:
             peak_input_tokens_estimate=first_request_usage.input_tokens_estimate,
             peak_stage="initial_request",
         )
-        self.history.set_failover_state(
-            run.run_id,
-            provider_ref=getattr(resolved_llm, "provider_name", None),
-            attempted_profiles=attempted_profiles,
-            attempted_providers=attempted_providers,
-            failover_trigger=failover_trigger,
-            failover_stage=failover_stage,
+        set_history_failover_state(
+            self.history,
+            run_id=run.run_id,
+            state=provider_state,
             final_provider_ref=getattr(resolved_llm, "provider_name", None),
         )
         events = [
@@ -802,135 +524,70 @@ class RuntimeLoop:
             )
         ]
 
+        lifecycle_finalizer = RunLifecycleFinalizer(
+            history=self.history,
+            langfuse_observer=self.langfuse_observer,
+            trace_handle=trace_handle,
+            run_id=run.run_id,
+            run_started_at=run_started_at,
+            provider_state=provider_state,
+            request_kind=request_kind,
+            agent_id=resolved_agent.agent_id,
+            channel_id=channel_id,
+        )
+
         def finalize_success(*, final_text: str) -> None:
-            self.history.set_failover_state(
-                run.run_id,
-                provider_ref=attempted_providers[0] if attempted_providers else None,
-                attempted_profiles=attempted_profiles,
-                attempted_providers=attempted_providers,
-                failover_trigger=failover_trigger,
-                failover_stage=failover_stage,
-                final_provider_ref=getattr(resolved_llm, "provider_name", None),
-            )
-            run_record = self.history.get(run.run_id)
-            cumulative_usage_payload = self._cumulative_usage_payload(run_record)
-            self.history.set_external_observability_refs(
-                run.run_id,
-                langfuse_trace_id=trace_handle.trace_id,
-                langfuse_url=trace_handle.url,
-            )
-            self.langfuse_observer.finalize_run(
-                trace_handle,
-                status="succeeded",
+            lifecycle_finalizer.finalize_success(
                 final_text=final_text,
-                usage=cumulative_usage_payload,
-                total_ms=elapsed_ms(run_started_at),
-                metadata={
-                    "llm_request_count": llm_request_count,
-                    "request_kind": request_kind,
-                    "agent_id": resolved_agent.agent_id,
-                    "channel_id": channel_id,
-                },
+                final_provider_ref=getattr(resolved_llm, "provider_name", None),
+                llm_request_count=llm_request_count,
             )
 
         def finalize_error(*, error_code: str) -> None:
-            self.history.set_failover_state(
-                run.run_id,
-                provider_ref=attempted_providers[0] if attempted_providers else None,
-                attempted_profiles=attempted_profiles,
-                attempted_providers=attempted_providers,
-                failover_trigger=failover_trigger,
-                failover_stage=failover_stage,
-                final_provider_ref=getattr(resolved_llm, "provider_name", None),
-            )
-            run_record = self.history.get(run.run_id)
-            cumulative_usage_payload = self._cumulative_usage_payload(run_record)
-            self.history.set_external_observability_refs(
-                run.run_id,
-                langfuse_trace_id=trace_handle.trace_id,
-                langfuse_url=trace_handle.url,
-            )
-            self.langfuse_observer.finalize_run(
-                trace_handle,
-                status="failed",
+            lifecycle_finalizer.finalize_error(
                 error_code=error_code,
-                usage=cumulative_usage_payload,
-                total_ms=elapsed_ms(run_started_at),
-                metadata={
-                    "llm_request_count": llm_request_count,
-                    "request_kind": request_kind,
-                    "agent_id": resolved_agent.agent_id,
-                    "channel_id": channel_id,
-                },
+                final_provider_ref=getattr(resolved_llm, "provider_name", None),
+                llm_request_count=llm_request_count,
             )
 
         def try_failover(*, stage: str, error_code: str) -> bool:
             nonlocal resolved_llm
-            nonlocal active_profile_name
-            nonlocal active_tokenizer_family
-            nonlocal failover_trigger
-            nonlocal failover_stage
-            nonlocal current_request
             nonlocal first_request
-            if self.profile_runtime_resolver is None:
-                return False
-            if not should_failover(error_code, stage):
-                return False
-            while True:
-                fallback_name = next_fallback_profile(
-                    active_profile_name,
-                    failover_candidates,
-                    attempted_profiles,
-                )
-                if fallback_name is None:
-                    return False
-                try:
-                    fallback_llm, fallback_profile = self.profile_runtime_resolver(fallback_name)
-                except ValueError as exc:
-                    attempted_profiles.append(fallback_name)
-                    self.history.record_failover_skipped_profile(
-                        run.run_id,
-                        profile_name=fallback_name,
-                        reason=str(exc),
-                    )
-                    continue
-                resolved_llm = fallback_llm
-                active_profile_name = fallback_name
-                active_tokenizer_family = getattr(fallback_profile, "tokenizer_family", None)
-                register_failover_candidates(fallback_profile)
-                attempted_profiles.append(fallback_name)
-                attempted_providers.append(
-                    getattr(fallback_llm, "provider_name", "unknown")
-                )
-                failover_trigger = error_code
-                failover_stage = stage
-                first_request = self._request_for_client(
-                    first_request,
+            nonlocal current_request
+
+            def adapt_request(
+                request: LLMRequest,
+                fallback_llm: LLMClient,
+                fallback_tokenizer_family: str | None,
+            ) -> LLMRequest:
+                return request_for_client(
+                    request,
                     fallback_llm,
-                    tokenizer_family=active_tokenizer_family,
+                    tokenizer_family=fallback_tokenizer_family,
                     timeout_seconds_override=timeout_seconds_override,
                     stop_event=stop_event,
                     deadline_monotonic=deadline_monotonic,
                 )
-                current_request = self._request_for_client(
-                    current_request,
-                    fallback_llm,
-                    tokenizer_family=active_tokenizer_family,
-                    timeout_seconds_override=timeout_seconds_override,
-                    stop_event=stop_event,
-                    deadline_monotonic=deadline_monotonic,
-                )
-                self.history.set_failover_state(
-                    run.run_id,
-                    provider_ref=attempted_providers[0] if attempted_providers else None,
-                    attempted_profiles=attempted_profiles,
-                    attempted_providers=attempted_providers,
-                        failover_trigger=failover_trigger,
-                        failover_stage=failover_stage,
-                        final_provider_ref=getattr(fallback_llm, "provider_name", None),
-                    )
-                return True
-        first_request = self._build_request_from_context(
+
+            result = try_provider_failover(
+                state=provider_state,
+                history=self.history,
+                run_id=run.run_id,
+                profile_runtime_resolver=self.profile_runtime_resolver,
+                stage=stage,
+                error_code=error_code,
+                first_request=first_request,
+                current_request=current_request,
+                request_adapter=adapt_request,
+            )
+            if result is None:
+                return False
+            resolved_llm = result.llm
+            first_request = result.first_request
+            current_request = result.current_request
+            return True
+
+        first_request = build_request_from_context(
             **request_base,
             ctx=runtime_context,
             include_available_tools=True,
@@ -957,78 +614,50 @@ class RuntimeLoop:
             nonlocal first_request
             nonlocal current_request
             nonlocal latest_actual_usage
-            normalized_target = str(target_session_id or "").strip()
-            if not normalized_target or normalized_target == active_context_session_id:
-                return
-            active_context_session_id = normalized_target
-            if session_store is not None:
-                target_session = session_store.get(active_context_session_id)
-                active_session_messages = list(target_session.history)
-                active_recent_tool_outcome_summaries = list(
-                    session_store.list_recent_tool_outcome_summaries(
-                        active_context_session_id,
-                        limit=3,
-                    )
-                )
-                resolved_compacted_context = target_session.latest_compacted_context
-                latest_actual_usage = target_session.latest_actual_usage
-                runtime_context = assemble_runtime_context(
-                    session_id=active_context_session_id,
-                    current_message=message,
-                    system_prompt=system_prompt,
-                    session_messages=active_session_messages,
-                    tool_snapshot=tool_snapshot,
-                    compacted_context=resolved_compacted_context,
-                    skill_snapshot=skill_snapshot,
-                    activated_skill_ids=activated_skill_ids,
-                    skill_heads_text=skill_heads_text,
-                    capability_catalog_text=capability_catalog_text,
-                    always_on_skill_text=always_on_skill_text,
-                    channel_protocol_instruction_text=channel_protocol_instruction_text,
-                    memory_text=memory_text,
-                    repository_context_text=repository_context_text,
-                    activated_skill_bodies=activated_skill_bodies,
-                    recent_tool_outcome_summaries=active_recent_tool_outcome_summaries,
-                    replay_user_turns=session_replay_user_turns,
-                )
-                pre_compact_runtime_context = assemble_runtime_context(
-                    session_id=active_context_session_id,
-                    current_message=message,
-                    system_prompt=system_prompt,
-                    session_messages=active_session_messages,
-                    tool_snapshot=tool_snapshot,
-                    compacted_context=None,
-                    skill_snapshot=skill_snapshot,
-                    activated_skill_ids=activated_skill_ids,
-                    skill_heads_text=skill_heads_text,
-                    capability_catalog_text=capability_catalog_text,
-                    always_on_skill_text=always_on_skill_text,
-                    channel_protocol_instruction_text=channel_protocol_instruction_text,
-                    memory_text=memory_text,
-                    repository_context_text=repository_context_text,
-                    activated_skill_bodies=activated_skill_bodies,
-                    recent_tool_outcome_summaries=active_recent_tool_outcome_summaries,
-                    replay_user_turns=session_replay_user_turns,
-                )
-            else:
-                first_request = first_request.model_copy(
-                    update={"session_id": active_context_session_id}
-                )
-                current_request = current_request.model_copy(
-                    update={"session_id": active_context_session_id}
-                )
-            request_base["session_id"] = active_context_session_id
-            first_request = self._build_request_from_context(
-                **request_base,
-                ctx=runtime_context,
-                include_available_tools=True,
+            rebound = rebind_same_turn_session_context_state(
+                target_session_id=target_session_id,
+                current_session_id=active_context_session_id,
+                session_messages=active_session_messages,
+                recent_tool_outcome_summaries=active_recent_tool_outcome_summaries,
+                compacted_context=resolved_compacted_context,
+                runtime_context=runtime_context,
+                pre_compact_runtime_context=pre_compact_runtime_context,
+                request_base=request_base,
+                first_request=first_request,
+                current_request=current_request,
+                latest_actual_usage=latest_actual_usage,
+                session_store=session_store,
+                message=message,
+                system_prompt=system_prompt,
+                tool_snapshot=tool_snapshot,
+                skill_snapshot=skill_snapshot,
+                activated_skill_ids=activated_skill_ids,
+                skill_heads_text=skill_heads_text,
+                capability_catalog_text=capability_catalog_text,
+                always_on_skill_text=always_on_skill_text,
+                channel_protocol_instruction_text=channel_protocol_instruction_text,
+                memory_text=memory_text,
+                repository_context_text=repository_context_text,
+                activated_skill_bodies=activated_skill_bodies,
+                session_replay_user_turns=session_replay_user_turns,
                 bootstrap_manifest_id=bootstrap_manifest_id,
                 prompt_mode=resolved_agent.prompt_mode,
                 timeout_seconds_override=timeout_seconds_override,
-                cooperative_stop_event=stop_event,
-                cooperative_deadline_monotonic=deadline_monotonic,
+                stop_event=stop_event,
+                deadline_monotonic=deadline_monotonic,
             )
-            current_request = first_request
+            if rebound is None:
+                return
+            active_context_session_id = rebound.session_id
+            active_session_messages = rebound.session_messages
+            active_recent_tool_outcome_summaries = rebound.recent_tool_outcome_summaries
+            resolved_compacted_context = rebound.compacted_context
+            runtime_context = rebound.runtime_context
+            pre_compact_runtime_context = rebound.pre_compact_runtime_context
+            request_base = rebound.request_base
+            first_request = rebound.first_request
+            current_request = rebound.current_request
+            latest_actual_usage = rebound.latest_actual_usage
 
         for _ in range(self.max_tool_rounds + 2):
             generation_name = "llm.first" if not tool_history else "llm.followup"
@@ -1043,7 +672,7 @@ class RuntimeLoop:
                     update={
                         "timeout_seconds_override": timeout_seconds_override
                         if timeout_seconds_override is not None
-                        else self._remaining_timeout_seconds(deadline_monotonic),
+                        else remaining_timeout_seconds(deadline_monotonic),
                         "cooperative_stop_event": stop_event,
                         "cooperative_deadline_monotonic": deadline_monotonic,
                     }
@@ -1054,15 +683,15 @@ class RuntimeLoop:
                     name=generation_name,
                     model=getattr(resolved_llm, "model_name", None),
                     provider=getattr(resolved_llm, "provider_name", None),
-                    input_payload=self._generation_input_payload(current_request),
-                    output_payload=self._generation_output_payload(reply),
-                    usage=self._usage_payload(reply.usage),
+                    input_payload=generation_input_payload(current_request),
+                    output_payload=generation_output_payload(reply),
+                    usage=usage_payload(reply.usage),
                     status="success",
                     latency_ms=elapsed_ms(llm_started_at),
                     metadata={
                         "stage": generation_stage,
                         "request_kind": current_request.request_kind,
-                        "model_profile": active_profile_name,
+                        "model_profile": provider_state.active_profile_name,
                     },
                 )
                 generation_observed = True
@@ -1088,7 +717,7 @@ class RuntimeLoop:
                     elapsed_ms=elapsed_ms(llm_started_at),
                 )
                 if current_request.request_kind == "finalization_retry" and reply.tool_name:
-                    finalization_evidence_ledger = _build_current_turn_evidence_ledger(
+                    finalization_evidence_ledger = build_current_turn_evidence_ledger(
                         user_message=message,
                         tool_history=tool_history,
                         model_request_count=llm_request_count,
@@ -1107,7 +736,7 @@ class RuntimeLoop:
                         finalization_evidence_ledger=finalization_evidence_ledger,
                     )
                     if recovered_text:
-                        _record_finalization_diagnostics(
+                        record_finalization_diagnostics(
                             self.history,
                             run_id=run.run_id,
                             request_kind=current_request.request_kind,
@@ -1130,7 +759,7 @@ class RuntimeLoop:
                             tool_snapshot=tool_snapshot,
                             channel_id=channel_id,
                         )
-                    _record_finalization_diagnostics(
+                    record_finalization_diagnostics(
                         self.history,
                         run_id=run.run_id,
                         request_kind=current_request.request_kind,
@@ -1150,12 +779,12 @@ class RuntimeLoop:
                         agent_id=resolved_agent.agent_id,
                         post_commit_callback=self.self_improve_post_commit_callback,
                     )
-                if _is_duplicate_spawn_subagent_followup(
+                if is_duplicate_spawn_subagent_followup(
                     current_request,
                     reply,
                     tool_history,
                 ):
-                    finalization_evidence_ledger = _build_current_turn_evidence_ledger(
+                    finalization_evidence_ledger = build_current_turn_evidence_ledger(
                         user_message=message,
                         tool_history=tool_history,
                         model_request_count=llm_request_count,
@@ -1174,7 +803,7 @@ class RuntimeLoop:
                             model_request_count=llm_request_count,
                             finalization_evidence_ledger=finalization_evidence_ledger,
                         )
-                        _record_finalization_diagnostics(
+                        record_finalization_diagnostics(
                             self.history,
                             run_id=run.run_id,
                             request_kind=current_request.request_kind,
@@ -1202,8 +831,8 @@ class RuntimeLoop:
                         str(first_request.compact_summary_text or "").strip()
                     )
                     if compact_summary_retry_eligible and not finalization_retry_used:
-                        compaction_retry_ledger = _deprioritize_tool_evidence_requirements(
-                            _build_current_turn_evidence_ledger(
+                        compaction_retry_ledger = deprioritize_tool_evidence_requirements(
+                            build_current_turn_evidence_ledger(
                                 user_message=message,
                                 tool_history=tool_history,
                                 model_request_count=llm_request_count,
@@ -1219,7 +848,7 @@ class RuntimeLoop:
                             update={
                                 "timeout_seconds_override": timeout_seconds_override
                                 if timeout_seconds_override is not None
-                                else self._remaining_timeout_seconds(deadline_monotonic),
+                                else remaining_timeout_seconds(deadline_monotonic),
                                 "cooperative_stop_event": stop_event,
                                 "cooperative_deadline_monotonic": deadline_monotonic,
                             }
@@ -1245,7 +874,7 @@ class RuntimeLoop:
                             "agent_id": resolved_agent.agent_id,
                             "app_id": resolved_agent.app_id,
                             "allowed_tools": list(resolved_agent.allowed_tools),
-                            "model_profile": active_profile_name,
+                            "model_profile": provider_state.active_profile_name,
                             "llm_client": resolved_llm,
                             "session_replay_user_turns": session_replay_user_turns,
                             "current_request": current_request,
@@ -1256,7 +885,7 @@ class RuntimeLoop:
                             "deadline_monotonic": deadline_monotonic,
                             "timeout_seconds_override": timeout_seconds_override
                             if timeout_seconds_override is not None
-                            else self._remaining_timeout_seconds(deadline_monotonic),
+                            else remaining_timeout_seconds(deadline_monotonic),
                         },
                     )
                     if tool_result is not None:
@@ -1316,7 +945,7 @@ class RuntimeLoop:
                         recovered_text = recover_successful_tool_followup_text_with_meta(
                             tool_history,
                             model_request_count=llm_request_count,
-                            finalization_evidence_ledger=_build_current_turn_evidence_ledger(
+                            finalization_evidence_ledger=build_current_turn_evidence_ledger(
                                 user_message=message,
                                 tool_history=tool_history,
                                 model_request_count=llm_request_count,
@@ -1402,7 +1031,7 @@ class RuntimeLoop:
                         recovered_text = recover_successful_tool_followup_text_with_meta(
                             tool_history,
                             model_request_count=llm_request_count,
-                            finalization_evidence_ledger=_build_current_turn_evidence_ledger(
+                            finalization_evidence_ledger=build_current_turn_evidence_ledger(
                                 user_message=message,
                                 tool_history=tool_history,
                                 model_request_count=llm_request_count,
@@ -1439,6 +1068,7 @@ class RuntimeLoop:
                         post_commit_callback=self.self_improve_post_commit_callback,
                     )
             except Exception as exc:
+                generation_elapsed_ms = elapsed_ms(llm_started_at)
                 if not generation_observed:
                     error_code = (
                         normalize_provider_error(exc).error_code
@@ -1450,21 +1080,29 @@ class RuntimeLoop:
                         name=generation_name,
                         model=getattr(resolved_llm, "model_name", None),
                         provider=getattr(resolved_llm, "provider_name", None),
-                        input_payload=self._generation_input_payload(current_request),
+                        input_payload=generation_input_payload(current_request),
                         output_payload={},
                         usage=None,
                         status="error",
-                        latency_ms=elapsed_ms(llm_started_at),
+                        latency_ms=generation_elapsed_ms,
                         metadata={
                             "stage": generation_stage,
                             "request_kind": request_kind,
-                            "model_profile": active_profile_name,
+                            "model_profile": provider_state.active_profile_name,
                         },
                         error_code=error_code,
                     )
+                normalized = normalize_provider_error(exc) if is_provider_failure(exc) else None
                 provider_diagnostics = getattr(
                     resolved_llm, "last_call_diagnostics", None
                 )
+                if provider_diagnostics is None and normalized is not None:
+                    provider_diagnostics = self._synthesized_provider_diagnostics(
+                        request=current_request,
+                        llm=resolved_llm,
+                        normalized_error=normalized,
+                        elapsed_ms=generation_elapsed_ms,
+                    )
                 if provider_diagnostics is not None:
                     self.history.record_provider_call(
                         run.run_id,
@@ -1474,10 +1112,9 @@ class RuntimeLoop:
                 self.history.set_stage_timing(
                     run.run_id,
                     stage="llm_first" if not tool_history else "llm_second",
-                    elapsed_ms=elapsed_ms(llm_started_at),
+                    elapsed_ms=generation_elapsed_ms,
                 )
-                if is_provider_failure(exc):
-                    normalized = normalize_provider_error(exc)
+                if normalized is not None:
                     if (
                         resolved_compacted_context is None
                         and is_reactive_compaction_error(exc)
@@ -1540,7 +1177,7 @@ class RuntimeLoop:
                                     "tool_history": list(tool_history),
                                     "timeout_seconds_override": timeout_seconds_override
                                     if timeout_seconds_override is not None
-                                    else self._remaining_timeout_seconds(deadline_monotonic),
+                                    else remaining_timeout_seconds(deadline_monotonic),
                                     "cooperative_stop_event": stop_event,
                                     "cooperative_deadline_monotonic": deadline_monotonic,
                                 }
@@ -1569,7 +1206,7 @@ class RuntimeLoop:
                     ):
                         continue
                     if current_request.request_kind == "finalization_retry" and tool_history:
-                        finalization_evidence_ledger = _build_current_turn_evidence_ledger(
+                        finalization_evidence_ledger = build_current_turn_evidence_ledger(
                             user_message=message,
                             tool_history=tool_history,
                             model_request_count=llm_request_count,
@@ -1590,7 +1227,7 @@ class RuntimeLoop:
                             invalid_final_text
                             and finalization_details.assessment == "accepted"
                         ):
-                            _record_finalization_diagnostics(
+                            record_finalization_diagnostics(
                                 self.history,
                                 run_id=run.run_id,
                                 request_kind=current_request.request_kind,
@@ -1714,14 +1351,14 @@ class RuntimeLoop:
                             selected_tool=None,
                             provider_ref=getattr(resolved_llm, "provider_name", None),
                         )
-                        current_request = _build_contract_repair_request(
+                        current_request = build_contract_repair_request(
                             first_request,
                             invalid_final_text=final_text,
                         ).model_copy(
                             update={
                                 "timeout_seconds_override": timeout_seconds_override
                                 if timeout_seconds_override is not None
-                                else self._remaining_timeout_seconds(deadline_monotonic),
+                                else remaining_timeout_seconds(deadline_monotonic),
                                 "cooperative_stop_event": stop_event,
                                 "cooperative_deadline_monotonic": deadline_monotonic,
                             }
@@ -1818,7 +1455,7 @@ class RuntimeLoop:
                             post_commit_callback=self.self_improve_post_commit_callback,
                         )
                 if tool_history:
-                    finalization_evidence_ledger = _build_current_turn_evidence_ledger(
+                    finalization_evidence_ledger = build_current_turn_evidence_ledger(
                         user_message=message,
                         tool_history=tool_history,
                         model_request_count=llm_request_count,
@@ -1829,7 +1466,7 @@ class RuntimeLoop:
                         or current_request.request_kind == "finalization_retry"
                     ):
                         finalization_evidence_ledger = (
-                            _require_latest_failed_tool_evidence(
+                            require_latest_failed_tool_evidence(
                                 finalization_evidence_ledger,
                                 tool_history,
                             )
@@ -1849,18 +1486,18 @@ class RuntimeLoop:
                     )
                     if (
                         finalization_details.assessment == "accepted"
-                        and _final_text_masks_failed_tool_result(
+                        and final_text_masks_failed_tool_result(
                             tool_history,
                             final_text,
                             finalization_evidence_ledger,
                         )
                     ):
-                        finalization_details = _failed_tool_details(tool_history)
+                        finalization_details = failed_tool_details(tool_history)
                     if (
                         finalization_details.assessment == "retryable_degraded"
                         and not finalization_retry_used
                     ):
-                        _record_finalization_diagnostics(
+                        record_finalization_diagnostics(
                             self.history,
                             run_id=run.run_id,
                             request_kind=current_request.request_kind,
@@ -1878,7 +1515,7 @@ class RuntimeLoop:
                             update={
                                 "timeout_seconds_override": timeout_seconds_override
                                 if timeout_seconds_override is not None
-                                else self._remaining_timeout_seconds(deadline_monotonic)
+                                else remaining_timeout_seconds(deadline_monotonic)
                             }
                         )
                         continue
@@ -1909,7 +1546,7 @@ class RuntimeLoop:
                             elif not repaired_details.missing_evidence_items:
                                 final_text = invalid_retry_text
                                 finalization_details = repaired_details
-                        _record_finalization_diagnostics(
+                        record_finalization_diagnostics(
                             self.history,
                             run_id=run.run_id,
                             request_kind=current_request.request_kind,
@@ -1919,7 +1556,7 @@ class RuntimeLoop:
                             invalid_final_text=invalid_retry_text,
                         )
                     elif finalization_details.assessment == "unrecoverable":
-                        _record_finalization_diagnostics(
+                        record_finalization_diagnostics(
                             self.history,
                             run_id=run.run_id,
                             request_kind=current_request.request_kind,
@@ -1929,7 +1566,7 @@ class RuntimeLoop:
                         )
                         final_text = ""
                     else:
-                        _record_finalization_diagnostics(
+                        record_finalization_diagnostics(
                             self.history,
                             run_id=run.run_id,
                             request_kind=current_request.request_kind,
@@ -2064,7 +1701,7 @@ class RuntimeLoop:
                 tool_history[-1].tool_result = tool_result
                 tool_history[-1].recovery_fragment = followup_render.recovery_fragment
                 if followup_render.terminal_text:
-                    finalization_evidence_ledger = _build_current_turn_evidence_ledger(
+                    finalization_evidence_ledger = build_current_turn_evidence_ledger(
                         user_message=message,
                         tool_history=tool_history,
                         model_request_count=llm_request_count,
@@ -2077,7 +1714,7 @@ class RuntimeLoop:
                         model_request_count=llm_request_count,
                         finalization_evidence_ledger=finalization_evidence_ledger,
                     )
-                    _record_finalization_diagnostics(
+                    record_finalization_diagnostics(
                         self.history,
                         run_id=run.run_id,
                         request_kind=current_request.request_kind,
@@ -2104,8 +1741,8 @@ class RuntimeLoop:
                     and not finalization_retry_used
                     and str(first_request.compact_summary_text or "").strip()
                 ):
-                    compaction_retry_ledger = _deprioritize_tool_evidence_requirements(
-                        _build_current_turn_evidence_ledger(
+                    compaction_retry_ledger = deprioritize_tool_evidence_requirements(
+                        build_current_turn_evidence_ledger(
                             user_message=message,
                             tool_history=tool_history,
                             model_request_count=llm_request_count,
@@ -2121,7 +1758,7 @@ class RuntimeLoop:
                         update={
                             "timeout_seconds_override": timeout_seconds_override
                             if timeout_seconds_override is not None
-                            else self._remaining_timeout_seconds(deadline_monotonic),
+                            else remaining_timeout_seconds(deadline_monotonic),
                             "cooperative_stop_event": stop_event,
                             "cooperative_deadline_monotonic": deadline_monotonic,
                         }
@@ -2141,7 +1778,7 @@ class RuntimeLoop:
                 tool_result=tool_result,
                 requested_tool_name=reply.tool_name,
                 requested_tool_payload=reply.tool_payload,
-                finalization_evidence_ledger=_build_current_turn_evidence_ledger(
+                finalization_evidence_ledger=build_current_turn_evidence_ledger(
                     user_message=message,
                     tool_history=tool_history,
                     model_request_count=llm_request_count,
@@ -2160,7 +1797,7 @@ class RuntimeLoop:
                 tool_result=tool_result,
                 requested_tool_name=reply.tool_name,
                 requested_tool_payload=reply.tool_payload,
-                finalization_evidence_ledger=_build_current_turn_evidence_ledger(
+                finalization_evidence_ledger=build_current_turn_evidence_ledger(
                     user_message=message,
                     tool_history=tool_history,
                     model_request_count=llm_request_count,
@@ -2170,7 +1807,7 @@ class RuntimeLoop:
                 update={
                     "timeout_seconds_override": timeout_seconds_override
                     if timeout_seconds_override is not None
-                    else self._remaining_timeout_seconds(deadline_monotonic)
+                    else remaining_timeout_seconds(deadline_monotonic)
                 }
             )
         record_failure(self.self_improve_recorder, 

@@ -7,6 +7,7 @@ from marten_runtime.evals.compare import _extract_total_tokens_from_result, _res
 from marten_runtime.evals.models import EvalCaseResult, EvalRunComparison, EvalRunSummary
 from marten_runtime.evals.report_html import render_summary_html
 from marten_runtime.evals.report_markdown import build_summary_markdown
+from marten_runtime.runtime.provider_reliability import build_provider_health_summary
 
 
 def resolve_report_artifact_root(report_root: str | Path, eval_run_id: str) -> Path:
@@ -46,11 +47,21 @@ def write_eval_report(
         if value is not None
     ]
     failover_hits = sum(1 for item in resolved_case_results if _result_used_failover(item))
+    provider_reliability = build_provider_health_summary(
+        [
+            turn.get("run")
+            for result in resolved_case_results
+            for turn in list((result.diagnostics_json or {}).get("turns") or [])
+            if isinstance(turn, dict) and isinstance(turn.get("run"), dict)
+        ],
+        window_size=20,
+    )
     summary_payload = {
         **resolved_summary.model_dump(mode='json'),
         'token_total': round(sum(token_values), 4) if token_values else None,
         'token_cases': len(token_values),
         'failover_rate': round(failover_hits / max(1, len(resolved_case_results)), 4),
+        'provider_reliability': provider_reliability.model_dump(mode='json'),
         'case_results': [item.model_dump(mode='json') for item in resolved_case_results],
         'compare_result': resolved_compare,
         'stability_result': stability_result,
@@ -73,6 +84,7 @@ def write_eval_report(
             compare_result=resolved_compare,
             stability_result=stability_result,
             blocked_reason=blocked_reason,
+            provider_reliability=provider_reliability.model_dump(mode='json'),
         ),
         encoding='utf-8',
     )

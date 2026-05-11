@@ -24,6 +24,34 @@
 
 ## 条目
 
+### 2026-05-11: provider 可靠性轻量层进入主链诊断与 eval 页面
+
+- 变化：
+  - 新增 `src/marten_runtime/runtime/provider_reliability.py`，统一派生 provider error kind、retry-after 建议、run 级可靠性指标和最近 runs 健康摘要。
+  - `ProviderCallDiagnostics` 增加 provider、model、profile、error_kind、retry_after_seconds 字段，OpenAI-compatible adapter 写入这些诊断信息。
+  - `RunRecord` 增加 `retry_count`、`fallback_count`、`provider_error_count`、`empty_output_count`，由运行证据自动派生。
+  - `/diagnostics/runtime` 增加 `provider_reliability` 摘要，展示最近 20 次 run 的 provider 健康状态。
+  - eval 报告的 `summary.json`、`summary.md`、`summary.html` 写入 provider reliability；`/evals/runs` 和 run detail 页面展示重试、回退、错误、空输出。
+- 原因：
+  - provider 稳定性治理需要可诊断、可评估、可回放的 harness 数据，而不是只在异常发生点看到一条错误。
+  - 第一阶段只增加只读派生和展示面，provider 请求、重试、profile 切换、主链意图判断保持原有边界。
+- 真相来源：
+  - `docs/2026-05-11-provider-reliability-design.md`
+  - `src/marten_runtime/runtime/provider_reliability.py`
+  - `src/marten_runtime/runtime/usage_models.py`
+  - `src/marten_runtime/runtime/history.py`
+  - `src/marten_runtime/interfaces/http/runtime_diagnostics.py`
+  - `src/marten_runtime/interfaces/http/eval_routes.py`
+  - `src/marten_runtime/evals/report.py`
+  - `src/marten_runtime/evals/report_markdown.py`
+  - `src/marten_runtime/evals/report_html.py`
+- 验证：
+  - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_provider_reliability tests.test_http_runtime_diagnostics tests.test_eval_http_routes tests.contracts.test_runtime_contracts tests.evals.test_report`
+  - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_eval_http_routes tests.test_http_runtime_diagnostics tests.contracts.test_runtime_contracts tests.evals.test_store tests.evals.test_executor`
+  - `PYTHONPATH=src .venv/bin/python -m compileall -q src tests`
+  - `git diff --check`
+
+
 ### 2026-05-10: eval 运维面随主 HTTP 服务启动
 
 - 变化：

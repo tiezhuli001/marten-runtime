@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 from collections.abc import Callable, Mapping
 
 import httpx
@@ -19,11 +18,12 @@ from marten_runtime.runtime.llm_provider_support import (
     resolve_base_url as _resolve_base_url,
     strip_hidden_reasoning as _strip_hidden_reasoning,
 )
-from marten_runtime.runtime.llm_request_instructions import (
-    is_tool_followup_request as _is_tool_followup_request,
-)
 from marten_runtime.runtime.llm_transport_support import (
     invoke_transport as _invoke_transport,
+)
+from marten_runtime.runtime.request_timeout import (
+    resolve_request_responses_api,
+    resolve_request_timeout_seconds,
 )
 from marten_runtime.runtime.provider_retry import (
     ProviderTransportError,
@@ -31,6 +31,7 @@ from marten_runtime.runtime.provider_retry import (
     normalize_provider_error,
     with_retry,
 )
+from marten_runtime.runtime.provider_reliability import build_provider_call_diagnostics
 from marten_runtime.runtime.finalization_contract_prompt import (
     extract_finalization_contract_block,
 )
@@ -98,12 +99,23 @@ class OpenAICompatLLMClient:
         self.last_call_diagnostics: ProviderCallDiagnostics | None = None
 
     def complete(self, request) -> object:
-        use_responses_api = self._should_use_responses_api()
-        timeout_seconds = self._timeout_seconds_for(request, responses_api=use_responses_api)
         retry_policy = self._retry_policy_for(request)
         attempts: list[ProviderCallAttempt] = []
+        responses_api = resolve_request_responses_api(
+            request,
+            model_name=self.model_name,
+            supports_responses_api=self.provider.supports_responses_api,
+            supports_chat_completions=self.provider.supports_chat_completions,
+        )
+        timeout_seconds = self._timeout_seconds_for(request, responses_api=responses_api)
+        use_responses_api = False
         self.last_call_diagnostics = None
         try:
+            use_responses_api = self._should_use_responses_api(
+                request,
+                responses_api=responses_api,
+            )
+            timeout_seconds = self._timeout_seconds_for(request, responses_api=use_responses_api)
             payload = with_retry(
                 lambda: (
                     self._invoke_responses_transport(
@@ -126,13 +138,18 @@ class OpenAICompatLLMClient:
             normalized = exc if isinstance(exc, ProviderTransportError) else None
             if normalized is None:
                 normalized = normalize_provider_error(exc)
-            self.last_call_diagnostics = ProviderCallDiagnostics(
+            self.last_call_diagnostics = build_provider_call_diagnostics(
                 request_kind=request.request_kind,
                 timeout_seconds=timeout_seconds,
                 max_attempts=retry_policy.max_attempts,
                 completed=False,
                 final_error_code=normalized.error_code,
                 attempts=list(attempts),
+                provider_name=self.provider_name,
+                model_name=self.model_name,
+                profile_name=self.profile_name,
+                error_detail=getattr(normalized, "detail", None),
+                retry_after_seconds=getattr(normalized, "retry_after_seconds", None),
             )
             raise normalized
         try:
@@ -145,52 +162,74 @@ class OpenAICompatLLMClient:
                 request=request,
                 reply=reply,
             )
-            self.last_call_diagnostics = ProviderCallDiagnostics(
+            self.last_call_diagnostics = build_provider_call_diagnostics(
                 request_kind=request.request_kind,
                 timeout_seconds=timeout_seconds,
                 max_attempts=retry_policy.max_attempts,
                 completed=True,
                 final_error_code=None,
                 attempts=list(attempts),
+                provider_name=self.provider_name,
+                model_name=self.model_name,
+                profile_name=self.profile_name,
             )
             return reply
         except ProviderTransportError as exc:
-            self.last_call_diagnostics = ProviderCallDiagnostics(
+            self.last_call_diagnostics = build_provider_call_diagnostics(
                 request_kind=request.request_kind,
                 timeout_seconds=timeout_seconds,
                 max_attempts=retry_policy.max_attempts,
                 completed=False,
                 final_error_code=exc.error_code,
                 attempts=list(attempts),
+                provider_name=self.provider_name,
+                model_name=self.model_name,
+                profile_name=self.profile_name,
+                error_detail=getattr(exc, "detail", None),
+                retry_after_seconds=getattr(exc, "retry_after_seconds", None),
             )
             raise
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            detail = f"provider_response_invalid:{exc}"
+            self.last_call_diagnostics = build_provider_call_diagnostics(
+                request_kind=request.request_kind,
+                timeout_seconds=timeout_seconds,
+                max_attempts=retry_policy.max_attempts,
+                completed=False,
+                final_error_code="PROVIDER_RESPONSE_INVALID",
+                attempts=list(attempts),
+                provider_name=self.provider_name,
+                model_name=self.model_name,
+                profile_name=self.profile_name,
+                error_detail=detail,
+            )
             raise ProviderTransportError(
                 "PROVIDER_RESPONSE_INVALID",
-                f"provider_response_invalid:{exc}",
+                detail,
             ) from exc
 
     def _timeout_seconds_for(self, request, *, responses_api: bool | None = None) -> int:
-        if request.timeout_seconds_override is not None:
-            return max(1, int(math.ceil(request.timeout_seconds_override)))
-        if request.request_kind == "subagent":
-            return 60
-        if responses_api is False and str(self.model_name or "").lower().startswith("gpt-5"):
-            if _is_tool_followup_request(request) or request.request_kind == "interactive":
-                return 40
-        if _is_tool_followup_request(request):
-            return self.interactive_tool_followup_timeout_seconds
-        if request.request_kind == "interactive":
-            return self.interactive_timeout_seconds
-        return self.default_timeout_seconds
+        return resolve_request_timeout_seconds(
+            request,
+            default_seconds=self.default_timeout_seconds,
+            model_name=self.model_name,
+            responses_api=responses_api,
+        )
 
     def _retry_policy_for(self, request) -> RetryPolicy:
         if request.request_kind in {"interactive", "finalization_retry"}:
             return self.interactive_retry_policy
         return self.retry_policy
 
-    def _should_use_responses_api(self) -> bool:
-        if str(self.model_name or "").lower().startswith("gpt-5"):
+    def _should_use_responses_api(
+        self,
+        request,
+        *,
+        responses_api: bool | None = None,
+    ) -> bool:
+        if responses_api is not None:
+            return responses_api
+        if str(self.model_name or request.model_name or "").lower().startswith("gpt-5"):
             if self.provider.supports_responses_api:
                 return True
             if self.provider.supports_chat_completions:
@@ -205,7 +244,7 @@ class OpenAICompatLLMClient:
         return False
 
     def _build_payload(self, request) -> dict[str, object]:
-        if self._should_use_responses_api():
+        if self._should_use_responses_api(request):
             return self._build_responses_payload(request, stream=False)
         from marten_runtime.runtime.llm_message_support import build_openai_chat_payload
 

@@ -89,6 +89,11 @@ class ObservedLLMClient:
             max_attempts=2,
             completed=True,
             final_error_code=None,
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            profile_name="scripted-local",
+            error_kind=None,
+            retry_after_seconds=0,
             attempts=[
                 ProviderCallAttempt(
                     attempt=1,
