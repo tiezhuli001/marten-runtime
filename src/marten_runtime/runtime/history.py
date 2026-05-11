@@ -3,6 +3,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from marten_runtime.runtime.provider_reliability import summarize_provider_run_reliability
 from marten_runtime.runtime.usage_models import NormalizedUsage, ProviderCallDiagnostics
 from marten_runtime.session.tool_outcome_summary import ToolOutcomeSummary
 
@@ -75,6 +76,10 @@ class RunRecord(BaseModel):
     failover_trigger: str | None = None
     failover_stage: str | None = None
     final_provider_ref: str | None = None
+    retry_count: int = 0
+    fallback_count: int = 0
+    provider_error_count: int = 0
+    empty_output_count: int = 0
     contract_repair_triggered: bool = False
     contract_repair_reason: str | None = None
     contract_repair_attempt_count: int = 0
@@ -146,6 +151,7 @@ class InMemoryRunHistory:
         record.status = "succeeded"
         record.delivery_status = delivery_status
         record.finished_at = datetime.now(timezone.utc)
+        self._refresh_provider_reliability(record)
         return record
 
     def fail(self, run_id: str, error_code: str, delivery_status: str = "error") -> RunRecord:
@@ -154,6 +160,7 @@ class InMemoryRunHistory:
         record.error_code = error_code
         record.delivery_status = delivery_status
         record.finished_at = datetime.now(timezone.utc)
+        self._refresh_provider_reliability(record)
         return record
 
     def set_failover_state(
@@ -174,6 +181,7 @@ class InMemoryRunHistory:
         record.failover_trigger = failover_trigger
         record.failover_stage = failover_stage
         record.final_provider_ref = final_provider_ref
+        self._refresh_provider_reliability(record)
 
     def record_failover_skipped_profile(
         self,
@@ -252,6 +260,7 @@ class InMemoryRunHistory:
                 **diagnostics.model_dump(mode="json"),
             }
         )
+        self._refresh_provider_reliability(record)
 
     def append_tool_outcome_summary(self, run_id: str, summary: ToolOutcomeSummary) -> None:
         self._items[run_id].tool_outcome_summaries.append(summary)
@@ -398,6 +407,14 @@ class InMemoryRunHistory:
         record = self._items[run_id]
         normalized = str(final_text or "").strip()
         record.final_text = normalized or None
+        self._refresh_provider_reliability(record)
+
+    def _refresh_provider_reliability(self, record: RunRecord) -> None:
+        summary = summarize_provider_run_reliability(record)
+        record.retry_count = summary.retry_count
+        record.fallback_count = summary.fallback_count
+        record.provider_error_count = summary.provider_error_count
+        record.empty_output_count = summary.empty_output_count
 
 
 def _normalize_diagnostic_items(items: list[str]) -> list[str]:

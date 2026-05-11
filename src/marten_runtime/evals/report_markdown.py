@@ -10,6 +10,7 @@ def build_summary_markdown(
     compare_result: dict[str, object] | None = None,
     stability_result: dict[str, object] | None = None,
     blocked_reason: str | None = None,
+    provider_reliability: dict[str, object] | None = None,
 ) -> str:
     md_lines = [
         f'# Eval Report: {summary.eval_run_id}',
@@ -24,17 +25,36 @@ def build_summary_markdown(
         f'- git_branch: `{summary.git_branch}`',
         f'- git_sha: `{summary.git_sha}`',
         '',
-        '## Suite Overview',
-        '',
-        f'- total_score: `{summary.total_score}`',
-        f'- pass_rate: `{summary.pass_rate}`',
-        f'- case_count: `{len(case_results)}`',
-        '',
-        '## Baseline Compare',
-        '',
     ]
     if blocked_reason:
-        md_lines.insert(10, f'- blocked_reason: `{blocked_reason}`')
+        md_lines.extend([f'- blocked_reason: `{blocked_reason}`', ''])
+    if provider_reliability:
+        md_lines.extend(
+            [
+                '## Provider Stability',
+                '',
+                f"- window_size: `{provider_reliability.get('window_size')}`",
+                f"- run_count: `{provider_reliability.get('run_count')}`",
+                f"- retry_count: `{provider_reliability.get('retry_count')}`",
+                f"- fallback_count: `{provider_reliability.get('fallback_count')}`",
+                f"- provider_error_count: `{provider_reliability.get('provider_error_count')}`",
+                f"- empty_output_count: `{provider_reliability.get('empty_output_count')}`",
+                f"- latest_final_provider_ref: `{provider_reliability.get('latest_final_provider_ref')}`",
+                '',
+            ]
+        )
+    md_lines.extend(
+        [
+            '## Suite Overview',
+            '',
+            f'- total_score: `{summary.total_score}`',
+            f'- pass_rate: `{summary.pass_rate}`',
+            f'- case_count: `{len(case_results)}`',
+            '',
+            '## Baseline Compare',
+            '',
+            ]
+        )
     if compare_result is None:
         md_lines.extend(['- baseline: `none`', ''])
     else:

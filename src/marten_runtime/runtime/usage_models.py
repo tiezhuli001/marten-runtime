@@ -38,4 +38,9 @@ class ProviderCallDiagnostics(BaseModel):
     max_attempts: int
     completed: bool
     final_error_code: str | None = None
+    provider_name: str | None = None
+    model_name: str | None = None
+    profile_name: str | None = None
+    error_kind: str | None = None
+    retry_after_seconds: int = 0
     attempts: list[ProviderCallAttempt] = Field(default_factory=list)

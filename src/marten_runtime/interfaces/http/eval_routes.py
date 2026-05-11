@@ -159,12 +159,13 @@ def build_eval_router(repo_root: Path, *, env: dict[str, str] | None = None) -> 
 
     @router.get("/runs")
     def list_runs(request: Request, limit: int = 20, include_report: bool = False):  # noqa: ANN201
+        prefers_html = _prefers_html(request)
         raw_items = [item.model_dump(mode="json") for item in store.list_runs(limit=limit)]
         items = [
             _run_item_with_report(repo_root, item)
             for item in raw_items
-        ] if include_report or _prefers_html(request) else raw_items
-        if _prefers_html(request):
+        ] if include_report or prefers_html else raw_items
+        if prefers_html:
             return HTMLResponse(_render_runs_page(items, limit=limit))
         return {"items": items, "count": len(items)}
 
@@ -201,6 +202,7 @@ def build_eval_router(repo_root: Path, *, env: dict[str, str] | None = None) -> 
             "artifacts": _artifact_links(artifact_root),
             "compare_result": report_payload.get("compare_result"),
             "stability_result": report_payload.get("stability_result"),
+            "provider_reliability": report_payload.get("provider_reliability"),
             "blocked_reason": report_payload.get("blocked_reason"),
         }
 
@@ -305,9 +307,11 @@ def _run_item_with_report(repo_root: Path, item: dict[str, object]) -> dict[str,
     artifact_root = _resolve_artifact_root(repo_root, str(item.get("artifact_root") or ""))
     report_payload = _load_report_payload(artifact_root)
     compare = report_payload.get("compare_result")
+    provider_reliability = report_payload.get("provider_reliability")
     item = dict(item)
     item["report_url"] = f"/evals/reports/{item.get('eval_run_id') or ''}" if _first_existing_report_name(artifact_root) else None
     item["compare_result"] = compare
+    item["provider_reliability"] = provider_reliability
     if isinstance(compare, dict):
         item["baseline_eval_run_id"] = compare.get("baseline_eval_run_id")
         item["baseline_source"] = compare.get("baseline_source")
@@ -315,6 +319,11 @@ def _run_item_with_report(repo_root: Path, item: dict[str, object]) -> dict[str,
         item["pass_rate_delta"] = compare.get("pass_rate_delta")
         item["regression_count"] = len(list(compare.get("regressions") or []))
         item["improvement_count"] = len(list(compare.get("improvements") or []))
+    if isinstance(provider_reliability, dict):
+        item["retry_count"] = provider_reliability.get("retry_count")
+        item["fallback_count"] = provider_reliability.get("fallback_count")
+        item["provider_error_count"] = provider_reliability.get("provider_error_count")
+        item["empty_output_count"] = provider_reliability.get("empty_output_count")
     return item
 
 
@@ -359,7 +368,7 @@ def _render_runs_page(runs: list[dict[str, object]], *, limit: int) -> str:
         f"{_overview_cards(runs)}"
         "<section class=\"panel\"><h2>运行记录</h2>"
         f"<p class=\"muted\">当前显示最近 {limit} 条。JSON API 可通过 Accept: application/json 获取原始数据。</p>"
-        "<table><thead><tr><th>运行</th><th>套件</th><th>状态</th><th>总分</th><th>通过率</th><th>对比基线</th><th>总分变化</th><th>通过率变化</th><th>变化用例</th><th>模型配置</th><th>开始时间</th><th>报告</th></tr></thead>"
+        "<table><thead><tr><th>运行</th><th>套件</th><th>状态</th><th>总分</th><th>通过率</th><th>重试</th><th>回退</th><th>错误</th><th>空输出</th><th>对比基线</th><th>总分变化</th><th>通过率变化</th><th>变化用例</th><th>模型配置</th><th>开始时间</th><th>报告</th></tr></thead>"
         f"<tbody>{run_rows}</tbody></table></section>",
     )
 
@@ -377,7 +386,7 @@ def _render_home(suites: list[dict[str, object]], runs: list[dict[str, object]])
         f"<tbody>{suite_rows}</tbody></table></section>"
         "<section class=\"panel\"><h2>运行记录</h2>"
         "<p class=\"muted\">总分变化与通过率变化来自该次运行的基线对比；红色代表回退，绿色代表提升。</p>"
-        "<table><thead><tr><th>运行</th><th>套件</th><th>状态</th><th>总分</th><th>通过率</th><th>对比基线</th><th>总分变化</th><th>通过率变化</th><th>变化用例</th><th>模型配置</th><th>开始时间</th><th>报告</th></tr></thead>"
+        "<table><thead><tr><th>运行</th><th>套件</th><th>状态</th><th>总分</th><th>通过率</th><th>重试</th><th>回退</th><th>错误</th><th>空输出</th><th>对比基线</th><th>总分变化</th><th>通过率变化</th><th>变化用例</th><th>模型配置</th><th>开始时间</th><th>报告</th></tr></thead>"
         f"<tbody>{run_rows}</tbody></table></section>",
     )
 
@@ -442,6 +451,9 @@ def _render_run(
     report_payload = report_payload or {}
     compare_block = _render_compare_block(summary, report_payload.get("compare_result"))
     stability_block = _render_stability_block(report_payload.get("stability_result"))
+    provider_reliability_block = _render_provider_reliability_block(
+        report_payload.get("provider_reliability")
+    )
     blocked_block = _render_blocked_reason(report_payload.get("blocked_reason"))
     report_link = (
         f'<p><a class="button" href="/evals/reports/{_e(summary["eval_run_id"])}">查看完整报告</a></p>'
@@ -465,6 +477,7 @@ def _render_run(
         f"{blocked_block}"
         f"{compare_block}"
         f"{stability_block}"
+        f"{provider_reliability_block}"
         "<section class=\"panel\"><h2>用例明细</h2>"
         "<table><thead><tr><th>用例</th><th>状态</th><th>分数</th><th>LLM 请求</th><th>工具调用</th><th>链路 run_id</th><th>最终回复片段</th></tr></thead>"
         f"<tbody>{case_rows}</tbody></table></section>",
@@ -483,6 +496,10 @@ def _run_row(item: dict[str, object]) -> str:
         f"<td>{_status_badge(item.get('status'))}</td>"
         f"<td>{_format_number(item.get('total_score'))}</td>"
         f"<td>{_format_percent(item.get('pass_rate'))}</td>"
+        f"<td>{_e(item.get('retry_count') or 0)}</td>"
+        f"<td>{_e(item.get('fallback_count') or 0)}</td>"
+        f"<td>{_e(item.get('provider_error_count') or 0)}</td>"
+        f"<td>{_e(item.get('empty_output_count') or 0)}</td>"
         f"<td><code>{_e(_short_id(str(baseline)))}</code></td>"
         f"<td>{_delta_cell(item.get('total_score_delta'))}</td>"
         f"<td>{_delta_cell(item.get('pass_rate_delta'), percent=True)}</td>"
@@ -506,6 +523,55 @@ def _render_blocked_reason(blocked_reason: object) -> str:
     if not blocked_reason:
         return ""
     return f'<section class="panel warning"><h2>阻塞原因</h2><p>{_e(blocked_reason)}</p></section>'
+
+
+def _render_provider_reliability_block(provider_reliability: object) -> str:
+    if not isinstance(provider_reliability, dict):
+        return '<section class="panel"><h2>Provider 稳定性</h2><p class="muted">暂无 provider 稳定性摘要。</p></section>'
+    top_error_kinds = list(provider_reliability.get("top_error_kinds") or [])
+    latest_runs = list(provider_reliability.get("latest_runs") or [])
+    error_kind_text = ", ".join(
+        f"{item.get('error_kind')}: {item.get('count')}"
+        for item in top_error_kinds
+        if isinstance(item, dict)
+    )
+    return (
+        "<section class=\"panel\"><h2>Provider 稳定性</h2>"
+        "<div class=\"kv\">"
+        f"<div>窗口大小</div><div>{_e(provider_reliability.get('window_size') or 0)}</div>"
+        f"<div>运行数</div><div>{_e(provider_reliability.get('run_count') or 0)}</div>"
+        f"<div>重试</div><div>{_e(provider_reliability.get('retry_count') or 0)}</div>"
+        f"<div>回退</div><div>{_e(provider_reliability.get('fallback_count') or 0)}</div>"
+        f"<div>错误</div><div>{_e(provider_reliability.get('provider_error_count') or 0)}</div>"
+        f"<div>空输出</div><div>{_e(provider_reliability.get('empty_output_count') or 0)}</div>"
+        f"<div>最近 final provider</div><div>{_e(provider_reliability.get('latest_final_provider_ref') or '—')}</div>"
+        f"<div>top error kinds</div><div>{_e(error_kind_text or '—')}</div>"
+        "</div>"
+        f"<h3 style=\"margin-top:16px;\">最近 runs</h3>{_render_provider_reliability_runs(latest_runs)}"
+        "</section>"
+    )
+
+
+def _render_provider_reliability_runs(runs: list[object]) -> str:
+    if not runs:
+        return '<p class="muted">无</p>'
+    rows = "".join(
+        "<tr>"
+        f"<td><code>{_e(_short_id(str(item.get('run_id') or '')))}</code></td>"
+        f"<td>{_e(item.get('status') or '')}</td>"
+        f"<td>{_e(item.get('retry_count') or 0)}</td>"
+        f"<td>{_e(item.get('fallback_count') or 0)}</td>"
+        f"<td>{_e(item.get('provider_error_count') or 0)}</td>"
+        f"<td>{_e(item.get('empty_output_count') or 0)}</td>"
+        f"<td>{_e(item.get('final_provider_ref') or '—')}</td>"
+        "</tr>"
+        for item in runs
+        if isinstance(item, dict)
+    )
+    return (
+        "<table><thead><tr><th>run</th><th>状态</th><th>重试</th><th>回退</th><th>错误</th><th>空输出</th><th>final provider</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+    )
 
 
 def _render_compare_block(summary: dict[str, object], compare: object) -> str:

@@ -52,10 +52,36 @@ class EvalReportTests(unittest.TestCase):
                 "turns": [
                     {
                         "run": {
+                            "run_id": "run_1234",
+                            "status": "succeeded",
                             "latest_actual_usage": {"total_tokens": 321},
                             "attempted_profiles": ["openai_gpt_5_4"],
+                            "attempted_providers": ["openai", "minimax"],
                             "provider_ref": "openai",
-                            "final_provider_ref": "openai",
+                            "final_provider_ref": "minimax",
+                            "final_text": "你好",
+                            "provider_calls": [
+                                {
+                                    "provider_name": "openai",
+                                    "model_name": "gpt-5.4",
+                                    "profile_name": "openai_gpt_5_4",
+                                    "completed": False,
+                                    "final_error_code": "PROVIDER_TIMEOUT",
+                                    "error_kind": "transient",
+                                    "attempts": [
+                                        {"attempt": 1, "ok": False, "retryable": True},
+                                        {"attempt": 2, "ok": False, "retryable": True},
+                                    ],
+                                },
+                                {
+                                    "provider_name": "minimax",
+                                    "model_name": "minimax-text",
+                                    "profile_name": "minimax_default",
+                                    "completed": True,
+                                    "final_error_code": None,
+                                    "attempts": [{"attempt": 1, "ok": True, "retryable": False}],
+                                },
+                            ],
                         }
                     }
                 ],
@@ -208,6 +234,7 @@ class EvalReportTests(unittest.TestCase):
                 report_root=report_root,
                 compare_result=compare_result,
                 stability_result=stability_result,
+                blocked_reason="eval_blocked",
             )
 
             summary_json = artifact_root / "summary.json"
@@ -224,10 +251,20 @@ class EvalReportTests(unittest.TestCase):
             self.assertEqual(body["stability_result"]["sample_size"], 3)
             self.assertEqual(body["token_total"], 321.0)
             self.assertEqual(body["token_cases"], 1)
-            self.assertEqual(body["failover_rate"], 0.0)
+            self.assertEqual(body["failover_rate"], 1.0)
+            self.assertIn("provider_reliability", body)
+            self.assertEqual(body["provider_reliability"]["retry_count"], 1)
+            self.assertEqual(body["provider_reliability"]["fallback_count"], 1)
+            self.assertEqual(body["provider_reliability"]["provider_error_count"], 1)
+            self.assertEqual(body["provider_reliability"]["empty_output_count"], 0)
+            self.assertEqual(body["provider_reliability"]["latest_final_provider_ref"], "minimax")
             markdown = summary_md.read_text(encoding="utf-8")
+            self.assertLess(markdown.index("blocked_reason"), markdown.index("## Provider Stability"))
             self.assertIn("## Baseline Compare", markdown)
             self.assertIn("## Stability", markdown)
+            self.assertIn("## Provider Stability", markdown)
+            self.assertIn("eval_blocked", markdown)
+            self.assertIn("retry_count", markdown)
             self.assertIn("anchor_strength", markdown)
             self.assertIn("trace_1234", markdown)
             html = summary_html.read_text(encoding="utf-8")
@@ -245,6 +282,11 @@ class EvalReportTests(unittest.TestCase):
             self.assertIn("仅看变化", html)
             self.assertIn("组件汇总", html)
             self.assertIn("稳定性观察", html)
+            self.assertIn("Provider 稳定性", html)
+            self.assertIn("重试", html)
+            self.assertIn("回退", html)
+            self.assertIn("空输出", html)
+            self.assertIn("minimax", html)
             self.assertIn("波动用例", html)
             self.assertIn("锚点强度", html)
             self.assertIn("记忆写入", html)
@@ -268,7 +310,7 @@ class EvalReportTests(unittest.TestCase):
             )
             self.assertEqual(body["token_total"], 321.0)
             self.assertEqual(body["token_cases"], 1)
-            self.assertEqual(body["failover_rate"], 0.0)
+            self.assertEqual(body["failover_rate"], 1.0)
 
 
 if __name__ == "__main__":

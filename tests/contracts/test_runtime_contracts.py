@@ -61,6 +61,8 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertIn("langfuse", runtime_diag.json()["observability"])
         self.assertFalse(runtime_diag.json()["observability"]["langfuse"]["enabled"])
         self.assertFalse(runtime_diag.json()["observability"]["langfuse"]["healthy"])
+        self.assertIn("provider_reliability", runtime_diag.json())
+        self.assertIn("top_error_kinds", runtime_diag.json()["provider_reliability"])
 
     def test_runtime_bootstrap_registers_automation_tool(self) -> None:
         app = build_test_app(emit_explicit_empty_contract=True)

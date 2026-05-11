@@ -4,6 +4,8 @@ from unittest.mock import Mock
 from fastapi.testclient import TestClient
 
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
+from marten_runtime.runtime.provider_reliability import build_provider_call_diagnostics
+from marten_runtime.runtime.usage_models import ProviderCallAttempt
 from marten_runtime.session.models import SessionMessage
 from tests.http_app_support import build_test_app
 from marten_runtime.interfaces.http.runtime_diagnostics import (
@@ -13,6 +15,11 @@ from marten_runtime.interfaces.http.runtime_diagnostics import (
 
 
 class HTTPRuntimeDiagnosticsTests(unittest.TestCase):
+    def _stop_runtime_worker(self, runtime) -> None:  # noqa: ANN001
+        worker = getattr(runtime, "compaction_worker", None)
+        if worker is not None:
+            worker.stop()
+
     def test_resolve_runtime_server_surface_prefers_request_base_url(self) -> None:
         app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
@@ -29,6 +36,7 @@ class HTTPRuntimeDiagnosticsTests(unittest.TestCase):
     def test_serialize_runtime_diagnostics_preserves_server_and_channel_fields(self) -> None:
         app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
+        self.addCleanup(self._stop_runtime_worker, runtime)
         request = Mock()
         request.base_url = "http://127.0.0.1:9000/"
 
@@ -50,6 +58,123 @@ class HTTPRuntimeDiagnosticsTests(unittest.TestCase):
         )
         self.assertIn("api_key_env", body["providers"][0])
         self.assertNotIn("test-key", str(body["providers"]))
+
+    def test_serialize_runtime_diagnostics_exposes_provider_reliability_block(self) -> None:
+        app = build_test_app(emit_explicit_empty_contract=True)
+        runtime = app.state.runtime
+        self.addCleanup(self._stop_runtime_worker, runtime)
+        request = Mock()
+        request.base_url = "http://127.0.0.1:9000/"
+
+        created_run_ids: list[str] = []
+        for index in range(21):
+            run = runtime.run_history.start(
+                session_id=f"sess_provider_health_{index}",
+                trace_id=f"trace_provider_health_{index}",
+                config_snapshot_id="cfg_bootstrap",
+                bootstrap_manifest_id="boot_default",
+            )
+            created_run_ids.append(run.run_id)
+            if index % 2 == 0:
+                diagnostics = build_provider_call_diagnostics(
+                    request_kind="interactive",
+                    timeout_seconds=20,
+                    max_attempts=3,
+                    completed=True,
+                    final_error_code=None,
+                    attempts=[
+                        ProviderCallAttempt(
+                            attempt=1,
+                            elapsed_ms=8,
+                            ok=True,
+                            error_code=None,
+                            error_detail=None,
+                            retryable=False,
+                        )
+                    ],
+                    provider_name="openai",
+                    model_name="gpt-5.4",
+                    profile_name="openai_primary",
+                )
+                runtime.run_history.record_provider_call(run.run_id, stage="llm_first", diagnostics=diagnostics)
+                runtime.run_history.set_failover_state(
+                    run.run_id,
+                    provider_ref="openai",
+                    attempted_profiles=["openai_primary"],
+                    attempted_providers=["openai"],
+                    failover_trigger=None,
+                    failover_stage=None,
+                    final_provider_ref="openai",
+                )
+                runtime.run_history.set_final_text(run.run_id, "ok")
+            else:
+                diagnostics = build_provider_call_diagnostics(
+                    request_kind="interactive",
+                    timeout_seconds=20,
+                    max_attempts=3,
+                    completed=False,
+                    final_error_code="PROVIDER_TRANSPORT_ERROR",
+                    attempts=[
+                        ProviderCallAttempt(
+                            attempt=1,
+                            elapsed_ms=11,
+                            ok=False,
+                            error_code="PROVIDER_TRANSPORT_ERROR",
+                            error_detail="connection reset",
+                            retryable=True,
+                        ),
+                        ProviderCallAttempt(
+                            attempt=2,
+                            elapsed_ms=13,
+                            ok=False,
+                            error_code="PROVIDER_TRANSPORT_ERROR",
+                            error_detail="connection reset",
+                            retryable=True,
+                        ),
+                    ],
+                    provider_name="minimax",
+                    model_name="MiniMax-M2.5",
+                    profile_name="minimax_fast",
+                    error_detail="connection reset",
+                )
+                runtime.run_history.record_provider_call(run.run_id, stage="llm_first", diagnostics=diagnostics)
+                runtime.run_history.set_failover_state(
+                    run.run_id,
+                    provider_ref="openai",
+                    attempted_profiles=["openai_primary", "minimax_fast"],
+                    attempted_providers=["openai", "minimax"],
+                    failover_trigger="PROVIDER_TRANSPORT_ERROR",
+                    failover_stage="llm_first",
+                    final_provider_ref="minimax",
+                )
+                runtime.run_history.set_final_text(run.run_id, "")
+            runtime.run_history.finish(run.run_id, "sent")
+
+        body = serialize_runtime_diagnostics(runtime, request)
+
+        self.assertIn("provider_reliability", body)
+        provider_reliability = body["provider_reliability"]
+        self.assertEqual(provider_reliability["window_size"], 20)
+        self.assertEqual(provider_reliability["run_count"], 20)
+        self.assertEqual(provider_reliability["latest_runs"][0]["run_id"], created_run_ids[1])
+        self.assertEqual(provider_reliability["latest_runs"][-1]["run_id"], created_run_ids[-1])
+        self.assertEqual(provider_reliability["latest_final_provider_ref"], "openai")
+        self.assertGreaterEqual(provider_reliability["retry_count"], 10)
+        self.assertGreaterEqual(provider_reliability["provider_error_count"], 10)
+        self.assertEqual(
+            set(provider_reliability),
+            {
+                "window_size",
+                "run_count",
+                "retry_count",
+                "fallback_count",
+                "provider_error_count",
+                "empty_output_count",
+                "top_error_kinds",
+                "latest_final_provider_ref",
+                "latest_runs",
+            },
+        )
 
     def test_serialize_runtime_diagnostics_exposes_effective_provider_base_url(self) -> None:
         app = build_test_app(emit_explicit_empty_contract=True)

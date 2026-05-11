@@ -1,5 +1,6 @@
 import threading
 import unittest
+from unittest import mock
 
 import httpx
 
@@ -82,6 +83,27 @@ class ProviderRetryTests(unittest.TestCase):
 
         self.assertEqual(result, "ok")
         self.assertEqual(attempts["count"], 3)
+
+    def test_retry_after_seconds_reads_http_date_header(self) -> None:
+        request = httpx.Request("POST", "https://example.com/responses")
+        response = httpx.Response(
+            429,
+            request=request,
+            headers={"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"},
+        )
+        error = httpx.HTTPStatusError("rate limited", request=request, response=response)
+
+        from datetime import datetime, timezone
+
+        frozen_now = datetime(2026, 10, 21, 7, 27, 30, tzinfo=timezone.utc)
+        with mock.patch("marten_runtime.runtime.provider_retry._utc_now", return_value=frozen_now):
+            with self.assertRaises(ProviderTransportError) as ctx:
+                with_retry(
+                    lambda: (_ for _ in ()).throw(error),
+                    policy=RetryPolicy(max_attempts=1, base_backoff_seconds=0),
+                )
+
+        self.assertEqual(ctx.exception.retry_after_seconds, 30.0)
 
     def test_retry_does_not_retry_forbidden_failures(self) -> None:
         attempts = {"count": 0}

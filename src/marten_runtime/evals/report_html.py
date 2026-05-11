@@ -21,6 +21,7 @@ def render_summary_html(
     )
     compare_result = summary_payload.get('compare_result')
     stability_result = summary_payload.get('stability_result')
+    provider_reliability = summary_payload.get('provider_reliability')
     blocked_reason = summary_payload.get('blocked_reason')
     compare_stats = _compare_stats(compare_index, case_results)
     rows = '\n'.join(
@@ -39,6 +40,7 @@ def render_summary_html(
     )
     compare_block = _render_compare_block(compare_result)
     stability_block = _render_stability_block(stability_result)
+    provider_reliability_block = _render_provider_reliability_block(provider_reliability)
     blocked_block = (
         f'<div class="panel blocked"><strong>blocked_reason</strong><div>{_text(blocked_reason)}</div></div>'
         if blocked_reason
@@ -228,6 +230,7 @@ def render_summary_html(
     {blocked_block}
     {compare_block}
     {stability_block}
+    {provider_reliability_block}
     <div class="section">
       <h2>用例总览</h2>
       <div class="toolbar">
@@ -355,6 +358,61 @@ def _render_stability_block(stability_result: object) -> str:
       {_render_stability_components(components)}
     </div>
     """
+
+
+def _render_provider_reliability_block(provider_reliability: object) -> str:
+    if not isinstance(provider_reliability, dict):
+        return '<div class="panel"><h2>Provider 稳定性</h2><div class="muted">暂无 provider 稳定性摘要。</div></div>'
+    latest_runs = [
+        item for item in list(provider_reliability.get('latest_runs') or []) if isinstance(item, dict)
+    ]
+    top_error_kinds = [
+        item for item in list(provider_reliability.get('top_error_kinds') or []) if isinstance(item, dict)
+    ]
+    error_text = ', '.join(
+        f"{_text(item.get('error_kind'))}: {_text(item.get('count'))}" for item in top_error_kinds
+    )
+    return f"""
+    <div class="panel">
+      <h2>Provider 稳定性</h2>
+      <div class="kv">
+        <div>窗口大小</div><div>{_text(provider_reliability.get('window_size'))}</div>
+        <div>运行数</div><div>{_text(provider_reliability.get('run_count'))}</div>
+        <div>重试</div><div>{_text(provider_reliability.get('retry_count'))}</div>
+        <div>回退</div><div>{_text(provider_reliability.get('fallback_count'))}</div>
+        <div>错误</div><div>{_text(provider_reliability.get('provider_error_count'))}</div>
+        <div>空输出</div><div>{_text(provider_reliability.get('empty_output_count'))}</div>
+        <div>最近 final provider</div><div>{_text(provider_reliability.get('latest_final_provider_ref'))}</div>
+        <div>top error kinds</div><div>{error_text or '-'}</div>
+      </div>
+      <h3 style="margin-top:16px;">最近 runs</h3>
+      {_render_provider_reliability_runs(latest_runs)}
+    </div>
+    """
+
+
+def _render_provider_reliability_runs(items: list[dict[str, object]]) -> str:
+    if not items:
+        return '<div class="muted">none</div>'
+    rows = [
+        '<div class="table-wrap"><table><thead><tr>'
+        '<th>run_id</th><th>状态</th><th>重试</th><th>回退</th><th>错误</th><th>空输出</th><th>final provider</th>'
+        '</tr></thead><tbody>'
+    ]
+    for item in items:
+        rows.append(
+            '<tr>'
+            f"<td>{_text(item.get('run_id'))}</td>"
+            f"<td>{_text(item.get('status'))}</td>"
+            f"<td>{_text(item.get('retry_count'))}</td>"
+            f"<td>{_text(item.get('fallback_count'))}</td>"
+            f"<td>{_text(item.get('provider_error_count'))}</td>"
+            f"<td>{_text(item.get('empty_output_count'))}</td>"
+            f"<td>{_text(item.get('final_provider_ref'))}</td>"
+            '</tr>'
+        )
+    rows.append('</tbody></table></div>')
+    return ''.join(rows)
 
 
 def _render_compare_list(items: list[object]) -> str:
