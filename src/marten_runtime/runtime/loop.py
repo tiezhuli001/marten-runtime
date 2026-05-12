@@ -272,6 +272,7 @@ class RuntimeLoop:
             allowed_tools=list(DEFAULT_ALLOWED_TOOLS),
         )
         resolved_llm = llm_client or self.llm
+        legacy_app_id = getattr(resolved_agent, "app_id", "main_agent")
         provider_state = build_provider_failover_state(
             llm=resolved_llm,
             active_profile_name=(
@@ -294,7 +295,7 @@ class RuntimeLoop:
             trace_id=trace_id,
             message=message,
             agent_id=resolved_agent.agent_id,
-            app_id=resolved_agent.app_id,
+            app_id=legacy_app_id,
             model_name=getattr(resolved_llm, "model_name", None),
             tokenizer_family=provider_state.active_tokenizer_family,
             system_prompt=system_prompt,
@@ -415,7 +416,7 @@ class RuntimeLoop:
                 "run_id": run.run_id,
                 "session_id": session_id,
                 "agent_id": resolved_agent.agent_id,
-                "app_id": resolved_agent.app_id,
+                "app_id": legacy_app_id,
                 "channel_id": channel_id,
                 "request_kind": request_kind,
                 "config_snapshot_id": config_snapshot_id,
@@ -434,7 +435,7 @@ class RuntimeLoop:
             trace_id=trace_id,
             message=message,
             agent_id=resolved_agent.agent_id,
-            app_id=resolved_agent.app_id,
+            app_id=legacy_app_id,
             model_name=getattr(resolved_llm, "model_name", None),
             tokenizer_family=provider_state.active_tokenizer_family,
             channel_protocol_instruction_text=channel_protocol_instruction_text,
@@ -872,7 +873,7 @@ class RuntimeLoop:
                             "user_id": user_id,
                             "source_transport": source_transport,
                             "agent_id": resolved_agent.agent_id,
-                            "app_id": resolved_agent.app_id,
+                            "app_id": legacy_app_id,
                             "allowed_tools": list(resolved_agent.allowed_tools),
                             "model_profile": provider_state.active_profile_name,
                             "llm_client": resolved_llm,

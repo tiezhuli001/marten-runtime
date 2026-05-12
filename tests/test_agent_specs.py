@@ -3,7 +3,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from marten_runtime.apps.runtime_defaults import DEFAULT_APP_ID
+from marten_runtime.agents.defaults import DEFAULT_AGENT_ASSET_ROOT
 from marten_runtime.config.agents_loader import load_agent_specs
 
 
@@ -16,7 +16,8 @@ class AgentSpecLoadingTests(unittest.TestCase):
                     """
                     [agents.main]
                     role = "general_assistant"
-                    app_id = "main_agent"
+                    app_id = "legacy_app"
+                    asset_root = "agents/main"
                     allowed_tools = ["time", "skill"]
                     prompt_mode = "full"
                     model_profile = "fast"
@@ -38,11 +39,12 @@ class AgentSpecLoadingTests(unittest.TestCase):
             self.assertEqual(specs[0].model_profile, "fast")
             self.assertEqual(specs[1].role, "ops_agent")
             self.assertFalse(specs[1].enabled)
-            self.assertEqual(specs[1].app_id, "main_agent")
+            self.assertEqual(specs[0].asset_root, "agents/main")
+            self.assertFalse(hasattr(specs[0], "app_id"))
             self.assertEqual(specs[1].prompt_mode, "full")
             self.assertIsNone(specs[1].model_profile)
 
-    def test_loader_uses_current_default_runtime_asset_for_missing_app_id(self) -> None:
+    def test_loader_uses_current_default_agent_asset_root_for_missing_asset_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "agents.toml"
             path.write_text(
@@ -58,7 +60,7 @@ class AgentSpecLoadingTests(unittest.TestCase):
 
             specs = load_agent_specs(str(path))
 
-            self.assertEqual(specs[0].app_id, DEFAULT_APP_ID)
+            self.assertEqual(specs[0].asset_root, DEFAULT_AGENT_ASSET_ROOT)
 
     def test_loader_rejects_agent_missing_role(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

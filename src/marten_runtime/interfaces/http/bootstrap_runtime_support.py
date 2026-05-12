@@ -4,9 +4,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from marten_runtime.apps.bootstrap_prompt import load_bootstrap_prompt
-from marten_runtime.apps.manifest import AppManifest, load_app_manifest
-from marten_runtime.apps.runtime_defaults import DEFAULT_AGENT_ID, DEFAULT_APP_ID
+from marten_runtime.agents.assets import AgentRuntimeAssets, load_agent_runtime_assets
+from marten_runtime.agents.defaults import DEFAULT_AGENT_ID
+from marten_runtime.agents.specs import AgentSpec
 from marten_runtime.automation.models import AutomationJob
 from marten_runtime.automation.sqlite_store import SQLiteAutomationStore
 from marten_runtime.automation.store import AutomationStore
@@ -16,23 +16,20 @@ from marten_runtime.session.sqlite_store import SQLiteSessionStore
 
 
 @dataclass
-class AppRuntimeAssets:
-    manifest: AppManifest
-    system_prompt: str
+class AgentRuntimeAssetsIndex:
+    by_agent_id: dict[str, AgentRuntimeAssets]
 
 
-def load_app_runtimes(
+def load_agent_runtimes(
     *,
     repo_root: Path,
-    app_ids: set[str],
-) -> dict[str, AppRuntimeAssets]:
-    runtimes: dict[str, AppRuntimeAssets] = {}
-    for app_id in sorted(app_ids):
-        manifest = load_app_manifest(str(repo_root / "apps" / app_id / "app.toml"))
-        runtimes[app_id] = AppRuntimeAssets(
-            manifest=manifest,
-            system_prompt=load_bootstrap_prompt(repo_root=repo_root, manifest=manifest),
-        )
+    agent_specs: list[AgentSpec],
+) -> dict[str, AgentRuntimeAssets]:
+    runtimes: dict[str, AgentRuntimeAssets] = {}
+    for spec in sorted(agent_specs, key=lambda item: item.agent_id):
+        if not spec.enabled:
+            continue
+        runtimes[spec.agent_id] = load_agent_runtime_assets(repo_root=repo_root, spec=spec)
     return runtimes
 
 
@@ -65,7 +62,7 @@ def ensure_self_improve_automation(store: AutomationStore) -> None:
         AutomationJob(
             automation_id=automation_id,
             name="Internal Self Improve",
-            app_id=DEFAULT_APP_ID,
+            app_id="main_agent",
             agent_id=DEFAULT_AGENT_ID,
             prompt_template="Summarize repeated failures and later recoveries into lesson candidates.",
             schedule_kind="daily",

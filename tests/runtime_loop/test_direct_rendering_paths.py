@@ -100,7 +100,6 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="coding",
             role="coding_agent",
-            app_id="code_assistant",
             allowed_tools=["time"],
             prompt_mode="child",
         )
@@ -113,7 +112,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         )
 
         self.assertEqual(llm.requests[0].agent_id, "coding")
-        self.assertEqual(llm.requests[0].app_id, "code_assistant")
+        self.assertEqual(llm.requests[0].app_id, "main_agent")
         self.assertEqual(llm.requests[0].prompt_mode, "child")
         self.assertEqual(llm.requests[0].available_tools, ["time"])
 
