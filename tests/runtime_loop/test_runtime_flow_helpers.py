@@ -29,7 +29,6 @@ def _request(*, model_name: str = "primary", tokenizer_family: str | None = None
         trace_id="trace_test",
         message="hello",
         agent_id="main",
-        app_id="main_agent",
         model_name=model_name,
         tokenizer_family=tokenizer_family,
     )

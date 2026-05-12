@@ -22,7 +22,6 @@ class UsageEstimatorTests(unittest.TestCase):
             trace_id="trace_estimator_plain",
             message="继续执行",
             agent_id="main",
-            app_id="main_agent",
             tokenizer_family="openai_o200k",
         )
         request_with_tools = request_without_tools.model_copy(
@@ -56,7 +55,6 @@ class UsageEstimatorTests(unittest.TestCase):
             trace_id="trace_estimator_followup",
             message="当前上下文状态怎么样",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["runtime"],
             tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_runtime", builtin_tools=["runtime"]),
             tokenizer_family="openai_o200k",
@@ -148,7 +146,6 @@ class UsageEstimatorTests(unittest.TestCase):
             trace_id="trace_estimator_escaped_tool",
             message="拿到结果后只回复 mcp-ok。",
             agent_id="main",
-            app_id="main_agent",
             tokenizer_family="openai_o200k",
             available_tools=["mcp"],
             tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_estimator_escaped", builtin_tools=["mcp"]),

@@ -14,7 +14,6 @@ def build_session_title_summary(
     llm_client,
     session_id: str,
     trace_id: str,
-    app_id: str,
     agent_id: str,
     user_message: str,
 ) -> tuple[str, str]:
@@ -34,7 +33,6 @@ def build_session_title_summary(
                 ),
                 summary_input_text=cleaned_message,
                 agent_id=agent_id,
-                app_id=app_id,
                 available_tools=[],
                 tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_empty"),
                 request_kind="session_summary",

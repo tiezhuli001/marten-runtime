@@ -36,7 +36,6 @@ class SessionCatalogTests(unittest.TestCase):
             llm_client=llm,
             session_id="sess_1",
             trace_id="trace_1",
-            app_id="main_agent",
             agent_id="main",
             user_message="我要让 runtime 在重启之后也能保留会话。",
         )
@@ -53,7 +52,6 @@ class SessionCatalogTests(unittest.TestCase):
             llm_client=FailingSummaryLLM(),
             session_id="sess_1",
             trace_id="trace_1",
-            app_id="main_agent",
             agent_id="main",
             user_message="我要让 runtime 在重启之后也能保留会话，而且标题生成失败时也要有降级方案。",
         )
@@ -73,7 +71,6 @@ class SessionCatalogTests(unittest.TestCase):
             llm_client=llm,
             session_id="sess_1",
             trace_id="trace_1",
-            app_id="main_agent",
             agent_id="main",
             user_message="记住这个会话是关于 durable session 的。",
         )
@@ -86,7 +83,6 @@ class SessionCatalogTests(unittest.TestCase):
                 trace_id="trace_2",
                 message="继续",
                 agent_id="main",
-                app_id="main_agent",
                 available_tools=["time"],
                 tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1"),
             )
@@ -107,7 +103,6 @@ class SessionCatalogTests(unittest.TestCase):
             llm_client=llm,
             session_id="sess_1",
             trace_id="trace_1",
-            app_id="main_agent",
             agent_id="main",
             user_message=(
                 "@_user_1 开启子代理查询github上的"
@@ -128,7 +123,6 @@ class SessionCatalogTests(unittest.TestCase):
             llm_client=DemoLLMClient(),
             session_id="sess_demo",
             trace_id="trace_demo",
-            app_id="main_agent",
             agent_id="main",
             user_message="帮我排查会话标题生成。",
         )

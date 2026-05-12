@@ -86,7 +86,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="what time is it?",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["time"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1", builtin_tools=["time"]
@@ -129,7 +128,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="当前上下文窗口多大",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["runtime", "session", "automation"],
             tool_snapshot=tool_snapshot,
             conversation_messages=[
@@ -169,7 +167,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="当前上下文窗口多大",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["runtime", "session"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_runtime_first_turn",
@@ -194,7 +191,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_fragment_payload",
             message="继续",
             agent_id="main",
-            app_id="main_agent",
             tool_history=[
                 ToolExchange(
                     tool_name="runtime",
@@ -224,7 +220,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_finalization_retry_chat",
             message="继续整理刚刚的结果",
             agent_id="main",
-            app_id="main_agent",
             request_kind="finalization_retry",
             available_tools=["time"],
             tool_snapshot=ToolSnapshot(
@@ -278,7 +273,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="请告诉我现在几点了？",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["time"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_time_first_turn",
@@ -319,8 +313,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                     trace_id="trace_1",
                     message="hello",
                     agent_id="main",
-                    app_id="main_agent",
-                    request_kind="interactive",
+                            request_kind="interactive",
                 )
             )
 
@@ -363,8 +356,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                 trace_id="trace_1",
                 message="hello",
                 agent_id="main",
-                app_id="main_agent",
-                request_kind="interactive",
+                    request_kind="interactive",
             )
         )
 
@@ -409,8 +401,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                 trace_id="trace_1",
                 message="hello",
                 agent_id="main",
-                app_id="main_agent",
-                request_kind="interactive",
+                    request_kind="interactive",
             )
         )
 
@@ -457,8 +448,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                     trace_id="trace_1",
                     message="hello",
                     agent_id="main",
-                    app_id="main_agent",
-                    request_kind="interactive",
+                            request_kind="interactive",
                 )
             )
 
@@ -499,8 +489,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                 trace_id="trace_1",
                 message="hello",
                 agent_id="main",
-                app_id="main_agent",
-                request_kind="interactive",
+                    request_kind="interactive",
             )
         )
 
@@ -547,7 +536,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="现在几点了",
             agent_id="main",
-            app_id="main_agent",
             request_kind="interactive",
             available_tools=["time"],
             tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1", builtin_tools=["time"]),
@@ -593,8 +581,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                 trace_id="trace_1",
                 message="继续",
                 agent_id="main",
-                app_id="main_agent",
-                request_kind="interactive",
+                    request_kind="interactive",
                 tool_result={"iso_time": "2026-04-20T12:00:00Z"},
                 requested_tool_name="time",
                 requested_tool_payload={"timezone": "UTC"},
@@ -647,8 +634,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                 trace_id="trace_retry_responses",
                 message="继续整理刚刚的结果",
                 agent_id="main",
-                app_id="main_agent",
-                request_kind="finalization_retry",
+                    request_kind="finalization_retry",
                 available_tools=["time"],
                 tool_snapshot=ToolSnapshot(
                     tool_snapshot_id="tool_retry_responses",
@@ -697,8 +683,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                     trace_id="trace_retry_budget",
                     message="继续整理刚刚的结果",
                     agent_id="main",
-                    app_id="main_agent",
-                    request_kind="finalization_retry",
+                            request_kind="finalization_retry",
                     tool_history=[
                         ToolExchange(
                             tool_name="time",
@@ -750,8 +735,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                 trace_id="trace_1",
                 message="hello",
                 agent_id="main",
-                app_id="main_agent",
-                request_kind="interactive",
+                    request_kind="interactive",
             )
         )
 
@@ -788,8 +772,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                     trace_id="trace_1",
                     message="hello",
                     agent_id="main",
-                    app_id="main_agent",
-                    request_kind="interactive",
+                            request_kind="interactive",
                 )
             )
 
@@ -831,8 +814,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                 trace_id="trace_1",
                 message="hello",
                 agent_id="main",
-                app_id="main_agent",
-                request_kind="interactive",
+                    request_kind="interactive",
             )
         )
 
@@ -879,8 +861,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                 trace_id="trace_1",
                 message="hello",
                 agent_id="main",
-                app_id="main_agent",
-                request_kind="interactive",
+                    request_kind="interactive",
             )
         )
 
@@ -914,8 +895,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                 trace_id="trace_1",
                 message="hello",
                 agent_id="main",
-                app_id="main_agent",
-            )
+                )
         )
 
         self.assertEqual(reply.final_text, "ok")
@@ -959,8 +939,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                 trace_id="trace_1",
                 message="hello",
                 agent_id="main",
-                app_id="main_agent",
-            )
+                )
         )
 
         self.assertEqual(reply.final_text, "ok")
@@ -1003,8 +982,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                     trace_id="trace_1",
                     message="hello",
                     agent_id="main",
-                    app_id="main_agent",
-                    request_kind="interactive",
+                            request_kind="interactive",
                 )
             )
 
@@ -1042,8 +1020,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                     trace_id="trace_1",
                     message="后台检查 README",
                     agent_id="main",
-                    app_id="main_agent",
-                    request_kind="subagent",
+                            request_kind="subagent",
                 )
             )
 
@@ -1074,8 +1051,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                     trace_id="trace_1",
                     message="hello",
                     agent_id="main",
-                    app_id="main_agent",
-                )
+                        )
             )
 
         assert client.last_call_diagnostics is not None
@@ -1107,8 +1083,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                     trace_id="trace_1",
                     message="hello",
                     agent_id="main",
-                    app_id="main_agent",
-                    request_kind="interactive",
+                            request_kind="interactive",
                 )
             )
 
@@ -1146,8 +1121,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                     trace_id="trace_1",
                     message="hello",
                     agent_id="main",
-                    app_id="main_agent",
-                    request_kind="automation",
+                            request_kind="automation",
                 )
             )
 
@@ -1179,7 +1153,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_summary",
             message="继续",
             agent_id="main",
-            app_id="main_agent",
             tool_outcome_summary_text=(
                 "以下仅是上一轮可延续的工具结果摘要，只有当前消息明确承接上一轮结果时才参考。"
                 "不要因为上一轮刚用了某个工具族，就在本轮复用同一路径：\n"
@@ -1212,7 +1185,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_runtime_query",
             message="当前会话记录的上下文多大",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["runtime", "session", "time"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_runtime_query",
@@ -1246,7 +1218,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_runtime_query",
             message="切换到sess_dcce8f9c",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["session", "automation"],
             requested_tool_name="session",
             requested_tool_payload={
@@ -1319,7 +1290,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_runtime_query",
             message="切换到sess_dcce8f9c",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["session", "automation"],
             requested_tool_name="session",
             requested_tool_payload={
@@ -1394,7 +1364,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_history",
             message="继续",
             agent_id="main",
-            app_id="main_agent",
             conversation_messages=[
                 ConversationMessage(role="user", content="上一轮用户问题"),
                 ConversationMessage(role="assistant", content="上一轮助手回答"),
@@ -1435,7 +1404,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="当前有哪些定时任务",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["automation"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1", builtin_tools=["automation"]
@@ -1491,7 +1459,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="what time is it?",
             agent_id="main",
-            app_id="main_agent",
             skill_heads_text="Visible skills:\n- test_time_skill",
             capability_catalog_text="Capability catalog:\n- time",
             available_tools=["time"],
@@ -1556,7 +1523,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="当前上下文窗口多大？",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["runtime"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1",
@@ -1627,7 +1593,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="看下 easy-agent",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["mcp"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1",
@@ -1680,7 +1645,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_roundtrip",
             message="请总结这次链路",
             agent_id="main",
-            app_id="main_agent",
             tool_history=[
                 ToolExchange(tool_name="time", tool_payload={}, tool_result={"iso_time": "t"}),
                 ToolExchange(
@@ -1747,7 +1711,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="查一下 easy-agent",
             agent_id="main",
-            app_id="main_agent",
             tool_result={
                 "result_text": '{"items":[{"full_name":"CloudWide851/easy-agent","default_branch":"main"}]}'
             },
@@ -1792,7 +1755,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="帮我看下今天 github 热门仓库",
             agent_id="main",
-            app_id="main_agent",
             capability_catalog_text="Capability catalog:\n- mcp: Use MCP progressively.\n- time: Check live time first.",
             available_tools=["mcp", "time"],
             tool_snapshot=ToolSnapshot(
@@ -1829,7 +1791,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_multi",
             message="请严格按顺序先调用 time 获取当前时间，再调用 runtime 查看当前 run 的 context_status，再调用 mcp 列出 github server 的可用工具。",
             agent_id="main",
-            app_id="main_agent",
             capability_catalog_text="Capability catalog:\n- time\n- runtime\n- mcp\n- session\n- skill",
             available_tools=["time", "runtime", "mcp", "session", "skill"],
             tool_snapshot=ToolSnapshot(
@@ -1866,7 +1827,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_subagent_explicit",
             message="开启子代理查询 https://github.com/CloudWide851/easy-agent 最近一次提交是什么时候？",
             agent_id="main",
-            app_id="main_agent",
             capability_catalog_text="Capability catalog:\n- mcp\n- spawn_subagent\n- cancel_subagent",
             available_tools=["mcp", "spawn_subagent", "cancel_subagent"],
             tool_snapshot=ToolSnapshot(
@@ -1916,7 +1876,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="现在上下文用了多少，简短一点。",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["runtime", "mcp"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1", builtin_tools=["runtime", "mcp"]
@@ -1955,7 +1914,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="请用 github mcp 查看 https://github.com/CloudWide851/easy-agent 这个仓库的默认分支和描述。",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["mcp"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1", builtin_tools=["mcp"]
@@ -1993,7 +1951,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="请用 github mcp 查看 https://github.com/CloudWide851/easy-agent 这个仓库最近一次提交是什么时候？",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["mcp"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1", builtin_tools=["mcp"]
@@ -2028,7 +1985,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="开启子代理查询 https://github.com/CloudWide851/easy-agent 最近一次提交是什么时候？",
             agent_id="main",
-            app_id="main_agent",
             capability_catalog_text=render_capability_catalog(declarations),
             available_tools=["mcp", "spawn_subagent", "cancel_subagent"],
             tool_snapshot=ToolSnapshot(
@@ -2108,7 +2064,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_compact_tool_defs",
             message="开启子代理查询这个仓库最近一次提交。",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["spawn_subagent", "mcp"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_compact_defs",
@@ -2154,7 +2109,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_session_ref_payload",
             message="恢复到旧会话。",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["session"],
             capability_catalog_text=render_capability_catalog(declarations),
             tool_snapshot=ToolSnapshot(
@@ -2189,7 +2143,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_spawn_payload",
             message="开启子代理在后台看一下 README 的结构。",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["spawn_subagent", "mcp"],
             capability_catalog_text=render_capability_catalog(declarations),
             tool_snapshot=ToolSnapshot(
@@ -2227,7 +2180,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_schema_payload",
             message="hello",
             agent_id="main",
-            app_id="main_agent",
             available_tools=list(declarations),
             capability_catalog_text=render_capability_catalog(declarations),
             tool_snapshot=ToolSnapshot(
@@ -2265,7 +2217,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_mcp_latest_commit_payload",
             message="调用 github mcp 查询 tiezhuli001/codex-skills 最近一次提交",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["mcp"],
             capability_catalog_text=render_capability_catalog(
                 declarations,
@@ -2336,7 +2287,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="请告诉我现在几点了？",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["time"],
             tool_snapshot=ToolSnapshot(
                 tool_snapshot_id="tool_1", builtin_tools=["time"]
@@ -2376,7 +2326,6 @@ class OpenAIChatClientTests(unittest.TestCase):
             trace_id="trace_1",
             message="请整理成适合飞书展示的结果。",
             agent_id="main",
-            app_id="main_agent",
             channel_protocol_instruction_text=feishu_instruction,
             available_tools=["skill"],
             tool_snapshot=ToolSnapshot(
@@ -2441,8 +2390,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                     trace_id="trace_1",
                     message="hello",
                     agent_id="main",
-                    app_id="main_agent",
-                    request_kind="interactive",
+                            request_kind="interactive",
                 )
             )
 
@@ -2488,8 +2436,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                     trace_id="trace_1",
                     message="hello",
                     agent_id="main",
-                    app_id="main_agent",
-                    request_kind="interactive",
+                            request_kind="interactive",
                     available_tools=["time"],
                     tool_snapshot=ToolSnapshot(
                         tool_snapshot_id="tool_1", builtin_tools=["time"]
@@ -2530,8 +2477,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                     trace_id="trace_stop",
                     message="hello",
                     agent_id="main",
-                    app_id="main_agent",
-                    request_kind="interactive",
+                            request_kind="interactive",
                     cooperative_stop_event=stop_event,
                 )
             )
@@ -2567,8 +2513,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                 trace_id="trace_subagent_timeout",
                 message="开启子代理查询 https://github.com/CloudWide851/easy-agent 最近一次提交是什么时候？",
                 agent_id="main",
-                app_id="main_agent",
-                request_kind="interactive",
+                    request_kind="interactive",
                 available_tools=["spawn_subagent", "mcp"],
                 tool_snapshot=ToolSnapshot(
                     tool_snapshot_id="tool_subagent_timeout",
@@ -2608,8 +2553,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                 trace_id="trace_subsecond_deadline",
                 message="hello",
                 agent_id="main",
-                app_id="main_agent",
-                request_kind="interactive",
+                    request_kind="interactive",
                 timeout_seconds_override=10,
                 cooperative_deadline_monotonic=time.monotonic() + 0.2,
             )
@@ -2646,8 +2590,7 @@ class OpenAIChatClientTests(unittest.TestCase):
                 trace_id="trace_deadline",
                 message="hello",
                 agent_id="main",
-                app_id="main_agent",
-                request_kind="interactive",
+                    request_kind="interactive",
                 timeout_seconds_override=10,
                 cooperative_deadline_monotonic=time.monotonic() + 1.0,
             )

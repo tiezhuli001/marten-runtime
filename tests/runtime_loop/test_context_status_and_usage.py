@@ -184,8 +184,7 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
                 trace_id="trace_estimate",
                 message="继续处理这个问题",
                 agent_id="main",
-                app_id="main_agent",
-                system_prompt="You are marten-runtime.",
+                    system_prompt="You are marten-runtime.",
                 compact_summary_text="当前进展：已完成阶段 A。",
                 skill_heads_text="Visible skills:\n- repo_helper",
                 capability_catalog_text="Capabilities:\n- time",
@@ -486,7 +485,6 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["runtime"],
         )
 
@@ -568,7 +566,6 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["runtime"],
         )
 
@@ -647,7 +644,6 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["big_tool"],
         )
 
@@ -694,7 +690,6 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["big_tool"],
         )
 
@@ -738,7 +733,6 @@ class RuntimeLoopContextStatusAndUsageTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["runtime"],
         )
 

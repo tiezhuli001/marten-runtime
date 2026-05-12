@@ -56,7 +56,6 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -95,7 +94,6 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["runtime"],
         )
 
@@ -155,7 +153,6 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -190,7 +187,6 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=[],
         )
 
@@ -251,7 +247,6 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -279,7 +274,6 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=[],
         )
 
@@ -330,8 +324,7 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
             agent = AgentSpec(
                 agent_id="main",
                 role="general_assistant",
-                app_id="main_agent",
-                allowed_tools=["skill"],
+                    allowed_tools=["skill"],
             )
 
             events = runtime.run(
@@ -371,7 +364,6 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -410,7 +402,6 @@ class RuntimeLoopForcedRouteTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 

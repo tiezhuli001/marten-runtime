@@ -112,7 +112,6 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         )
 
         self.assertEqual(llm.requests[0].agent_id, "coding")
-        self.assertEqual(llm.requests[0].app_id, "main_agent")
         self.assertEqual(llm.requests[0].prompt_mode, "child")
         self.assertEqual(llm.requests[0].available_tools, ["time"])
 
@@ -275,8 +274,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
             agent = AgentSpec(
                 agent_id="main",
                 role="general_assistant",
-                app_id="main_agent",
-                allowed_tools=["session", "runtime"],
+                    allowed_tools=["session", "runtime"],
             )
 
             events = runtime.run(
@@ -361,7 +359,6 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -415,7 +412,6 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -460,7 +456,6 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -512,7 +507,6 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["spawn_subagent"],
         )
 
@@ -567,7 +561,6 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["spawn_subagent"],
         )
 
@@ -619,7 +612,6 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["spawn_subagent"],
         )
 
@@ -681,8 +673,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
             agent = AgentSpec(
                 agent_id="main",
                 role="general_assistant",
-                app_id="main_agent",
-                allowed_tools=["skill"],
+                    allowed_tools=["skill"],
             )
 
             events = runtime.run(
@@ -770,8 +761,7 @@ class RuntimeLoopDirectRenderingPathTests(unittest.TestCase):
             agent = AgentSpec(
                 agent_id="main",
                 role="general_assistant",
-                app_id="main_agent",
-                allowed_tools=["self_improve"],
+                    allowed_tools=["self_improve"],
             )
 
             events = runtime.run(

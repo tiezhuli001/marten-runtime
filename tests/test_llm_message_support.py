@@ -53,7 +53,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_ledger_request",
             message="请按顺序总结本轮结果",
             agent_id="main",
-            app_id="main_agent",
             finalization_evidence_ledger=ledger,
         )
 
@@ -67,7 +66,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             message="Title: ... Preview: ...",
             summary_input_text="帮我给这个会话起标题",
             agent_id="main",
-            app_id="main_agent",
             request_kind="session_summary",
         )
 
@@ -81,7 +79,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_zero_tool_ledger",
             message="你好",
             agent_id="main",
-            app_id="main_agent",
         )
 
         payload = build_openai_chat_payload("gpt-4.1", request)
@@ -98,7 +95,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_ledger_transcript",
             message="继续整理刚刚的结果",
             agent_id="main",
-            app_id="main_agent",
             tool_history=[
                 ToolExchange(
                     tool_name="time",
@@ -144,7 +140,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_no_ledger_block",
             message="你好",
             agent_id="main",
-            app_id="main_agent",
             finalization_evidence_ledger=FinalizationEvidenceLedger(
                 user_message="你好",
                 tool_call_count=0,
@@ -162,7 +157,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_compact_catalog",
             message="帮我看下今天 github 热门仓库",
             agent_id="main",
-            app_id="main_agent",
             capability_catalog_text=render_capability_catalog(declarations),
             available_tools=["mcp", "time"],
         )
@@ -190,7 +184,6 @@ class LLMMessageSupportTests(unittest.TestCase):
                 "主线程只需先确认已受理。"
             ),
             agent_id="main",
-            app_id="main_agent",
             request_kind="subagent",
             available_tools=["mcp", "runtime", "time"],
         )
@@ -214,7 +207,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_contract_repair_surface",
             message="你好",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["session", "runtime", "memory", "time", "spawn_subagent"],
         )
         repair = _build_contract_repair_request(
@@ -240,7 +232,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_memory_repair",
             message="继续当前任务，并说明你记住了什么。",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["memory", "time", "runtime"],
             memory_text="User memory:\n# MEMORY\n\n## preferences\n- 以后始终用中文回复。",
         )
@@ -262,7 +253,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_contract_repair_catalog",
             message="帮我看当前会话",
             agent_id="main",
-            app_id="main_agent",
             capability_catalog_text=render_capability_catalog(declarations),
             available_tools=["session", "runtime", "time"],
         )
@@ -287,7 +277,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_repo_context_request",
             message="后台看一下这个仓库最近提交都在改什么。",
             agent_id="main",
-            app_id="main_agent",
             repository_context_text=(
                 "当前运行仓库上下文：\n"
                 "- 仓库标识：tiezhuli001/marten-runtime\n"
@@ -309,7 +298,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_subagent_repo_structure",
             message="梳理这个仓库结构。",
             agent_id="main",
-            app_id="main_agent",
             request_kind="subagent",
             available_tools=["mcp"],
             repository_context_text="当前运行仓库上下文：\n- 仓库标识：tiezhuli001/marten-runtime",
@@ -331,7 +319,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_subagent_completion_followup",
             message="子任务完成了吗？直接给我一句中文摘要，明确它梳理的对象和结论。",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["spawn_subagent"],
             conversation_messages=[
                 ConversationMessage(
@@ -358,7 +345,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_no_working_context_text",
             message="继续当前任务",
             agent_id="main",
-            app_id="main_agent",
             working_context={
                 "active_goal": "继续当前任务",
                 "recent_user_messages": ["约束：不要改 README"],
@@ -378,7 +364,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_tool_followup_ledger",
             message="请按顺序总结本轮结果",
             agent_id="main",
-            app_id="main_agent",
             tool_history=[
                 ToolExchange(
                     tool_name="time",
@@ -419,7 +404,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_mcp_compaction_followup",
             message="在压缩后的上下文里继续执行。",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["mcp", "runtime", "session", "skill"],
             compact_summary_text=(
                 "当前任务：日报同步告警排查。\n"
@@ -460,7 +444,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_three_tool_ledger",
             message="请按顺序总结本轮结果并说明往返次数",
             agent_id="main",
-            app_id="main_agent",
             tool_history=[
                 ToolExchange(
                     tool_name="time",
@@ -510,7 +493,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_finalization_retry_ledger",
             message="继续整理刚刚的结果",
             agent_id="main",
-            app_id="main_agent",
             request_kind="finalization_retry",
             available_tools=["time"],
             tool_history=[
@@ -559,7 +541,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_readme_tool_result",
             message="梳理 README 结构",
             agent_id="main",
-            app_id="main_agent",
             tool_history=[
                 ToolExchange(
                     tool_name="mcp",
@@ -607,7 +588,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_mcp_tool_names",
             message="梳理当前仓库结构。",
             agent_id="main",
-            app_id="main_agent",
             requested_tool_name="mcp",
             requested_tool_payload={"action": "list", "query": "github repository file read tools"},
             tool_history=[
@@ -645,7 +625,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_finalization_retry_compaction",
             message="在压缩后的上下文里继续执行。",
             agent_id="main",
-            app_id="main_agent",
             request_kind="finalization_retry",
             compact_summary_text=(
                 "以下是更早历史压缩出的上下文检查点，只用于理解旧背景。\n\n"
@@ -689,7 +668,6 @@ class LLMMessageSupportTests(unittest.TestCase):
             trace_id="trace_large_tool_result",
             message="继续分析刚刚的 MCP 结果。",
             agent_id="main",
-            app_id="main_agent",
             requested_tool_name="mcp",
             requested_tool_payload={"action": "call", "server_id": "github", "tool_name": "search_code"},
             tool_history=[

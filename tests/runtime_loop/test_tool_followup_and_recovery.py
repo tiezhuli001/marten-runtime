@@ -210,7 +210,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mock_search"],
         )
 
@@ -243,7 +242,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -289,7 +287,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mock_search"],
         )
 
@@ -343,7 +340,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -390,7 +386,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mock_search"],
         )
 
@@ -443,7 +438,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mock_search"],
         )
 
@@ -488,7 +482,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -535,7 +528,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mock_search"],
         )
 
@@ -577,7 +569,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -617,7 +608,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["broken_tool"],
         )
 
@@ -731,7 +721,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -767,7 +756,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time", "mock_search"],
         )
 
@@ -874,7 +862,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time", "runtime", "mcp"],
         )
 
@@ -967,7 +954,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time", "runtime", "mcp"],
         )
 
@@ -1036,7 +1022,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time", "runtime", "mcp"],
         )
 
@@ -1098,7 +1083,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -1137,7 +1121,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -1264,7 +1247,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -1355,7 +1337,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time", "runtime", "mcp"],
         )
 
@@ -1413,7 +1394,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -1463,7 +1443,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -1563,7 +1542,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -1624,7 +1602,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["session"],
         )
 
@@ -1693,7 +1670,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["session", "spawn_subagent"],
         )
 
@@ -1761,7 +1737,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["session"],
         )
 
@@ -1829,7 +1804,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["session"],
         )
 
@@ -1885,7 +1859,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["session"],
         )
 
@@ -1954,7 +1927,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["session"],
         )
 
@@ -2025,7 +1997,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["session"],
         )
 
@@ -2064,7 +2035,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["session"],
         )
 
@@ -2099,7 +2069,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["session"],
         )
 
@@ -2163,7 +2132,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["session"],
         )
 
@@ -2216,7 +2184,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["session"],
         )
 
@@ -2276,7 +2243,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["session"],
         )
 
@@ -2329,7 +2295,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["spawn_subagent"],
         )
 
@@ -2383,7 +2348,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["spawn_subagent"],
         )
 
@@ -2449,7 +2413,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["spawn_subagent"],
         )
 
@@ -2518,7 +2481,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["spawn_subagent", "mcp"],
         )
 
@@ -2573,7 +2535,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -2660,7 +2621,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -2732,7 +2692,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["spawn_subagent"],
         )
 
@@ -2797,7 +2756,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["spawn_subagent"],
         )
 
@@ -2872,7 +2830,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp", "runtime"],
         )
 
@@ -2943,7 +2900,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp", "runtime"],
         )
 
@@ -2990,7 +2946,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -3044,7 +2999,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time"],
         )
 
@@ -3098,7 +3052,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["runtime"],
         )
 
@@ -3157,7 +3110,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["memory"],
         )
 
@@ -3218,7 +3170,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["memory"],
         )
 
@@ -3276,7 +3227,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["memory"],
         )
 
@@ -3331,7 +3281,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["memory"],
         )
 
@@ -3380,7 +3329,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["memory"],
         )
 
@@ -3432,7 +3380,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["skill"],
         )
 
@@ -3477,7 +3424,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=[],
         )
 
@@ -3516,7 +3462,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["memory"],
         )
 
@@ -3584,7 +3529,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -3615,7 +3559,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["broken_tool"],
         )
 
@@ -3659,7 +3602,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mock_search"],
         )
 
@@ -3815,7 +3757,6 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time"],
         )
 
