@@ -148,7 +148,6 @@ class AutomationToolTests(unittest.TestCase):
                 {
                     "automation_id": "daily_hot",
                     "name": "Daily GitHub Hot Repos",
-                    "app_id": "main_agent",
                     "agent_id": "main",
                     "prompt_template": "Summarize today's hot repositories.",
                     "schedule_kind": "daily",
@@ -175,7 +174,6 @@ class AutomationToolTests(unittest.TestCase):
                 {
                     "automation_id": "daily_hot",
                     "name": "Daily GitHub Hot Repos",
-                    "app_id": "main_agent",
                     "agent_id": "main",
                     "prompt_template": "Summarize today's hot repositories.",
                     "schedule_kind": "daily",
@@ -193,7 +191,6 @@ class AutomationToolTests(unittest.TestCase):
                 AutomationJob(
                     automation_id="self_improve_internal",
                     name="Internal Self Improve",
-                    app_id="main_agent",
                     agent_id="main",
                     prompt_template="Summarize failures.",
                     schedule_kind="daily",
@@ -224,7 +221,6 @@ class AutomationToolTests(unittest.TestCase):
                 {
                     "automation_id": "daily_hot",
                     "name": "Daily GitHub Hot Repos",
-                    "app_id": "main_agent",
                     "agent_id": "main",
                     "prompt_template": "Summarize today's hot repositories.",
                     "schedule_kind": "daily",
@@ -254,7 +250,6 @@ class AutomationToolTests(unittest.TestCase):
                 {
                     "automation_id": "daily_hot",
                     "name": "Daily GitHub Hot Repos",
-                    "app_id": "main_agent",
                     "agent_id": "main",
                     "prompt_template": "Summarize today's hot repositories.",
                     "schedule_kind": "daily",
@@ -288,7 +283,6 @@ class AutomationToolTests(unittest.TestCase):
                 {
                     "automation_id": "daily_hot",
                     "name": "Daily GitHub Hot Repos",
-                    "app_id": "main_agent",
                     "agent_id": "main",
                     "prompt_template": "Summarize today's hot repositories.",
                     "schedule_kind": "daily",
@@ -306,7 +300,6 @@ class AutomationToolTests(unittest.TestCase):
                 AutomationJob(
                     automation_id="self_improve_internal",
                     name="Internal Self Improve",
-                    app_id="main_agent",
                     agent_id="main",
                     prompt_template="Summarize failures.",
                     schedule_kind="daily",
@@ -342,7 +335,6 @@ class AutomationToolTests(unittest.TestCase):
                 AutomationJob(
                     automation_id="self_improve_internal",
                     name="Internal Self Improve",
-                    app_id="main_agent",
                     agent_id="main",
                     prompt_template="Summarize failures.",
                     schedule_kind="daily",
@@ -370,7 +362,6 @@ class AutomationToolTests(unittest.TestCase):
                 {
                     "automation_id": "daily_hot",
                     "name": "Daily GitHub Hot Repos",
-                    "app_id": "main_agent",
                     "agent_id": "main",
                     "prompt_template": "Summarize today's hot repositories.",
                     "schedule_kind": "daily",

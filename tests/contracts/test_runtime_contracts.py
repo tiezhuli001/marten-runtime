@@ -133,7 +133,6 @@ class RuntimeContractTests(unittest.TestCase):
                 lessons_path=Path(tmpdir) / "SYSTEM_LESSONS.md",
                 judge=make_default_judge(
                     runtime.runtime_loop.llm,
-                    app_id="main_agent",
                     agent_id="main",
                 ),
             )
@@ -141,7 +140,6 @@ class RuntimeContractTests(unittest.TestCase):
                 AutomationJob(
                     automation_id="self_improve_internal",
                     name="Internal Self Improve",
-                    app_id="main_agent",
                     agent_id="main",
                     prompt_template="Summarize repeated failures and later recoveries.",
                     schedule_kind="daily",
@@ -207,7 +205,6 @@ class RuntimeContractTests(unittest.TestCase):
             )
             runtime.self_improve_service.judge = make_default_judge(
                 runtime.runtime_loop.llm,
-                app_id="main_agent",
                 agent_id="main",
             )
 
@@ -231,7 +228,6 @@ class RuntimeContractTests(unittest.TestCase):
                         "action": "register",
                         "automation_id": "github_digest_daily",
                         "name": "github_digest_daily",
-                        "app_id": "default_app",
                         "agent_id": "default_agent",
                         "prompt_template": "",
                         "schedule_kind": "cron",
@@ -424,7 +420,6 @@ class RuntimeContractTests(unittest.TestCase):
                         "action": "register",
                         "automation_id": "daily_hot",
                         "name": "Daily GitHub Hot Repos",
-                        "app_id": "main_agent",
                         "agent_id": "main",
                         "prompt_template": "Summarize today's hot repositories.",
                         "schedule_kind": "daily",

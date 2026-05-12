@@ -10,6 +10,7 @@ from marten_runtime.automation.models import (
 from marten_runtime.automation.store import AutomationStore
 from marten_runtime.sqlite_support import connect_sqlite, prepare_sqlite_path
 
+
 class SQLiteAutomationStore(AutomationStore):
     def __init__(self, path: str | Path) -> None:
         self.path = prepare_sqlite_path(path)
@@ -20,13 +21,12 @@ class SQLiteAutomationStore(AutomationStore):
             conn.execute(
                 """
                 INSERT INTO automations (
-                    automation_id, name, app_id, agent_id, prompt_template,
+                    automation_id, name, agent_id, prompt_template,
                     schedule_kind, schedule_expr, timezone, session_target,
                     delivery_channel, delivery_target, skill_id, enabled, internal, semantic_fingerprint
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(automation_id) DO UPDATE SET
                     name=excluded.name,
-                    app_id=excluded.app_id,
                     agent_id=excluded.agent_id,
                     prompt_template=excluded.prompt_template,
                     schedule_kind=excluded.schedule_kind,
@@ -43,7 +43,6 @@ class SQLiteAutomationStore(AutomationStore):
                 (
                     job.automation_id,
                     job.name,
-                    job.app_id,
                     job.agent_id,
                     job.prompt_template,
                     job.schedule_kind,
@@ -63,7 +62,7 @@ class SQLiteAutomationStore(AutomationStore):
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT automation_id, name, app_id, agent_id, prompt_template,
+                SELECT automation_id, name, agent_id, prompt_template,
                        schedule_kind, schedule_expr, timezone, session_target,
                        delivery_channel, delivery_target, skill_id, enabled, internal, semantic_fingerprint
                 FROM automations
@@ -76,7 +75,7 @@ class SQLiteAutomationStore(AutomationStore):
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT automation_id, name, app_id, agent_id, prompt_template,
+                SELECT automation_id, name, agent_id, prompt_template,
                        schedule_kind, schedule_expr, timezone, session_target,
                        delivery_channel, delivery_target, skill_id, enabled, internal, semantic_fingerprint
                 FROM automations
@@ -110,7 +109,6 @@ class SQLiteAutomationStore(AutomationStore):
                 CREATE TABLE IF NOT EXISTS automations (
                     automation_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
-                    app_id TEXT NOT NULL,
                     agent_id TEXT NOT NULL,
                     prompt_template TEXT NOT NULL,
                     schedule_kind TEXT NOT NULL,
@@ -146,7 +144,7 @@ class SQLiteAutomationStore(AutomationStore):
                 )
             legacy_rows = conn.execute(
                 """
-                SELECT automation_id, name, app_id, agent_id, prompt_template,
+                SELECT automation_id, name, agent_id, prompt_template,
                        schedule_kind, schedule_expr, timezone, session_target,
                        delivery_channel, delivery_target, skill_id, enabled, internal, semantic_fingerprint
                 FROM automations
@@ -164,21 +162,21 @@ class SQLiteAutomationStore(AutomationStore):
                     """,
                     (job.agent_id, job.semantic_fingerprint, job.automation_id),
                 )
+
     def _row_to_job(self, row: tuple[object, ...]) -> AutomationJob:
         return AutomationJob(
             automation_id=str(row[0]),
             name=str(row[1]),
-            app_id=str(row[2]),
-            agent_id=str(row[3]),
-            prompt_template=str(row[4]),
-            schedule_kind=str(row[5]),
-            schedule_expr=str(row[6]),
-            timezone=str(row[7]),
-            session_target=str(row[8]),
-            delivery_channel=str(row[9]),
-            delivery_target=str(row[10]),
-            skill_id=str(row[11]),
-            enabled=bool(row[12]),
-            internal=bool(row[13]),
-            semantic_fingerprint=str(row[14] or ""),
+            agent_id=str(row[2]),
+            prompt_template=str(row[3]),
+            schedule_kind=str(row[4]),
+            schedule_expr=str(row[5]),
+            timezone=str(row[6]),
+            session_target=str(row[7]),
+            delivery_channel=str(row[8]),
+            delivery_target=str(row[9]),
+            skill_id=str(row[10]),
+            enabled=bool(row[11]),
+            internal=bool(row[12]),
+            semantic_fingerprint=str(row[13] or ""),
         )

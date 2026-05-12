@@ -17,7 +17,6 @@ class SQLiteAutomationStoreTests(unittest.TestCase):
                 AutomationJob(
                     automation_id="daily_hot",
                     name="Daily GitHub Hot Repos",
-                    app_id="main_agent",
                     agent_id="main",
                     prompt_template="Summarize today's hot repositories.",
                     schedule_kind="daily",
@@ -47,7 +46,6 @@ class SQLiteAutomationStoreTests(unittest.TestCase):
                 {
                     "automation_id": "daily_hot_a",
                     "name": "Daily Hot A",
-                    "app_id": "main_agent",
                     "agent_id": "main",
                     "prompt_template": "Summarize hot repos.",
                     "schedule_kind": "daily",
@@ -65,7 +63,6 @@ class SQLiteAutomationStoreTests(unittest.TestCase):
                 {
                     "automation_id": "daily_hot_b",
                     "name": "Daily Hot B",
-                    "app_id": "main_agent",
                     "agent_id": "main",
                     "prompt_template": "Summarize hot repos.",
                     "schedule_kind": "daily",
@@ -95,7 +92,6 @@ class SQLiteAutomationStoreTests(unittest.TestCase):
                 AutomationJob(
                     automation_id="daily_hot",
                     name="Daily GitHub Hot Repos",
-                    app_id="main_agent",
                     agent_id="main",
                     prompt_template="Summarize today's hot repositories.",
                     schedule_kind="daily",
@@ -137,7 +133,6 @@ class SQLiteAutomationStoreTests(unittest.TestCase):
                 AutomationJob(
                     automation_id="daily_hot",
                     name="Daily GitHub Hot Repos",
-                    app_id="main_agent",
                     agent_id="main",
                     prompt_template="Summarize today's hot repositories.",
                     schedule_kind="daily",
