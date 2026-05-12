@@ -193,7 +193,6 @@ class SubagentService:
         parent_session_id: str,
         parent_run_id: str,
         parent_agent_id: str,
-        app_id: str,
         agent_id: str,
         requested_tool_profile: str = "standard",
         parent_allowed_tools: list[str] | None = None,
@@ -206,14 +205,12 @@ class SubagentService:
         if not task.strip():
             raise ValueError("task must not be empty")
         resolved_agent_id = agent_id
-        resolved_app_id = app_id
         if self.agent_registry is not None:
             target = self._resolve_registered_agent(
                 requested_agent_id=agent_id,
                 fallback_agent_id=parent_agent_id,
             )
             resolved_agent_id = target.agent_id
-            resolved_app_id = getattr(target, "app_id", None) or app_id
         normalized_requested_profile = normalize_tool_profile_name(
             requested_tool_profile
         )
@@ -245,7 +242,6 @@ class SubagentService:
                 origin_channel_id=origin_channel_id,
                 origin_delivery_target=origin_delivery_target,
                 child_session_id=child.session_id,
-                app_id=resolved_app_id,
                 agent_id=resolved_agent_id,
                 tool_profile=normalized_requested_profile,
                 effective_tool_profile=effective_tool_profile,
@@ -687,7 +683,6 @@ class SubagentService:
             return AgentSpec(
                 agent_id=task.agent_id,
                 role="subagent_worker",
-                app_id=task.app_id,
                 allowed_tools=[],
                 prompt_mode="subagent",
             )
@@ -717,9 +712,6 @@ class SubagentService:
         assets = self.agent_runtimes.get(agent.agent_id)
         if assets is None:
             assets = self.agent_runtimes.get("main")
-        if assets is None:
-            legacy_app_id = getattr(agent, "app_id", None)
-            assets = self.app_runtimes.get(legacy_app_id) if legacy_app_id else None
         if assets is None:
             return {}
         profile_name = getattr(agent, "model_profile", None)

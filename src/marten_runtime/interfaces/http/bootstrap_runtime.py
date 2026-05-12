@@ -381,7 +381,6 @@ def build_http_runtime(
         run_history=runtime_loop.history,
         skill_service=skill_service,
         feishu_delivery=feishu_delivery,
-        app_id="",
         agent_id=default_agent.agent_id,
     )
     subagent_service.set_terminal_callback(review_dispatcher.handle_terminal_task)
@@ -391,7 +390,6 @@ def build_http_runtime(
         lessons_path=default_lessons_path(resolved_repo_root),
         judge=make_default_judge(
             runtime_loop.llm,
-            app_id="",
             agent_id=default_agent.agent_id,
         ),
     )

@@ -85,7 +85,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -98,7 +97,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -155,7 +153,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -212,7 +209,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -235,7 +231,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             context_mode="brief_only",
@@ -270,7 +265,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="coding",
-            app_id="main_agent",
             agent_id="coding",
             requested_tool_profile="restricted",
             context_mode="brief_only",
@@ -328,15 +322,14 @@ class SubagentServiceContractTests(unittest.TestCase):
             AgentSpec(
                 agent_id="coding",
                 role="coding_agent",
-                app_id="main_agent",
-                allowed_tools=["runtime", "skill", "time"],
+                    allowed_tools=["runtime", "skill", "time"],
                 prompt_mode="child",
                 model_profile="openai_gpt_5_4",
             )
         )
-        app_runtime = SimpleNamespace(
+        agent_runtime = SimpleNamespace(
             system_prompt="coding child prompt",
-            manifest=SimpleNamespace(bootstrap_manifest_id="boot_main_agent_child"),
+            prompt_manifest_id="agent_coding_child",
         )
         service = SubagentService(
             session_store=session_store,
@@ -347,7 +340,7 @@ class SubagentServiceContractTests(unittest.TestCase):
             max_queued_subagents=4,
             subagent_timeout_seconds=5,
             agent_registry=agent_registry,
-            app_runtimes={"main_agent": app_runtime},
+            agent_runtimes={"coding": agent_runtime},
             llm_client_factory=FakeLLMFactory(),
             models_config=ModelsConfig(
                 default_profile="openai_gpt_5_4",
@@ -367,7 +360,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="coding",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -381,16 +373,15 @@ class SubagentServiceContractTests(unittest.TestCase):
         self.assertEqual(agent.agent_id, "coding")
         self.assertEqual(agent.role, "coding_agent")
         self.assertEqual(agent.prompt_mode, "child")
-        self.assertEqual(agent.app_id, "main_agent")
         self.assertEqual(agent.allowed_tools, ["runtime", "skill", "time"])
         self.assertEqual(captured["system_prompt"], "coding child prompt")
-        self.assertEqual(captured["bootstrap_manifest_id"], "boot_main_agent_child")
+        self.assertEqual(captured["bootstrap_manifest_id"], "agent_coding_child")
         self.assertEqual(captured["model_profile_name"], "openai_gpt_5_4")
         self.assertEqual(captured["tokenizer_family"], "openai_o200k")
         self.assertEqual(captured["factory_profile_name"], "openai_gpt_5_4")
         self.assertEqual(captured["llm_client"], {"profile_name": "openai_gpt_5_4"})
 
-    def test_spawn_persists_target_agent_app_id_in_task_record(self) -> None:
+    def test_spawn_persists_target_agent_id_in_task_record(self) -> None:
         from marten_runtime.agents.registry import AgentRegistry
         from marten_runtime.agents.specs import AgentSpec
         from marten_runtime.subagents.service import SubagentService
@@ -407,8 +398,7 @@ class SubagentServiceContractTests(unittest.TestCase):
             AgentSpec(
                 agent_id="coding",
                 role="coding_agent",
-                app_id="code_assistant",
-                allowed_tools=["runtime", "skill", "time"],
+                    allowed_tools=["runtime", "skill", "time"],
                 prompt_mode="child",
                 model_profile="openai_gpt_5_4",
             )
@@ -430,7 +420,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="coding",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -440,7 +429,6 @@ class SubagentServiceContractTests(unittest.TestCase):
 
         task = service.store.get(result["task_id"])
         self.assertEqual(task.agent_id, "coding")
-        self.assertEqual(task.app_id, "code_assistant")
 
     def test_spawn_child_session_uses_resolved_target_agent_metadata(self) -> None:
         from marten_runtime.agents.registry import AgentRegistry
@@ -469,8 +457,7 @@ class SubagentServiceContractTests(unittest.TestCase):
             AgentSpec(
                 agent_id="coding",
                 role="coding_agent",
-                app_id="code_assistant",
-                allowed_tools=["runtime", "skill", "time"],
+                    allowed_tools=["runtime", "skill", "time"],
                 prompt_mode="child",
                 model_profile="openai_gpt_5_4",
             )
@@ -492,7 +479,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="coding",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -553,7 +539,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -632,7 +617,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_old_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -648,7 +632,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_current_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -686,7 +669,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             context_mode="brief_only",
@@ -707,8 +689,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                 parent_session_id="sess_parent",
                 parent_run_id="run_parent",
                 parent_agent_id="main",
-                app_id="main_agent",
-                agent_id="main",
+                    agent_id="main",
                 requested_tool_profile="definitely_invalid",
                 context_mode="brief_only",
                 notify_on_finish=True,
@@ -731,7 +712,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="elevated",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -753,8 +733,7 @@ class SubagentServiceContractTests(unittest.TestCase):
                 parent_session_id="sess_parent",
                 parent_run_id="run_parent",
                 parent_agent_id="main",
-                app_id="main_agent",
-                agent_id="main",
+                    agent_id="main",
                 requested_tool_profile="default",
                 parent_allowed_tools=["automation", "mcp", "runtime", "skill", "time"],
                 context_mode="brief_only",
@@ -770,7 +749,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             parent_allowed_tools=["automation", "mcp", "runtime", "skill", "time"],
             context_mode="brief_only",
@@ -791,7 +769,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="mcp",
             parent_allowed_tools=["automation", "mcp", "runtime", "skill", "time"],
@@ -813,7 +790,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="mcp:github-or-web",
             parent_allowed_tools=["automation", "mcp", "runtime", "skill", "time"],
@@ -835,7 +811,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -894,7 +869,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -981,7 +955,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -1050,7 +1023,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -1128,7 +1100,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -1224,7 +1195,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -1300,7 +1270,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -1352,7 +1321,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -1365,7 +1333,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -1431,7 +1398,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -1539,7 +1505,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["mcp", "runtime", "skill", "time"],
@@ -1685,7 +1650,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["mcp", "runtime", "skill", "time"],
@@ -1728,7 +1692,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             label="child",
             tool_profile="restricted",
@@ -1833,7 +1796,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -1877,7 +1839,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -1898,7 +1859,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -1911,7 +1871,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -1967,7 +1926,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -2033,7 +1991,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent_simulated",
             parent_run_id="run_parent_simulated",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
@@ -2123,7 +2080,6 @@ class SubagentServiceContractTests(unittest.TestCase):
             parent_session_id="sess_parent",
             parent_run_id="run_parent",
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             parent_allowed_tools=["runtime", "skill", "time"],
