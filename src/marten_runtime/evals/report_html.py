@@ -51,7 +51,7 @@ def render_summary_html(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>评测报告：{html.escape(summary.eval_run_id)}</title>
+  <title>评测报告：{_text(_run_label(summary.eval_run_id))}</title>
   <style>
     :root {{
       color-scheme: light;
@@ -217,8 +217,9 @@ def render_summary_html(
 </head>
 <body>
   <div class="page">
-    <h1>评测报告：{html.escape(summary.eval_run_id)}</h1>
+    <h1>评测报告：{_text(_run_label(summary.eval_run_id))}</h1>
     <div class="muted">套件={html.escape(summary.suite_id)} · 模式={html.escape(summary.eval_mode)} · 分支={html.escape(summary.git_branch)} · 提交={html.escape(summary.git_sha)}</div>
+    <div class="muted">原始运行 ID：{html.escape(summary.eval_run_id)}</div>
     <div class="grid">
       <div class="card"><div class="metric">运行状态</div><div class="metric-value"><span class="status status-{html.escape(summary.status)}">{html.escape(summary.status)}</span></div></div>
       <div class="card"><div class="metric">总分</div><div class="metric-value">{summary.total_score}</div></div>
@@ -314,7 +315,8 @@ def _render_compare_block(compare_result: object) -> str:
     <div class="panel">
       <h2>基线对比</h2>
       <div class="kv">
-        <div>基线运行</div><div>{_text(compare_result.get('baseline_eval_run_id'))}</div>
+        <div>基线运行</div><div>{_text(_run_label(str(compare_result.get('baseline_eval_run_id') or '')))}</div>
+        <div>基线原始 ID</div><div>{_text(compare_result.get('baseline_eval_run_id'))}</div>
         <div>基线来源</div><div>{_text(compare_result.get('baseline_source'))}</div>
         <div>总分变化</div><div>{_delta(compare_result.get('total_score_delta'))}</div>
         <div>通过率变化</div><div>{_delta(compare_result.get('pass_rate_delta'))}</div>
@@ -362,7 +364,7 @@ def _render_stability_block(stability_result: object) -> str:
 
 def _render_provider_reliability_block(provider_reliability: object) -> str:
     if not isinstance(provider_reliability, dict):
-        return '<div class="panel"><h2>Provider 稳定性</h2><div class="muted">暂无 provider 稳定性摘要。</div></div>'
+        return '<div class="panel"><h2>Provider 评估</h2><div class="muted">暂无 provider 稳定性摘要。</div></div>'
     latest_runs = [
         item for item in list(provider_reliability.get('latest_runs') or []) if isinstance(item, dict)
     ]
@@ -372,18 +374,30 @@ def _render_provider_reliability_block(provider_reliability: object) -> str:
     error_text = ', '.join(
         f"{_text(item.get('error_kind'))}: {_text(item.get('count'))}" for item in top_error_kinds
     )
+    retry_count = _int_value(provider_reliability.get('retry_count'))
+    fallback_count = _int_value(provider_reliability.get('fallback_count'))
+    provider_error_count = _int_value(provider_reliability.get('provider_error_count'))
+    empty_output_count = _int_value(provider_reliability.get('empty_output_count'))
+    status_label, status_note = _provider_health_status(
+        retry_count=retry_count,
+        fallback_count=fallback_count,
+        provider_error_count=provider_error_count,
+        empty_output_count=empty_output_count,
+    )
     return f"""
     <div class="panel">
-      <h2>Provider 稳定性</h2>
+      <h2>Provider 评估</h2>
+      <div class="muted">本次评测报告中的模型服务稳定性摘要。</div>
       <div class="kv">
+        <div>Provider 状态</div><div>{_text(status_label)} · {_text(status_note)}</div>
         <div>窗口大小</div><div>{_text(provider_reliability.get('window_size'))}</div>
         <div>运行数</div><div>{_text(provider_reliability.get('run_count'))}</div>
-        <div>重试</div><div>{_text(provider_reliability.get('retry_count'))}</div>
-        <div>回退</div><div>{_text(provider_reliability.get('fallback_count'))}</div>
-        <div>错误</div><div>{_text(provider_reliability.get('provider_error_count'))}</div>
-        <div>空输出</div><div>{_text(provider_reliability.get('empty_output_count'))}</div>
-        <div>最近 final provider</div><div>{_text(provider_reliability.get('latest_final_provider_ref'))}</div>
-        <div>top error kinds</div><div>{error_text or '-'}</div>
+        <div>重试</div><div>{retry_count}</div>
+        <div>回退</div><div>{fallback_count}</div>
+        <div>错误</div><div>{provider_error_count}</div>
+        <div>空输出</div><div>{empty_output_count}</div>
+        <div>最近最终 provider</div><div>{_text(provider_reliability.get('latest_final_provider_ref'))}</div>
+        <div>主要错误类型</div><div>{error_text or '-'}</div>
       </div>
       <h3 style="margin-top:16px;">最近 runs</h3>
       {_render_provider_reliability_runs(latest_runs)}
@@ -396,13 +410,13 @@ def _render_provider_reliability_runs(items: list[dict[str, object]]) -> str:
         return '<div class="muted">none</div>'
     rows = [
         '<div class="table-wrap"><table><thead><tr>'
-        '<th>run_id</th><th>状态</th><th>重试</th><th>回退</th><th>错误</th><th>空输出</th><th>final provider</th>'
+        '<th>运行</th><th>状态</th><th>重试</th><th>回退</th><th>错误</th><th>空输出</th><th>最终 provider</th>'
         '</tr></thead><tbody>'
     ]
     for item in items:
         rows.append(
             '<tr>'
-            f"<td>{_text(item.get('run_id'))}</td>"
+            f"<td>{_text(_run_label(str(item.get('run_id') or '')))}</td>"
             f"<td>{_text(item.get('status'))}</td>"
             f"<td>{_text(item.get('retry_count'))}</td>"
             f"<td>{_text(item.get('fallback_count'))}</td>"
@@ -630,6 +644,70 @@ def _delta(value: object) -> str:
     if number < 0:
         return f'<span class="delta-down">{number}</span>'
     return '<span class="delta-flat">0.0</span>'
+
+
+def _run_label(value: str) -> str:
+    if not value or value == '-':
+        return '-'
+    if value == 'latest_passed':
+        return '最近通过基线'
+    if value.startswith('named:'):
+        return f"命名基线 {value.removeprefix('named:')}"
+    if value == 'explicit_run':
+        return '指定基线'
+    if value.startswith('eval_'):
+        parts = value.split('_')
+        if len(parts) >= 5 and parts[-1].isdigit() and parts[-3].isdigit():
+            suite = '_'.join(parts[1:-3])
+            timestamp = parts[-3]
+            sha = parts[-2]
+            sequence = parts[-1]
+            return f"{_suite_label(suite)} · {_format_eval_timestamp(timestamp)} · {sha[:7]} · 第{int(sequence) + 1}次"
+    return _short_id(value)
+
+
+def _suite_label(value: str) -> str:
+    return {
+        'main_chain_core': '主链黄金链路',
+        'main_chain_mcp': 'MCP 链路',
+        'main_chain_subagent': '子代理链路',
+        'memory_long_horizon': '记忆链路',
+        'subagent_task_progress': '子代理进度链路',
+        'ops_smoke': '运维冒烟链路',
+    }.get(value, value)
+
+
+def _format_eval_timestamp(value: str) -> str:
+    if len(value) < 14 or not value[:14].isdigit():
+        return value
+    return f"{value[:4]}-{value[4:6]}-{value[6:8]} {value[8:10]}:{value[10:12]}:{value[12:14]}"
+
+
+def _short_id(value: str) -> str:
+    if len(value) <= 34:
+        return value
+    return f"{value[:18]}…{value[-10:]}"
+
+
+def _int_value(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _provider_health_status(
+    *,
+    retry_count: int,
+    fallback_count: int,
+    provider_error_count: int,
+    empty_output_count: int,
+) -> tuple[str, str]:
+    if provider_error_count > 0 or empty_output_count > 0:
+        return ('有错误', '存在 provider 错误或空输出')
+    if retry_count > 0 or fallback_count > 0:
+        return ('有波动', '出现重试或 provider 回退')
+    return ('健康', '无重试、无回退、无错误、无空输出')
 
 
 def _text(value: object) -> str:

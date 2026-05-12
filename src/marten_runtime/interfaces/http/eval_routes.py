@@ -364,11 +364,12 @@ def _render_runs_page(runs: list[dict[str, object]], *, limit: int) -> str:
     return _page(
         "历史运行记录",
         "<h1>历史运行记录</h1>"
-        "<p class=\"lead\">按最新时间展示 eval 运行记录，包含状态、分数、基线对比和报告入口。</p>"
+        "<p class=\"lead\">按最新时间展示 eval 运行记录，包含状态、分数、基线对比、Provider 评估和报告入口。</p>"
         f"{_overview_cards(runs)}"
+        f"{_provider_eval_overview(runs)}"
         "<section class=\"panel\"><h2>运行记录</h2>"
         f"<p class=\"muted\">当前显示最近 {limit} 条。JSON API 可通过 Accept: application/json 获取原始数据。</p>"
-        "<table><thead><tr><th>运行</th><th>套件</th><th>状态</th><th>总分</th><th>通过率</th><th>重试</th><th>回退</th><th>错误</th><th>空输出</th><th>对比基线</th><th>总分变化</th><th>通过率变化</th><th>变化用例</th><th>模型配置</th><th>开始时间</th><th>报告</th></tr></thead>"
+        "<table><thead><tr><th>运行</th><th>套件</th><th>状态</th><th>总分</th><th>通过率</th><th>Provider 重试</th><th>Provider 回退</th><th>Provider 错误</th><th>空输出</th><th>对比基线</th><th>总分变化</th><th>通过率变化</th><th>变化用例</th><th>模型配置</th><th>开始时间</th><th>报告</th></tr></thead>"
         f"<tbody>{run_rows}</tbody></table></section>",
     )
 
@@ -381,12 +382,13 @@ def _render_home(suites: list[dict[str, object]], runs: list[dict[str, object]])
         "<h1>评测总览</h1>"
         "<p class=\"lead\">同服务 eval 运维面：查看当前评测链路状态、历史记录、基线分数变化和报告入口。</p>"
         f"{_overview_cards(runs)}"
+        f"{_provider_eval_overview(runs)}"
         "<section class=\"panel\"><h2>评测套件</h2>"
         "<table><thead><tr><th>套件</th><th>默认模式</th><th>用例数</th><th>依赖</th><th>说明</th></tr></thead>"
         f"<tbody>{suite_rows}</tbody></table></section>"
         "<section class=\"panel\"><h2>运行记录</h2>"
         "<p class=\"muted\">总分变化与通过率变化来自该次运行的基线对比；红色代表回退，绿色代表提升。</p>"
-        "<table><thead><tr><th>运行</th><th>套件</th><th>状态</th><th>总分</th><th>通过率</th><th>重试</th><th>回退</th><th>错误</th><th>空输出</th><th>对比基线</th><th>总分变化</th><th>通过率变化</th><th>变化用例</th><th>模型配置</th><th>开始时间</th><th>报告</th></tr></thead>"
+        "<table><thead><tr><th>运行</th><th>套件</th><th>状态</th><th>总分</th><th>通过率</th><th>Provider 重试</th><th>Provider 回退</th><th>Provider 错误</th><th>空输出</th><th>对比基线</th><th>总分变化</th><th>通过率变化</th><th>变化用例</th><th>模型配置</th><th>开始时间</th><th>报告</th></tr></thead>"
         f"<tbody>{run_rows}</tbody></table></section>",
     )
 
@@ -415,12 +417,39 @@ def _overview_cards(runs: list[dict[str, object]]) -> str:
         ("最近运行", str(len(runs)), f"通过 {status_counts.get('passed', 0)} · 失败 {status_counts.get('failed', 0)} · 阻塞 {status_counts.get('blocked', 0)}"),
         ("最新状态", latest_status, f"总分 {latest_score}"),
         ("最新分数变化", latest_delta, "相对本次基线"),
-        ("最新基线", _short_id(str(baseline)), "用于判断提升或回退"),
+        ("最新基线", _run_label(str(baseline)), "用于判断提升或回退"),
     ]
     return '<div class="cards">' + ''.join(
         f'<div class="card"><div class="card-title">{_e(title)}</div><div class="card-value">{value}</div><div class="card-note">{_e(note)}</div></div>'
         for title, value, note in cards
     ) + '</div>'
+
+
+def _provider_eval_overview(runs: list[dict[str, object]]) -> str:
+    retry_count = sum(_int_value(item.get("retry_count")) for item in runs)
+    fallback_count = sum(_int_value(item.get("fallback_count")) for item in runs)
+    provider_error_count = sum(_int_value(item.get("provider_error_count")) for item in runs)
+    empty_output_count = sum(_int_value(item.get("empty_output_count")) for item in runs)
+    latest_provider = _latest_provider_ref(runs)
+    status_label, status_note, status_css = _provider_health_status(
+        retry_count=retry_count,
+        fallback_count=fallback_count,
+        provider_error_count=provider_error_count,
+        empty_output_count=empty_output_count,
+    )
+    return (
+        '<section class="panel"><h2>Provider 评估</h2>'
+        '<p class="muted">统计最近运行中的模型服务稳定性：重试、回退、错误、空输出和最终 provider。</p>'
+        '<div class="cards">'
+        f'<div class="card"><div class="card-title">Provider 状态</div><div class="card-value"><span class="badge {status_css}">{_e(status_label)}</span></div><div class="card-note">{_e(status_note)}</div></div>'
+        f'<div class="card"><div class="card-title">Provider 重试</div><div class="card-value">{retry_count}</div><div class="card-note">最近 runs 合计</div></div>'
+        f'<div class="card"><div class="card-title">Provider 回退</div><div class="card-value">{fallback_count}</div><div class="card-note">profile/provider 切换次数</div></div>'
+        f'<div class="card"><div class="card-title">Provider 错误</div><div class="card-value">{provider_error_count}</div><div class="card-note">provider 调用失败次数</div></div>'
+        f'<div class="card"><div class="card-title">空输出</div><div class="card-value">{empty_output_count}</div><div class="card-note">模型无有效最终输出</div></div>'
+        '</div>'
+        f'<p class="muted">最近最终 provider：<strong>{_e(latest_provider)}</strong></p>'
+        '</section>'
+    )
 
 
 def _status_counts(runs: list[dict[str, object]]) -> dict[str, int]:
@@ -461,11 +490,12 @@ def _render_run(
         else ""
     )
     return _page(
-        f"Eval {summary['eval_run_id']}",
+        f"Eval {_run_label(str(summary['eval_run_id']))}",
         "<h1>评测详情</h1>"
         "<section class=\"panel\"><h2>本次运行</h2>"
         "<div class=\"kv\">"
-        f"<div>运行 ID</div><div><code>{_e(summary['eval_run_id'])}</code></div>"
+        f"<div>运行</div><div>{_e(_run_label(str(summary['eval_run_id'])))}</div>"
+        f"<div>原始 ID</div><div><code>{_e(summary['eval_run_id'])}</code></div>"
         f"<div>套件</div><div><code>{_e(summary['suite_id'])}</code></div>"
         f"<div>状态</div><div>{_status_badge(summary.get('status'))}</div>"
         f"<div>总分</div><div>{_format_number(summary.get('total_score'))}</div>"
@@ -491,7 +521,7 @@ def _run_row(item: dict[str, object]) -> str:
     baseline = item.get("baseline_eval_run_id") or item.get("baseline_source") or ""
     return (
         "<tr>"
-        f'<td><a href="/evals/runs/{_e(run_id)}/view"><code>{_e(_short_id(run_id))}</code></a></td>'
+        f'<td><a href="/evals/runs/{_e(run_id)}/view">{_e(_run_label(run_id))}</a></td>'
         f"<td><code>{_e(item.get('suite_id') or '')}</code></td>"
         f"<td>{_status_badge(item.get('status'))}</td>"
         f"<td>{_format_number(item.get('total_score'))}</td>"
@@ -500,7 +530,7 @@ def _run_row(item: dict[str, object]) -> str:
         f"<td>{_e(item.get('fallback_count') or 0)}</td>"
         f"<td>{_e(item.get('provider_error_count') or 0)}</td>"
         f"<td>{_e(item.get('empty_output_count') or 0)}</td>"
-        f"<td><code>{_e(_short_id(str(baseline)))}</code></td>"
+        f"<td>{_e(_run_label(str(baseline)))}</td>"
         f"<td>{_delta_cell(item.get('total_score_delta'))}</td>"
         f"<td>{_delta_cell(item.get('pass_rate_delta'), percent=True)}</td>"
         f"<td>{_e(_format_changes(item))}</td>"
@@ -527,7 +557,7 @@ def _render_blocked_reason(blocked_reason: object) -> str:
 
 def _render_provider_reliability_block(provider_reliability: object) -> str:
     if not isinstance(provider_reliability, dict):
-        return '<section class="panel"><h2>Provider 稳定性</h2><p class="muted">暂无 provider 稳定性摘要。</p></section>'
+        return '<section class="panel"><h2>Provider 评估</h2><p class="muted">暂无 provider 稳定性摘要。</p></section>'
     top_error_kinds = list(provider_reliability.get("top_error_kinds") or [])
     latest_runs = list(provider_reliability.get("latest_runs") or [])
     error_kind_text = ", ".join(
@@ -535,17 +565,29 @@ def _render_provider_reliability_block(provider_reliability: object) -> str:
         for item in top_error_kinds
         if isinstance(item, dict)
     )
+    retry_count = _int_value(provider_reliability.get("retry_count"))
+    fallback_count = _int_value(provider_reliability.get("fallback_count"))
+    provider_error_count = _int_value(provider_reliability.get("provider_error_count"))
+    empty_output_count = _int_value(provider_reliability.get("empty_output_count"))
+    status_label, status_note, status_css = _provider_health_status(
+        retry_count=retry_count,
+        fallback_count=fallback_count,
+        provider_error_count=provider_error_count,
+        empty_output_count=empty_output_count,
+    )
     return (
-        "<section class=\"panel\"><h2>Provider 稳定性</h2>"
+        "<section class=\"panel\"><h2>Provider 评估</h2>"
+        "<p class=\"muted\">本次评测报告中的 provider 可靠性摘要。</p>"
         "<div class=\"kv\">"
+        f"<div>Provider 状态</div><div><span class=\"badge {status_css}\">{_e(status_label)}</span> <span class=\"muted\">{_e(status_note)}</span></div>"
         f"<div>窗口大小</div><div>{_e(provider_reliability.get('window_size') or 0)}</div>"
         f"<div>运行数</div><div>{_e(provider_reliability.get('run_count') or 0)}</div>"
-        f"<div>重试</div><div>{_e(provider_reliability.get('retry_count') or 0)}</div>"
-        f"<div>回退</div><div>{_e(provider_reliability.get('fallback_count') or 0)}</div>"
-        f"<div>错误</div><div>{_e(provider_reliability.get('provider_error_count') or 0)}</div>"
-        f"<div>空输出</div><div>{_e(provider_reliability.get('empty_output_count') or 0)}</div>"
-        f"<div>最近 final provider</div><div>{_e(provider_reliability.get('latest_final_provider_ref') or '—')}</div>"
-        f"<div>top error kinds</div><div>{_e(error_kind_text or '—')}</div>"
+        f"<div>重试</div><div>{retry_count}</div>"
+        f"<div>回退</div><div>{fallback_count}</div>"
+        f"<div>错误</div><div>{provider_error_count}</div>"
+        f"<div>空输出</div><div>{empty_output_count}</div>"
+        f"<div>最近最终 provider</div><div>{_e(provider_reliability.get('latest_final_provider_ref') or '—')}</div>"
+        f"<div>主要错误类型</div><div>{_e(error_kind_text or '—')}</div>"
         "</div>"
         f"<h3 style=\"margin-top:16px;\">最近 runs</h3>{_render_provider_reliability_runs(latest_runs)}"
         "</section>"
@@ -557,7 +599,7 @@ def _render_provider_reliability_runs(runs: list[object]) -> str:
         return '<p class="muted">无</p>'
     rows = "".join(
         "<tr>"
-        f"<td><code>{_e(_short_id(str(item.get('run_id') or '')))}</code></td>"
+        f"<td>{_e(_run_label(str(item.get('run_id') or '')))}</td>"
         f"<td>{_e(item.get('status') or '')}</td>"
         f"<td>{_e(item.get('retry_count') or 0)}</td>"
         f"<td>{_e(item.get('fallback_count') or 0)}</td>"
@@ -569,7 +611,7 @@ def _render_provider_reliability_runs(runs: list[object]) -> str:
         if isinstance(item, dict)
     )
     return (
-        "<table><thead><tr><th>run</th><th>状态</th><th>重试</th><th>回退</th><th>错误</th><th>空输出</th><th>final provider</th></tr></thead>"
+        "<table><thead><tr><th>运行</th><th>状态</th><th>重试</th><th>回退</th><th>错误</th><th>空输出</th><th>最终 provider</th></tr></thead>"
         f"<tbody>{rows}</tbody></table>"
     )
 
@@ -584,7 +626,8 @@ def _render_compare_block(summary: dict[str, object], compare: object) -> str:
     return (
         "<section class=\"panel\"><h2>对比结果</h2>"
         "<div class=\"kv\">"
-        f"<div>对比基线</div><div><code>{_e(baseline)}</code></div>"
+        f"<div>对比基线</div><div>{_e(_run_label(str(baseline)))}</div>"
+        f"<div>基线原始 ID</div><div><code>{_e(baseline or '—')}</code></div>"
         f"<div>基线来源</div><div>{_e(source)}</div>"
         f"<div>总分变化</div><div>{_delta_cell(compare.get('total_score_delta'))}</div>"
         f"<div>通过率变化</div><div>{_delta_cell(compare.get('pass_rate_delta'), percent=True)}</div>"
@@ -652,6 +695,20 @@ def _status_label(value: object) -> str:
     }.get(str(value or ""), str(value or "—"))
 
 
+def _provider_health_status(
+    *,
+    retry_count: int,
+    fallback_count: int,
+    provider_error_count: int,
+    empty_output_count: int,
+) -> tuple[str, str, str]:
+    if provider_error_count > 0 or empty_output_count > 0:
+        return ("有错误", "存在 provider 错误或空输出", "bad")
+    if retry_count > 0 or fallback_count > 0:
+        return ("有波动", "出现重试或 provider 回退", "warn")
+    return ("健康", "无重试、无回退、无错误、无空输出", "ok")
+
+
 def _mode_label(value: object) -> str:
     return {
         "live": "真实链路",
@@ -667,12 +724,66 @@ def _dependency_label(value: str) -> str:
     }.get(value, value)
 
 
+def _run_label(value: str) -> str:
+    if not value or value == "—":
+        return "—"
+    if value == "latest_passed":
+        return "最近通过基线"
+    if value.startswith("named:"):
+        return f"命名基线 {value.removeprefix('named:')}"
+    if value == "explicit_run":
+        return "指定基线"
+    if value.startswith("eval_"):
+        parts = value.split("_")
+        if len(parts) >= 5 and parts[-1].isdigit() and parts[-3].isdigit():
+            suite = "_".join(parts[1:-3])
+            timestamp = parts[-3]
+            sha = parts[-2]
+            sequence = parts[-1]
+            return f"{_suite_label(suite)} · {_format_eval_timestamp(timestamp)} · {sha[:7]} · 第{int(sequence) + 1}次"
+    return _short_id(value)
+
+
+def _suite_label(value: str) -> str:
+    return {
+        "main_chain_core": "主链黄金链路",
+        "main_chain_mcp": "MCP 链路",
+        "main_chain_subagent": "子代理链路",
+        "memory_long_horizon": "记忆链路",
+        "subagent_task_progress": "子代理进度链路",
+        "ops_smoke": "运维冒烟链路",
+    }.get(value, value)
+
+
+def _format_eval_timestamp(value: str) -> str:
+    if len(value) < 14 or not value[:14].isdigit():
+        return value
+    return f"{value[:4]}-{value[4:6]}-{value[6:8]} {value[8:10]}:{value[10:12]}:{value[12:14]}"
+
+
 def _short_id(value: str) -> str:
     if not value or value == "—":
         return value or "—"
     if len(value) <= 34:
         return value
     return f"{value[:18]}…{value[-10:]}"
+
+
+def _int_value(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _latest_provider_ref(runs: list[dict[str, object]]) -> str:
+    for item in runs:
+        provider_reliability = item.get("provider_reliability")
+        if isinstance(provider_reliability, dict):
+            value = provider_reliability.get("latest_final_provider_ref")
+            if value:
+                return str(value)
+    return "—"
 
 
 def _format_timestamp(value: object) -> str:

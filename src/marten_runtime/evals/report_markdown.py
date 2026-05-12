@@ -31,7 +31,7 @@ def build_summary_markdown(
     if provider_reliability:
         md_lines.extend(
             [
-                '## Provider Stability',
+                '## Provider 评估',
                 '',
                 f"- window_size: `{provider_reliability.get('window_size')}`",
                 f"- run_count: `{provider_reliability.get('run_count')}`",
