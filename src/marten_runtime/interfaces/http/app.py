@@ -135,7 +135,7 @@ def create_app(
         record = runtime.session_store.get_or_create_for_conversation(
             conversation_id=f"conversation_{runtime.session_store.count() + 1}",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         return {"session_id": record.session_id}
 

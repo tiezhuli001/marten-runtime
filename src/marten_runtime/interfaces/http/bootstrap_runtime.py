@@ -254,6 +254,7 @@ class HTTPRuntimeState:
     binding_registry: AgentBindingRegistry
     agent_router: AgentRouter
     default_agent: AgentSpec
+    default_prompt_manifest_id: str
     skill_service: SkillService
     subagent_service: SubagentService
     capability_catalog_text: str | None
@@ -316,6 +317,7 @@ def build_http_runtime(
         )
     )
     default_agent_runtime = agent_runtimes[default_agent.agent_id]
+    default_prompt_manifest_id = default_agent_runtime.prompt_manifest_id
     system_prompt = default_agent_runtime.system_prompt
     skill_service = SkillService([str(resolved_repo_root / "skills")])
     automation_store, self_improve_store, session_store = build_stateful_stores(
@@ -365,6 +367,7 @@ def build_http_runtime(
         feishu_delivery=feishu_delivery,
         agent_registry=agent_registry,
         app_runtimes={},
+        agent_runtimes=agent_runtimes,
         llm_client_factory=llm_client_factory,
         models_config=models_config,
         repository_context=resolve_repository_context(
@@ -420,6 +423,7 @@ def build_http_runtime(
         binding_registry=binding_registry,
         agent_router=agent_router,
         default_agent=default_agent,
+        default_prompt_manifest_id=default_prompt_manifest_id,
         skill_service=skill_service,
         subagent_service=subagent_service,
         capability_catalog_text=capability_catalog_text,

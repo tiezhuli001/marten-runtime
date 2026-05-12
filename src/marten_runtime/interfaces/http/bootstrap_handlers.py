@@ -58,7 +58,7 @@ def _process_inbound_envelope(
     session = state.session_store.get_or_create_for_conversation(
         conversation_id=envelope.conversation_id,
         config_snapshot_id=state.config_snapshot.config_snapshot_id,
-        bootstrap_manifest_id=state.agent_runtimes[state.default_agent.agent_id].prompt_manifest_id,
+        bootstrap_manifest_id=state.default_prompt_manifest_id,
         channel_id=envelope.channel_id,
         user_id=envelope.user_id,
     )
@@ -174,7 +174,7 @@ def _process_automation_dispatch(
     session = state.session_store.get_or_create_for_conversation(
         conversation_id=dispatch.session_id,
         config_snapshot_id=state.config_snapshot.config_snapshot_id,
-        bootstrap_manifest_id=state.agent_runtimes[state.default_agent.agent_id].prompt_manifest_id,
+        bootstrap_manifest_id=state.default_prompt_manifest_id,
         channel_id=dispatch.delivery_channel,
     )
     routed_agent = state.agent_registry.get(dispatch.agent_id)

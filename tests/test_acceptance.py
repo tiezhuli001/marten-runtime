@@ -28,38 +28,13 @@ from tests.http_app_support import build_test_app
 from tests.support.finalization_contracts import contracted_final_reply
 
 
-def _write_test_app(
-    root: Path,
-    app_id: str,
-    *,
-    prompt_mode: str,
-    marker: str,
-    default_agent: str = "main",
-) -> None:
-    app_root = root / "apps" / app_id
-    app_root.mkdir(parents=True, exist_ok=True)
-    (app_root / "app.toml").write_text(
-        (
-            f'app_id = "{app_id}"\n'
-            'app_version = "0.1.0"\n'
-            f'default_agent = "{default_agent}"\n'
-            f'prompt_mode = "{prompt_mode}"\n'
-            'delegation_policy = "isolated_session_only"\n\n'
-            '[bootstrap]\n'
-            f'root = "apps/{app_id}"\n'
-            'agents = "AGENTS.md"\n'
-            'identity = "SOUL.md"\n'
-            'tools = "TOOLS.md"\n'
-            'bootstrap = "BOOTSTRAP.md"\n\n'
-            '[skills]\nrequired = []\n\n'
-            '[mcp]\nrequired_servers = []\n'
-        ),
-        encoding="utf-8",
-    )
-    (app_root / "BOOTSTRAP.md").write_text(f"{marker} bootstrap", encoding="utf-8")
-    (app_root / "SOUL.md").write_text(f"{marker} soul", encoding="utf-8")
-    (app_root / "AGENTS.md").write_text(f"{marker} agents", encoding="utf-8")
-    (app_root / "TOOLS.md").write_text(f"{marker} tools", encoding="utf-8")
+def _write_agent_assets(root: Path, asset_root: str, *, marker: str) -> None:
+    agent_root = root / asset_root
+    agent_root.mkdir(parents=True, exist_ok=True)
+    (agent_root / "BOOTSTRAP.md").write_text(f"{marker} bootstrap", encoding="utf-8")
+    (agent_root / "SOUL.md").write_text(f"{marker} soul", encoding="utf-8")
+    (agent_root / "AGENTS.md").write_text(f"{marker} agents", encoding="utf-8")
+    (agent_root / "TOOLS.md").write_text(f"{marker} tools", encoding="utf-8")
 
 
 def _write_test_repo(root: Path) -> None:
@@ -70,13 +45,13 @@ def _write_test_repo(root: Path) -> None:
         (
             '[agents.main]\n'
             'role = "general_assistant"\n'
-            'app_id = "main_agent"\n'
+            'asset_root = "agents/main"\n'
             'allowed_tools = ["automation", "mcp", "runtime", "self_improve", "skill", "time", "spawn_subagent", "cancel_subagent"]\n'
             'prompt_mode = "full"\n'
             'model_profile = "minimax_m2_7_highspeed"\n\n'
             '[agents.coding]\n'
             'role = "coding_agent"\n'
-            'app_id = "code_assistant"\n'
+            'asset_root = "agents/coding"\n'
             'allowed_tools = ["runtime", "skill", "time"]\n'
             'prompt_mode = "child"\n'
             'model_profile = "openai_gpt_5_4"\n'
@@ -134,8 +109,8 @@ def _write_test_repo(root: Path) -> None:
         ),
         encoding="utf-8",
     )
-    _write_test_app(root, "main_agent", prompt_mode="full", marker="DEFAULT APP", default_agent="main")
-    _write_test_app(root, "code_assistant", prompt_mode="child", marker="CODE APP", default_agent="coding")
+    _write_agent_assets(root, "agents/main", marker="DEFAULT AGENT")
+    _write_agent_assets(root, "agents/coding", marker="CODE AGENT")
 
 
 def _write_session_enabled_coding_repo(root: Path) -> None:
@@ -144,13 +119,13 @@ def _write_session_enabled_coding_repo(root: Path) -> None:
         (
             '[agents.main]\n'
             'role = "general_assistant"\n'
-            'app_id = "main_agent"\n'
+            'asset_root = "agents/main"\n'
             'allowed_tools = ["automation", "mcp", "runtime", "self_improve", "session", "skill", "time", "spawn_subagent", "cancel_subagent"]\n'
             'prompt_mode = "full"\n'
             'model_profile = "minimax_m2_7_highspeed"\n\n'
             '[agents.coding]\n'
             'role = "coding_agent"\n'
-            'app_id = "code_assistant"\n'
+            'asset_root = "agents/coding"\n'
             'allowed_tools = ["session", "runtime", "skill", "time"]\n'
             'prompt_mode = "child"\n'
             'model_profile = "openai_gpt_5_4"\n'
@@ -1009,7 +984,7 @@ class AcceptanceTests(unittest.TestCase):
         )
         self.assertEqual(reloaded_current.last_run_id, resumed.json()["events"][-1]["run_id"])
 
-    def test_http_runtime_switches_app_manifest_and_bootstrap_prompt_by_selected_agent(self) -> None:
+    def test_http_runtime_switches_agent_assets_and_bootstrap_prompt_by_selected_agent(self) -> None:
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             _write_test_repo(repo_root)
@@ -1040,9 +1015,9 @@ class AcceptanceTests(unittest.TestCase):
         coding_requests = [
             request for request in coding_llm.requests if request.request_kind != "session_summary"
         ]
-        self.assertIn("CODE APP bootstrap", coding_requests[0].system_prompt)
-        self.assertIn("你是 `code_assistant`", coding_requests[0].system_prompt)
-        self.assertEqual(run_diag.json()["bootstrap_manifest_id"], "boot_code_assistant_child")
+        self.assertIn("CODE AGENT bootstrap", coding_requests[0].system_prompt)
+        self.assertIn("你是 `coding`", coding_requests[0].system_prompt)
+        self.assertEqual(run_diag.json()["bootstrap_manifest_id"], "agent_coding_child")
 
     def test_http_messages_proactively_compact_long_history_and_persist_checkpoint(self) -> None:
         with TemporaryDirectory() as tmpdir:
