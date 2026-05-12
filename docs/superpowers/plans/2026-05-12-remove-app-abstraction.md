@@ -250,7 +250,7 @@ git commit -m "Remove app id from automation jobs"
 - [ ] Run grep:
 
 ```bash
-grep -R "marten_runtime.apps\|app_id\|AppManifest\|load_app\|apps/" -n src tests config README.md docs | grep -v "FEISHU_APP_ID" | grep -v "channels/feishu"
+grep -R "marten_runtime.apps\|app_id\|AppManifest\|load_app\|apps/" -n src tests config README.md docs | grep -v "FEISHU_APP_ID" | grep -v "channels/feishu" | grep -v "docs/archive/" | grep -v "docs/superpowers/plans/"
 ```
 
 - [ ] Remove or rename each surviving runtime-app reference.
@@ -331,10 +331,118 @@ PYTHONPATH=src /tmp/marten-runtime-py313-verify/bin/python -m pytest -q
 - [ ] Run static reference check:
 
 ```bash
-grep -R "marten_runtime.apps\|AppManifest\|load_app_runtimes\|apps/<app_id>\|apps/main_agent\|app_id" -n src tests config README.md docs | grep -v "FEISHU_APP_ID" | grep -v "channels/feishu" | grep -v "docs/archive/"
+grep -R "marten_runtime.apps\|AppManifest\|load_app_runtimes\|apps/<app_id>\|apps/main_agent\|app_id" -n src tests config README.md docs | grep -v "FEISHU_APP_ID" | grep -v "channels/feishu" | grep -v "docs/archive/" | grep -v "docs/superpowers/plans/"
 ```
 
 Expected: no active runtime app references.
+
+
+
+### Task 11: Run eval gates for main chain and delegation
+
+- [ ] Verify eval CLI still loads suites after `apps/` removal:
+
+```bash
+PYTHONPATH=src /tmp/marten-runtime-py313-verify/bin/python scripts/run_eval.py --list-suites
+```
+
+Expected: includes `main_chain_core`, `main_chain_subagent`, `subagent_task_progress`, and `memory_long_horizon`.
+
+- [ ] Run scripted evals that exercise bootstrap prompt, main routing, session state, memory, and subagent surfaces:
+
+```bash
+PYTHONPATH=src /tmp/marten-runtime-py313-verify/bin/python scripts/run_eval.py --suite main_chain_core --mode scripted --profile openai_gpt_5_4 --db-path /tmp/marten-app-removal-evals.sqlite3 --report-root /tmp/marten-app-removal-reports
+PYTHONPATH=src /tmp/marten-runtime-py313-verify/bin/python scripts/run_eval.py --suite main_chain_subagent --mode scripted --profile openai_gpt_5_4 --db-path /tmp/marten-app-removal-evals.sqlite3 --report-root /tmp/marten-app-removal-reports
+PYTHONPATH=src /tmp/marten-runtime-py313-verify/bin/python scripts/run_eval.py --suite memory_long_horizon --mode scripted --profile openai_gpt_5_4 --db-path /tmp/marten-app-removal-evals.sqlite3 --report-root /tmp/marten-app-removal-reports
+```
+
+Expected: each command exits `0` and prints `status=passed`.
+
+- [ ] Run live evals when provider credentials are present:
+
+```bash
+PYTHONPATH=src /tmp/marten-runtime-py313-verify/bin/python scripts/run_eval.py --suite main_chain_core --mode live --profile openai_gpt_5_4 --db-path /tmp/marten-app-removal-live-evals.sqlite3 --report-root /tmp/marten-app-removal-live-reports
+PYTHONPATH=src /tmp/marten-runtime-py313-verify/bin/python scripts/run_eval.py --suite main_chain_subagent --mode live --profile openai_gpt_5_4 --db-path /tmp/marten-app-removal-live-evals.sqlite3 --report-root /tmp/marten-app-removal-live-reports
+```
+
+Expected: each command exits `0` and prints `status=passed`. A dependency block is acceptable only when the report says a provider or MCP credential is missing.
+
+### Task 12: Run local HTTP smoke against the active runtime path
+
+- [ ] Start the runtime:
+
+```bash
+PYTHONPATH=src /tmp/marten-runtime-py313-verify/bin/python -m uvicorn marten_runtime.interfaces.http.app:create_app --factory --host 127.0.0.1 --port 8000
+```
+
+- [ ] Verify health and runtime diagnostics:
+
+```bash
+curl -sS http://127.0.0.1:8000/healthz
+curl -sS http://127.0.0.1:8000/diagnostics/runtime
+```
+
+Expected: `/healthz` returns `{"status":"ok"}`; diagnostics includes `default_agent_id = main`, provider info, tool registry info, and no runtime `app_id` field.
+
+- [ ] Verify main-agent `/messages` path:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/messages \
+  -H 'content-type: application/json' \
+  -d '{"channel_id":"http","user_id":"smoke-user","conversation_id":"smoke-main","message_id":"smoke-main-1","body":"用一句中文说明当前默认 agent 是谁。"}'
+```
+
+Expected: response has `status=accepted`, a non-empty `final_text`, and one final run id in `events`.
+
+- [ ] Verify explicit agent routing still works:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/messages \
+  -H 'content-type: application/json' \
+  -d '{"channel_id":"http","user_id":"smoke-user","conversation_id":"smoke-coding","message_id":"smoke-coding-1","requested_agent_id":"coding","body":"确认你正在按 coding agent 的工具权限运行。"}'
+```
+
+Expected: response has `status=accepted`; `/diagnostics/run/{run_id}` shows `agent_id = coding` and prompt manifest generated from the coding agent.
+
+### Task 13: Run real Feishu verification
+
+Use the existing operator checklist in `/Users/litiezhu/workspace/github/marten-runtime/docs/LIVE_VERIFICATION_CHECKLIST.md`.
+
+- [ ] Start runtime with live `.env` and Feishu websocket enabled.
+- [ ] Confirm `GET /diagnostics/runtime` reports Feishu websocket connected.
+- [ ] Confirm diagnostics still reports `default_agent_id = main` and no runtime `app_id` field.
+- [ ] From a real Feishu DM or fixed verification chat, send the main-chain prompt:
+
+```text
+请先告诉我现在的北京时间，再用 GitHub MCP 查询 tiezhuli001/codex-skills 最近一次提交时间，最后合并成一句中文回复。
+```
+
+Expected path: `Feishu -> main agent -> time -> mcp -> Feishu`.
+
+- [ ] From the same real Feishu chat, send the subagent prompt:
+
+```text
+开启子代理查询 https://github.com/tiezhuli001/codex-skills 最近一次提交是什么时候
+```
+
+Expected path: `Feishu -> main agent -> spawn_subagent -> child agent -> GitHub MCP -> parent summary -> Feishu completion notice`.
+
+- [ ] Capture evidence:
+  - Feishu visible reply text or screenshot
+  - `GET /diagnostics/runtime`
+  - `GET /diagnostics/run/{run_id}` for parent runs
+  - `GET /diagnostics/subagents`
+  - `GET /diagnostics/subagent/{task_id}` for child task
+  - `GET /diagnostics/trace/{trace_id}`
+
+- [ ] Acceptance criteria:
+  - `dead_letter.count = 0`
+  - exactly one visible final reply for the main-chain prompt
+  - subagent completion notice appears once
+  - final replies contain no internal runtime metadata
+  - Feishu card rendering still works
+  - parent run uses `agent_id = main`
+  - child run uses the requested child agent id or configured fallback agent id
 
 - [ ] Final commit for missed test/doc fixes only:
 
