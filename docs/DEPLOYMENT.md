@@ -512,7 +512,7 @@ curl -sS http://127.0.0.1:8000/diagnostics/runtime
   - 可选本地覆盖
 - `mcps.json`
   - 实时 MCP server 定义
-- `apps/<app_id>/*.md`
+- `agents/<agent_id>/*.md`
   - prompt / bootstrap 资产
 
 完整配置映射请看 [CONFIG_SURFACES.md](./CONFIG_SURFACES.md)。

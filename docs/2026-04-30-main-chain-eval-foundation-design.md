@@ -132,7 +132,7 @@ Langfuse 和 run diagnostics 继续承担证据采集职责。
 每次评测都生成独立的临时 workspace：
 
 - 代码来源：当前 checkout
-- 配置来源：当前 repo 的 `config/`、`apps/`、`skills/`
+- 配置来源：当前 repo 的 `config/`、`agents/`、`skills/`
 - 数据来源：临时 `data/` 目录
 - 会话来源：评测专用 session id
 
@@ -371,7 +371,7 @@ PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite main_chain_core --pr
 3. 计算 `suite_fingerprint` 和 `config_fingerprint`
 4. 创建 `eval_run_id`
 5. 创建临时 eval workspace
-6. 拷贝当前 `config/`、`apps/`、`skills/` 到临时 workspace
+6. 拷贝当前 `config/`、`agents/`、`skills/` 到临时 workspace
 7. 创建隔离 `data/` 目录
 8. 通过 `create_app(...)` 或 `build_http_runtime(...)` 启动 in-process app
 9. 按 case 顺序执行用户 turn

@@ -70,9 +70,20 @@ flowchart LR
 | 5 | Channel 边界 | generic Feishu rendering、渲染边界收敛 |
 | 6 | 长会话治理 | compaction、usage accuracy、runtime context status |
 | 7 | 连续性与窄扩展 | tool summaries、MCP sidecars、direct render、窄扩展 |
-| 8 | 执行面 | `main_agent`、lightweight subagents、执行型默认 prompt |
+| 8 | 执行面 | `main`、agent-owned assets、lightweight subagents、执行型默认 prompt |
 | 9 | 可观测性硬化 | Langfuse tracing、run/trace correlation、实链验证 |
 | 10 | 评测运维面 | 离线评测、专项评分族、稳定性 compare、HTML 报告 |
+
+## 当前 agent 资产模型
+
+当前运行时以 agent 作为身份和资产边界：
+
+- 默认 agent id 是 `main`。
+- `config/agents.toml` 声明 `asset_root`、工具面、prompt mode 和 model profile。
+- prompt 资产位于 `agents/<agent_id>/`，例如 `agents/main/AGENTS.md`、`BOOTSTRAP.md`、`SOUL.md`、`TOOLS.md`。
+- 主链保持为 `channel -> binding -> agent router -> selected agent -> runtime loop -> builtin/MCP/skill/subagent -> delivery`。
+
+较早阶段里的 `main_agent` 和 `legacy main-agent asset root` 记录保留为历史时间线。当前代码和配置以 agent-owned asset root 为准。
 
 ## 当前架构快照
 

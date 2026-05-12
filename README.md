@@ -57,12 +57,12 @@ JSON API 通过 `Accept: application/json` 保持可用。
 
 ## 当前基线
 
-- 默认 runtime app：`main_agent`
+- 默认 runtime agent：`main`
 - canonical runtime agent id：`main`
 - session persistence：SQLite
 - 会话控制：`session.new` / `session.resume`
 - provider 配置：`config/providers.toml` + `config/models.toml`
-- agent 配置：`config/agents.toml` + `apps/<app_id>/`
+- agent 配置：`config/agents.toml` + `agents/<agent_id>/`
 - 自动任务：`automation` family builtin tool + operator HTTP surface
 - GitHub Trending：repo-local MCP sidecar + skill 行为资产
 - Observability：diagnostics + optional Langfuse tracing
@@ -73,8 +73,7 @@ JSON API 通过 `Accept: application/json` 保持可用。
 - `src/marten_runtime/`：runtime、channels、MCP、skills、sessions、diagnostics
 - `config/*.toml`：运行时策略和默认值
 - `config/bindings.toml`：channel/user/conversation 到 agent 的绑定规则
-- `apps/<app_id>/app.toml`：app manifest
-- `apps/<app_id>/*.md`：bootstrap prompt 资产
+- `agents/<agent_id>/*.md`：agent prompt 与行为资产
 - `skills/`：共享文件型 skills
 - `.env.example`：本地 secrets 模板
 - `mcps.example.json`：MCP 连接模板
@@ -129,17 +128,17 @@ cp mcps.example.json mcps.json
 
 - `.env`：只放 secrets 和机器本地 override
 - `mcps.json`：放实时 MCP server 定义和可选工具提示
-- `config/agents.toml`：放 runtime agent registry、app 绑定、tool surface 和 model profile 选择
+- `config/agents.toml`：放 runtime agent registry、asset root、tool surface 和 model profile 选择
 - `config/*.example.toml`：公开提交的模板默认值
 - `config/*.toml`：对应模板的本地覆盖文件
-- `apps/<app_id>/*.md`：放 bootstrap 和 agent 行为资产
+- `agents/<agent_id>/*.md`：放 bootstrap 和 agent 行为资产
 
 最小可运行配置：
 
 - 在 `.env` 设置 provider secret；当前最短路径包括 `OPENAI_API_KEY`、`MINIMAX_API_KEY`
 - 在 `config/providers.toml` 放 provider 连接元数据
 - 在 `config/models.toml` 放 profile 和模型选择
-- 在 `config/agents.toml` 放 agent 对应的 app / profile / tool 选择
+- 在 `config/agents.toml` 放 agent 对应的 asset root / profile / tool 选择
 - 提交态示例 profile id 统一采用 `provider + model` 的 slug；runtime 实际只读取 `provider_ref`、`model`、`fallback_profiles`
 - 如果你想切换 live profile，更新 `default_profile` 或 `profiles.openai_gpt_5_4` / `profiles.minimax_m2_7_highspeed`
 - 如果要启用 Langfuse 外部 tracing，在 `.env` 里补齐 `LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`
