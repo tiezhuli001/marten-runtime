@@ -17,7 +17,6 @@ class AutomationTests(unittest.TestCase):
 [[automations]]
 automation_id = "daily_hot"
 name = "Daily GitHub Hot Repos"
-app_id = "main_agent"
 agent_id = "main"
 prompt_template = "Summarize today's hot repositories."
 schedule_kind = "daily"
@@ -55,7 +54,6 @@ enabled = true
 [[automations]]
 automation_id = "daily_hot"
 name = "Daily GitHub Hot Repos"
-app_id = "main_agent"
 agent_id = "assistant"
 prompt_template = "Summarize today's hot repositories."
 schedule_kind = "daily"

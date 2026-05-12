@@ -252,7 +252,6 @@ class SessionCompactionWorkerTests(unittest.TestCase):
                     trace_id="trace_isolated",
                     message="hi",
                     agent_id="compaction",
-                    app_id="compaction",
                 )
             )
 
@@ -313,7 +312,6 @@ class SessionCompactionWorkerTests(unittest.TestCase):
                     trace_id="trace_compaction",
                     message="请生成交接摘要。",
                     agent_id="compaction",
-                    app_id="compaction",
                 )
             )
 

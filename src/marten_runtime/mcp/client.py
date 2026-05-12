@@ -290,6 +290,7 @@ class MCPClient:
             async with httpx.AsyncClient(
                 headers=server.headers or None,
                 timeout=self._effective_timeout_seconds(server, timeout_seconds_override, deadline_monotonic),
+                trust_env=False,
             ) as http_client:
                 manager = streamable_http_client(server.url, http_client=http_client)
                 async with manager as (read_stream, write_stream, get_session_id):

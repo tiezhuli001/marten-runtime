@@ -380,7 +380,7 @@ class GatewayContractTests(unittest.TestCase):
                 session_id=session_id,
                 trace_id=trace_id or "trace_missing",
                 config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-                bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+                bootstrap_manifest_id=runtime.default_prompt_manifest_id,
             )
             original_run_id = record.run_id
             record.run_id = run_id
@@ -456,7 +456,6 @@ class GatewayContractTests(unittest.TestCase):
             AutomationJob(
                 automation_id="paused_hot",
                 name="Paused GitHub Hot Repos",
-                app_id="main_agent",
                 agent_id="main",
                 prompt_template="hello from paused automation",
                 schedule_kind="daily",
@@ -496,7 +495,6 @@ class GatewayContractTests(unittest.TestCase):
             AutomationJob(
                 automation_id="daily_hot",
                 name="Daily GitHub Hot Repos",
-                app_id="main_agent",
                 agent_id="main",
                 prompt_template="hello from automation",
                 schedule_kind="daily",
@@ -540,7 +538,6 @@ class GatewayContractTests(unittest.TestCase):
             AutomationJob(
                 automation_id="daily_structured",
                 name="daily_structured",
-                app_id="main_agent",
                 agent_id="main",
                 prompt_template="hello from structured automation",
                 schedule_kind="daily",
@@ -604,7 +601,6 @@ class GatewayContractTests(unittest.TestCase):
             AutomationJob(
                 automation_id="plain_delivery",
                 name="plain_delivery",
-                app_id="main_agent",
                 agent_id="main",
                 prompt_template="请只回复：实时链路验证通过。",
                 schedule_kind="daily",
@@ -633,7 +629,6 @@ class GatewayContractTests(unittest.TestCase):
             AutomationJob(
                 automation_id="legacy_hot",
                 name="legacy_hot",
-                app_id="main_agent",
                 agent_id="main",
                 prompt_template="请只回复：兼容触发通过。",
                 schedule_kind="daily",
@@ -674,7 +669,6 @@ class GatewayContractTests(unittest.TestCase):
                 lessons_path=Path(tmpdir) / "SYSTEM_LESSONS.md",
                 judge=make_default_judge(
                     runtime.runtime_loop.llm,
-                    app_id="main_agent",
                     agent_id="main",
                 ),
             )

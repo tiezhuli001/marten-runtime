@@ -107,7 +107,6 @@ def _process_inbound_envelope(
         {
             "channel_id": envelope.channel_id,
             "conversation_id": envelope.conversation_id,
-            "app_id": "main_agent",
             "agent_id": routed_agent.agent_id,
         }
     )

@@ -132,7 +132,7 @@ class SelfImproveGateTests(unittest.TestCase):
                 )
             ]
         )
-        judge = make_default_judge(llm, app_id="main_agent", agent_id="main")
+        judge = make_default_judge(llm, agent_id="main")
         verdict = judge(
             LessonCandidate(
                 candidate_id="cand_1",
@@ -152,7 +152,7 @@ class SelfImproveGateTests(unittest.TestCase):
 
     def test_llm_judge_rejects_invalid_payload_safely(self) -> None:
         llm = ScriptedLLMClient([LLMReply(final_text="not json")])
-        judge = make_default_judge(llm, app_id="main_agent", agent_id="main")
+        judge = make_default_judge(llm, agent_id="main")
 
         verdict = judge(
             LessonCandidate(

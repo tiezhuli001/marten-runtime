@@ -153,7 +153,6 @@ class SubagentService:
         auto_start_background: bool = False,
         feishu_delivery=None,
         agent_registry=None,
-        app_runtimes: dict[str, object] | None = None,
         agent_runtimes: dict[str, object] | None = None,
         llm_client_factory=None,
         models_config=None,
@@ -171,7 +170,6 @@ class SubagentService:
         self.auto_start_background = auto_start_background
         self.feishu_delivery = feishu_delivery
         self.agent_registry = agent_registry
-        self.app_runtimes = dict(app_runtimes or {})
         self.agent_runtimes = dict(agent_runtimes or {})
         self.llm_client_factory = llm_client_factory
         self.models_config = models_config

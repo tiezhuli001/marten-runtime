@@ -62,7 +62,6 @@ def ensure_self_improve_automation(store: AutomationStore) -> None:
         AutomationJob(
             automation_id=automation_id,
             name="Internal Self Improve",
-            app_id="main_agent",
             agent_id=DEFAULT_AGENT_ID,
             prompt_template="Summarize repeated failures and later recoveries into lesson candidates.",
             schedule_kind="daily",

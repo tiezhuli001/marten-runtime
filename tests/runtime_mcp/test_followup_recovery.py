@@ -260,7 +260,6 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -331,7 +330,6 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -404,7 +402,6 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -855,7 +852,6 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["echo"],
         )
 

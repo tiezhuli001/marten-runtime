@@ -49,7 +49,6 @@ class EvalExecutorTests(unittest.TestCase):
             message=message,
             summary_input_text=message if request_kind == "session_summary" else None,
             agent_id="main",
-            app_id="main_agent",
             available_tools=[],
             tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_empty"),
             request_kind=request_kind,

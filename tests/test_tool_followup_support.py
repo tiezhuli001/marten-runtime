@@ -144,7 +144,6 @@ class ToolFollowupSupportTests(unittest.TestCase):
             trace_id="trace_1",
             message="继续",
             agent_id="main",
-            app_id="main_agent",
         )
         history = [
             ToolExchange(

@@ -366,7 +366,6 @@ def build_http_runtime(
         auto_start_background=True,
         feishu_delivery=feishu_delivery,
         agent_registry=agent_registry,
-        app_runtimes={},
         agent_runtimes=agent_runtimes,
         llm_client_factory=llm_client_factory,
         models_config=models_config,

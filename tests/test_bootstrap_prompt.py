@@ -2,16 +2,16 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from marten_runtime.apps.bootstrap_prompt import load_bootstrap_prompt
-from marten_runtime.apps.manifest import load_app_manifest
+from marten_runtime.agents.assets import load_agent_system_prompt
+from marten_runtime.agents.specs import AgentSpec
 
 
 class BootstrapPromptTests(unittest.TestCase):
     def test_bootstrap_prompt_stays_runtime_focused_and_compact(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        manifest = load_app_manifest(str(repo_root / "apps/main_agent/app.toml"))
+        spec = AgentSpec(agent_id="main", role="general_assistant")
 
-        prompt = load_bootstrap_prompt(repo_root=repo_root, manifest=manifest)
+        prompt = load_agent_system_prompt(repo_root=repo_root, spec=spec)
 
         self.assertIn("你是默认主 agent", prompt)
         self.assertIn("默认目标是把请求推进到下一个可验证结果", prompt)
@@ -29,9 +29,9 @@ class BootstrapPromptTests(unittest.TestCase):
 
     def test_bootstrap_prompt_includes_progressive_disclosure_operating_rules(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        manifest = load_app_manifest(str(repo_root / "apps/main_agent/app.toml"))
+        spec = AgentSpec(agent_id="main", role="general_assistant")
 
-        prompt = load_bootstrap_prompt(repo_root=repo_root, manifest=manifest)
+        prompt = load_agent_system_prompt(repo_root=repo_root, spec=spec)
 
         self.assertIn("先阅读当前可见的 skill summaries", prompt)
         self.assertIn("只在某个 skill 明显适用且 summary 不足时，再调用 `skill`", prompt)
@@ -42,9 +42,9 @@ class BootstrapPromptTests(unittest.TestCase):
 
     def test_bootstrap_prompt_keeps_mcp_guidance_contract_based_instead_of_github_route(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        manifest = load_app_manifest(str(repo_root / "apps/main_agent/app.toml"))
+        spec = AgentSpec(agent_id="main", role="general_assistant")
 
-        prompt = load_bootstrap_prompt(repo_root=repo_root, manifest=manifest)
+        prompt = load_agent_system_prompt(repo_root=repo_root, spec=spec)
 
         self.assertNotIn("GitHub repo URL", prompt)
         self.assertNotIn("owner/repo", prompt)
@@ -52,54 +52,54 @@ class BootstrapPromptTests(unittest.TestCase):
 
     def test_bootstrap_prompt_appends_runtime_learned_lessons_when_present(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        manifest = load_app_manifest(str(repo_root / "apps/main_agent/app.toml"))
+        spec = AgentSpec(agent_id="main", role="general_assistant")
 
         with TemporaryDirectory() as tmpdir:
             temp_root = Path(tmpdir)
-            app_root = temp_root / "apps/main_agent"
-            app_root.mkdir(parents=True)
+            agent_root = temp_root / "agents/main"
+            agent_root.mkdir(parents=True)
             for filename in ("BOOTSTRAP.md", "SOUL.md", "AGENTS.md", "TOOLS.md"):
-                source = repo_root / "apps/main_agent" / filename
-                (app_root / filename).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            (app_root / "SYSTEM_LESSONS.md").write_text(
+                source = repo_root / "agents/main" / filename
+                (agent_root / filename).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            (agent_root / "SYSTEM_LESSONS.md").write_text(
                 "# Runtime Lessons\n\n- 遇到重复失败时先读取最近失败证据再决定下一步。\n",
                 encoding="utf-8",
             )
 
-            prompt = load_bootstrap_prompt(repo_root=temp_root, manifest=manifest)
+            prompt = load_agent_system_prompt(repo_root=temp_root, spec=spec)
 
         self.assertIn("[Runtime Learned Lessons]", prompt)
         self.assertIn("遇到重复失败时先读取最近失败证据再决定下一步。", prompt)
 
     def test_bootstrap_prompt_ignores_empty_runtime_learned_lessons(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        manifest = load_app_manifest(str(repo_root / "apps/main_agent/app.toml"))
+        spec = AgentSpec(agent_id="main", role="general_assistant")
 
         with TemporaryDirectory() as tmpdir:
             temp_root = Path(tmpdir)
-            app_root = temp_root / "apps/main_agent"
-            app_root.mkdir(parents=True)
+            agent_root = temp_root / "agents/main"
+            agent_root.mkdir(parents=True)
             for filename in ("BOOTSTRAP.md", "SOUL.md", "AGENTS.md", "TOOLS.md"):
-                source = repo_root / "apps/main_agent" / filename
-                (app_root / filename).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            (app_root / "SYSTEM_LESSONS.md").write_text("   \n", encoding="utf-8")
+                source = repo_root / "agents/main" / filename
+                (agent_root / filename).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            (agent_root / "SYSTEM_LESSONS.md").write_text("   \n", encoding="utf-8")
 
-            prompt = load_bootstrap_prompt(repo_root=temp_root, manifest=manifest)
+            prompt = load_agent_system_prompt(repo_root=temp_root, spec=spec)
 
         self.assertNotIn("[Runtime Learned Lessons]", prompt)
 
     def test_bootstrap_prompt_treats_system_lessons_as_active_only_export(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        manifest = load_app_manifest(str(repo_root / "apps/main_agent/app.toml"))
+        spec = AgentSpec(agent_id="main", role="general_assistant")
 
         with TemporaryDirectory() as tmpdir:
             temp_root = Path(tmpdir)
-            app_root = temp_root / "apps/main_agent"
-            app_root.mkdir(parents=True)
+            agent_root = temp_root / "agents/main"
+            agent_root.mkdir(parents=True)
             for filename in ("BOOTSTRAP.md", "SOUL.md", "AGENTS.md", "TOOLS.md"):
-                source = repo_root / "apps/main_agent" / filename
-                (app_root / filename).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            (app_root / "SYSTEM_LESSONS.md").write_text(
+                source = repo_root / "agents/main" / filename
+                (agent_root / filename).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            (agent_root / "SYSTEM_LESSONS.md").write_text(
                 (
                     "# Runtime Learned Lessons\n\n"
                     "<!-- active lessons only; superseded/rejected lessons stay in SQLite -->\n\n"
@@ -108,7 +108,7 @@ class BootstrapPromptTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            prompt = load_bootstrap_prompt(repo_root=temp_root, manifest=manifest)
+            prompt = load_agent_system_prompt(repo_root=temp_root, spec=spec)
 
         self.assertIn("[Runtime Learned Lessons]", prompt)
         self.assertIn("active lessons only", prompt)
