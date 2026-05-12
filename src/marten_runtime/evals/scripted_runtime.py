@@ -95,6 +95,9 @@ class ScriptedEvalLLMClient:
         scripted_memory = _scripted_memory_suite_reply(self, message)
         if scripted_memory is not None:
             return _normalize_reply_contract_metadata(request, scripted_memory)
+        scripted_subagent = _scripted_main_chain_subagent_reply(self)
+        if scripted_subagent is not None:
+            return _normalize_reply_contract_metadata(request, scripted_subagent)
         scripted_subagent = _scripted_subagent_suite_reply(self)
         if scripted_subagent is not None:
             return _normalize_reply_contract_metadata(request, scripted_subagent)
@@ -322,6 +325,16 @@ def _scripted_memory_suite_reply(llm: ScriptedEvalLLMClient, message: str) -> LL
         return _contracted_final_reply("现在周报顺序是：先结论，后细节。")
     if llm.case_id == "memory_preference_applied_to_output_cn":
         return _contracted_final_reply("结论：本周接口联调已完成；细节：剩余文档整理中。")
+    return None
+
+
+def _scripted_main_chain_subagent_reply(llm: ScriptedEvalLLMClient) -> LLMReply | None:
+    if llm.case_id == "subagent_github_lookup_cn":
+        return _contracted_final_reply("子 agent 已受理 GitHub 信息查询。")
+    if llm.case_id == "subagent_completion_notice_cn":
+        return _contracted_final_reply("子 agent 已受理，完成后会通知你。")
+    if llm.case_id == "subagent_parent_summary_cn":
+        return _contracted_final_reply("子 agent 摘要：后台任务已完成。")
     return None
 
 
