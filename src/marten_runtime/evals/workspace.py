@@ -10,7 +10,7 @@ def copy_repo_scaffold(
     *,
     include_mcp: bool,
 ) -> None:
-    for name in ("config", "apps", "skills"):
+    for name in ("config", "agents", "skills"):
         source = source_repo_root / name
         if source.exists():
             shutil.copytree(source, workspace_root / name)

@@ -108,9 +108,6 @@ def _execute_case_scripted(
             env={
                 "OPENAI_API_KEY": "test-key",
                 "MINIMAX_API_KEY": "test-key",
-                "LANGFUSE_PUBLIC_KEY": "pk-test",
-                "LANGFUSE_SECRET_KEY": "sk-test",
-                "LANGFUSE_BASE_URL": "https://langfuse.example",
                 **repository_context_env(source_repo_root),
             },
             load_env_file=False,

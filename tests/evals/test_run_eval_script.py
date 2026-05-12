@@ -428,7 +428,7 @@ class RunEvalScriptTests(unittest.TestCase):
 
     def _copy_eval_repo(self, target: Path) -> None:
         source = Path.cwd()
-        for name in ("config", "apps", "skills", "evals"):
+        for name in ("config", "agents", "skills", "evals"):
             shutil.copytree(source / name, target / name)
         for name in ("mcps.json", "mcps.example.json"):
             path = source / name

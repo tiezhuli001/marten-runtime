@@ -29,7 +29,7 @@ def build_eval_run_id(suite_id: str, git_sha: str) -> str:
 def config_fingerprint(repo_root: Path) -> str:
     hasher = hashlib.sha256()
     inputs: list[Path] = []
-    for relative in ("config", "apps", "skills"):
+    for relative in ("config", "agents", "skills"):
         root = repo_root / relative
         if not root.exists():
             continue

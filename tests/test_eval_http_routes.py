@@ -20,7 +20,7 @@ class EvalHTTPRoutesTests(unittest.TestCase):
         temp_dir = tempfile.TemporaryDirectory()
         repo_root = Path(temp_dir.name)
         shutil.copytree(REPO_ROOT / "config", repo_root / "config")
-        shutil.copytree(REPO_ROOT / "apps", repo_root / "apps")
+        shutil.copytree(REPO_ROOT / "agents", repo_root / "agents")
         shutil.copytree(REPO_ROOT / "skills", repo_root / "skills")
         if (REPO_ROOT / "mcps.example.json").exists():
             shutil.copy2(REPO_ROOT / "mcps.example.json", repo_root / "mcps.example.json")
