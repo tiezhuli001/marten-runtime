@@ -88,7 +88,6 @@ class RuntimeLoopLangfuseObservabilityTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=[],
         )
 
@@ -159,7 +158,6 @@ class RuntimeLoopLangfuseObservabilityTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mock_tool"],
         )
 
@@ -192,7 +190,7 @@ class RuntimeLoopLangfuseObservabilityTests(unittest.TestCase):
             history,
             langfuse_observer=self._build_observer(fake_client),
         )
-        agent = AgentSpec(agent_id="main", role="general_assistant", app_id="main_agent", allowed_tools=["time"])
+        agent = AgentSpec(agent_id="main", role="general_assistant", allowed_tools=["time"])
 
         runtime.run(session_id="sess_builtin", message="time", trace_id="trace_builtin", agent=agent)
 
@@ -221,7 +219,7 @@ class RuntimeLoopLangfuseObservabilityTests(unittest.TestCase):
             history,
             langfuse_observer=self._build_observer(fake_client),
         )
-        agent = AgentSpec(agent_id="main", role="general_assistant", app_id="main_agent", allowed_tools=["mcp"])
+        agent = AgentSpec(agent_id="main", role="general_assistant", allowed_tools=["mcp"])
 
         runtime.run(session_id="sess_mcp", message="mcp", trace_id="trace_mcp", agent=agent)
 
@@ -241,7 +239,7 @@ class RuntimeLoopLangfuseObservabilityTests(unittest.TestCase):
             history,
             langfuse_observer=self._build_observer(fake_client),
         )
-        agent = AgentSpec(agent_id="main", role="general_assistant", app_id="main_agent", allowed_tools=[])
+        agent = AgentSpec(agent_id="main", role="general_assistant", allowed_tools=[])
 
         events = runtime.run(session_id="sess_reject", message="time", trace_id="trace_reject", agent=agent)
         run = history.get(events[-1].run_id)
@@ -264,7 +262,7 @@ class RuntimeLoopLangfuseObservabilityTests(unittest.TestCase):
             history,
             langfuse_observer=self._build_observer(fake_client),
         )
-        agent = AgentSpec(agent_id="main", role="general_assistant", app_id="main_agent", allowed_tools=["broken_tool"])
+        agent = AgentSpec(agent_id="main", role="general_assistant", allowed_tools=["broken_tool"])
 
         events = runtime.run(session_id="sess_broken", message="broken", trace_id="trace_broken", agent=agent)
         run = history.get(events[-1].run_id)
@@ -338,7 +336,6 @@ class RuntimeLoopLangfuseObservabilityTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mock_tool"],
         )
 

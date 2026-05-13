@@ -198,7 +198,7 @@ class InitScriptTests(unittest.TestCase):
                             self._json(code, payload)
                             return
                         if self.path == "/diagnostics/runtime":
-                            self._json(200, {"app_id": "main_agent", "llm_profile": "default"})
+                            self._json(200, {"default_agent_id": "main", "llm_profile": "default"})
                             return
                         self._json(404, {"detail": "not found"})
 

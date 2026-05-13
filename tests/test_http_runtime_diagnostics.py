@@ -42,7 +42,7 @@ class HTTPRuntimeDiagnosticsTests(unittest.TestCase):
 
         body = serialize_runtime_diagnostics(runtime, request)
 
-        self.assertEqual(body["app_id"], runtime.app_manifest.app_id)
+        self.assertEqual(body["default_agent_id"], runtime.default_agent.agent_id)
         self.assertEqual(body["server"]["host"], "127.0.0.1")
         self.assertEqual(body["server"]["port"], 9000)
         self.assertIn("feishu", body["channels"])

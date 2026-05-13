@@ -18,7 +18,6 @@ class CompactionTriggerTests(unittest.TestCase):
             trace_id="trace_1",
             message="hello",
             agent_id="main",
-            app_id="main_agent",
             tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_1"),
         )
         settings = build_compaction_settings(

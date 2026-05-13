@@ -95,6 +95,9 @@ class ScriptedEvalLLMClient:
         scripted_memory = _scripted_memory_suite_reply(self, message)
         if scripted_memory is not None:
             return _normalize_reply_contract_metadata(request, scripted_memory)
+        scripted_subagent = _scripted_main_chain_subagent_reply(self)
+        if scripted_subagent is not None:
+            return _normalize_reply_contract_metadata(request, scripted_subagent)
         scripted_subagent = _scripted_subagent_suite_reply(self)
         if scripted_subagent is not None:
             return _normalize_reply_contract_metadata(request, scripted_subagent)
@@ -325,6 +328,16 @@ def _scripted_memory_suite_reply(llm: ScriptedEvalLLMClient, message: str) -> LL
     return None
 
 
+def _scripted_main_chain_subagent_reply(llm: ScriptedEvalLLMClient) -> LLMReply | None:
+    if llm.case_id == "subagent_github_lookup_cn":
+        return _contracted_final_reply("子 agent 已受理 GitHub 信息查询。")
+    if llm.case_id == "subagent_completion_notice_cn":
+        return _contracted_final_reply("子 agent 已受理，完成后会通知你。")
+    if llm.case_id == "subagent_parent_summary_cn":
+        return _contracted_final_reply("子 agent 摘要：后台任务已完成。")
+    return None
+
+
 def _scripted_subagent_suite_reply(llm: ScriptedEvalLLMClient) -> LLMReply | None:
     if llm.case_id == "subagent_background_task_acceptance_cn":
         llm._subagent_spawn_count += 1
@@ -354,23 +367,23 @@ def _scripted_subagent_suite_reply(llm: ScriptedEvalLLMClient) -> LLMReply | Non
             return LLMReply(
                 tool_name="spawn_subagent",
                 tool_payload={
-                    "task": "inspect recent commits",
-                    "label": "commit-check",
+                    "task": "inspect README project focus",
+                    "label": "readme-focus",
                     "finalize_response": True,
                 },
             )
-        return _contracted_final_reply("我吸收后的结论：最近提交主要集中在评测与报告。")
+        return _contracted_final_reply("我吸收后的结论：README 主要描述 runtime 主链、eval 评测和 provider 基线。")
     if llm.case_id == "subagent_multi_child_progress_cn":
         if llm._conversation_turns == 1:
             llm._subagent_spawn_count += 1
             return LLMReply(
                 tool_name="spawn_subagent",
                 tool_payload={
-                    "task": "inspect recent commits",
-                    "label": "commit-check",
+                    "task": "inspect README project positioning",
+                    "label": "readme-positioning",
                 },
             )
-        return _contracted_final_reply("两个子任务都完成了：最近提交主要集中在评测与报告；README结构包含快速开始、配置和评测入口。")
+        return _contracted_final_reply("两个子任务都完成了：项目定位是自托管 agent runtime harness；运行与评测入口包括快速开始、运行命令和离线评测。")
     if llm.case_id == "subagent_duplicate_dispatch_penalty_cn":
         if llm._conversation_turns == 1:
             llm._subagent_spawn_count += 1
@@ -391,11 +404,11 @@ def _scripted_subagent_suite_reply(llm: ScriptedEvalLLMClient) -> LLMReply | Non
 def _scripted_subagent_child_reply(llm: ScriptedEvalLLMClient, request) -> LLMReply:  # noqa: ANN001
     llm._subagent_child_calls += 1
     if llm.case_id == "subagent_followup_uses_child_result_cn":
-        return _contracted_final_reply("最近提交主要集中在评测与报告。")
+        return _contracted_final_reply("README 主要描述 runtime 主链、eval 评测和 provider 基线。")
     if llm.case_id == "subagent_multi_child_progress_cn":
         if llm._subagent_child_calls == 1:
-            return _contracted_final_reply("最近提交主要集中在评测与报告。")
-        return _contracted_final_reply("README结构包含快速开始、配置和评测入口。")
+            return _contracted_final_reply("项目定位是自托管 agent runtime harness，核心能力围绕主链。")
+        return _contracted_final_reply("运行与评测入口包括快速开始、运行命令和离线评测。")
     if llm.case_id == "subagent_duplicate_dispatch_penalty_cn":
         return _contracted_final_reply("README结构包含快速开始、配置和评测入口。")
     return _contracted_final_reply("仓库结构已梳理，主链路围绕 channel -> binding -> runtime loop -> tool -> delivery。")

@@ -78,7 +78,6 @@ def run_compaction(
             trace_id=f"trace_compact_{uuid4().hex[:8]}",
             message="请基于以上会话生成交接摘要。",
             agent_id="compaction",
-            app_id="compaction",
             system_prompt=build_compaction_prompt(prompt_mode=prompt_mode),
             conversation_messages=[ConversationMessage(role=item.role, content=item.content) for item in prefix],
             skill_snapshot_id="skill_default",

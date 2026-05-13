@@ -50,13 +50,13 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             session_id="sess_parent_tool",
             conversation_id="conv-parent-tool",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         runtime.run_history.start(
             session_id=session.session_id,
             trace_id="trace_parent_tool",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         parent_run = runtime.run_history.list_runs()[-1]
 
@@ -70,7 +70,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
                 "session_id": session.session_id,
                 "run_id": parent_run.run_id,
                 "agent_id": "main",
-                "app_id": "main_agent",
             },
         )
 
@@ -91,13 +90,13 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             session_id="sess_parent_tool_feishu_target",
             conversation_id="conv-parent-tool-feishu-target",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         parent_run = runtime.run_history.start(
             session_id=session.session_id,
             trace_id="trace_parent_tool_feishu_target",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
 
         live_result = runtime.tool_registry.call(
@@ -110,7 +109,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
                 "session_id": session.session_id,
                 "run_id": parent_run.run_id,
                 "agent_id": "main",
-                "app_id": "main_agent",
                 "channel_id": "feishu",
                 "conversation_id": "oc_real_chat",
                 "source_transport": "feishu_websocket",
@@ -129,7 +127,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
                 "session_id": session.session_id,
                 "run_id": parent_run.run_id,
                 "agent_id": "main",
-                "app_id": "main_agent",
                 "channel_id": "feishu",
                 "conversation_id": "feishu-simulated-chat",
                 "source_transport": "http_api",
@@ -145,13 +142,13 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             session_id="sess_parent_tool_ceiling",
             conversation_id="conv-parent-tool-ceiling",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         parent_run = runtime.run_history.start(
             session_id=session.session_id,
             trace_id="trace_parent_tool_ceiling",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
 
         result = runtime.tool_registry.call(
@@ -165,7 +162,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
                 "session_id": session.session_id,
                 "run_id": parent_run.run_id,
                 "agent_id": "main",
-                "app_id": "main_agent",
                 "allowed_tools": ["runtime", "skill", "time"],
             },
         )
@@ -182,13 +178,13 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             session_id="sess_parent_tool_default_alias",
             conversation_id="conv-parent-tool-default-alias",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         parent_run = runtime.run_history.start(
             session_id=session.session_id,
             trace_id="trace_parent_tool_default_alias",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
 
         with self.assertRaisesRegex(ValueError, "unknown tool profile: default"):
@@ -203,7 +199,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
                     "session_id": session.session_id,
                     "run_id": parent_run.run_id,
                     "agent_id": "main",
-                    "app_id": "main_agent",
                     "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
                 },
             )
@@ -215,13 +210,13 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             session_id="sess_parent_tool_placeholders",
             conversation_id="conv-parent-tool-placeholders",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         parent_run = runtime.run_history.start(
             session_id=session.session_id,
             trace_id="trace_parent_tool_placeholders",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
 
         result = runtime.tool_registry.call(
@@ -235,7 +230,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
                 "session_id": session.session_id,
                 "run_id": parent_run.run_id,
                 "agent_id": "main",
-                "app_id": "main_agent",
                 "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
             },
         )
@@ -251,13 +245,13 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             session_id="sess_parent_tool_assistant_alias",
             conversation_id="conv-parent-tool-assistant-alias",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         parent_run = runtime.run_history.start(
             session_id=session.session_id,
             trace_id="trace_parent_tool_assistant_alias",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
 
         result = runtime.tool_registry.call(
@@ -271,7 +265,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
                 "session_id": session.session_id,
                 "run_id": parent_run.run_id,
                 "agent_id": "assistant",
-                "app_id": "main_agent",
                 "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
             },
         )
@@ -289,13 +282,13 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             session_id="sess_parent_tool_removed_minimal",
             conversation_id="conv-parent-tool-removed-minimal",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         parent_run = runtime.run_history.start(
             session_id=session.session_id,
             trace_id="trace_parent_tool_removed_minimal",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
 
         with self.assertRaisesRegex(ValueError, "unknown context mode: minimal"):
@@ -310,7 +303,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
                     "session_id": session.session_id,
                     "run_id": parent_run.run_id,
                     "agent_id": "main",
-                    "app_id": "main_agent",
                     "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
                 },
             )
@@ -322,13 +314,13 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             session_id="sess_parent_tool_promote",
             conversation_id="conv-parent-tool-promote",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         parent_run = runtime.run_history.start(
             session_id=session.session_id,
             trace_id="trace_parent_tool_promote",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
 
         result = runtime.tool_registry.call(
@@ -342,7 +334,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
                 "session_id": session.session_id,
                 "run_id": parent_run.run_id,
                 "agent_id": "main",
-                "app_id": "main_agent",
                 "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
             },
         )
@@ -357,13 +348,13 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             session_id="sess_parent_tool_unknown_agent",
             conversation_id="conv-parent-tool-unknown-agent",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         parent_run = runtime.run_history.start(
             session_id=session.session_id,
             trace_id="trace_parent_tool_unknown_agent",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
 
         result = runtime.tool_registry.call(
@@ -377,7 +368,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
                 "session_id": session.session_id,
                 "run_id": parent_run.run_id,
                 "agent_id": "main",
-                "app_id": "main_agent",
                 "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
             },
         )
@@ -385,7 +375,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         task = runtime.subagent_service.store.get(result["task_id"])
         self.assertEqual(task.agent_id, "main")
-        self.assertEqual(task.app_id, "main_agent")
 
     def test_spawn_subagent_tool_defaults_to_standard_profile_for_simple_background_tasks(self) -> None:
         app = self._build_app()
@@ -394,13 +383,13 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             session_id="sess_parent_tool_default",
             conversation_id="conv-parent-tool-default",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         parent_run = runtime.run_history.start(
             session_id=session.session_id,
             trace_id="trace_parent_tool_default",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
 
         result = runtime.tool_registry.call(
@@ -413,7 +402,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
                 "session_id": session.session_id,
                 "run_id": parent_run.run_id,
                 "agent_id": "main",
-                "app_id": "main_agent",
                 "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
             },
         )
@@ -428,13 +416,13 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             session_id="sess_parent_cancel_terminal",
             conversation_id="conv-parent-cancel-terminal",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         parent_run = runtime.run_history.start(
             session_id=session.session_id,
             trace_id="trace_parent_cancel_terminal",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         accepted = runtime.subagent_service.spawn(
             task="background task",
@@ -442,7 +430,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             parent_session_id=session.session_id,
             parent_run_id=parent_run.run_id,
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             context_mode="brief_only",
@@ -467,13 +454,13 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             session_id="sess_parent_cancel",
             conversation_id="conv-parent-cancel",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         parent_run = runtime.run_history.start(
             session_id=session.session_id,
             trace_id="trace_parent_cancel",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         accepted = runtime.subagent_service.spawn(
             task="background task",
@@ -481,7 +468,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             parent_session_id=session.session_id,
             parent_run_id=parent_run.run_id,
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             context_mode="brief_only",
@@ -505,25 +491,25 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             session_id="sess_parent_cancel_owner",
             conversation_id="conv-parent-cancel-owner",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         foreign_session = runtime.session_store.create(
             session_id="sess_parent_cancel_foreign",
             conversation_id="conv-parent-cancel-foreign",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         owner_run = runtime.run_history.start(
             session_id=owner_session.session_id,
             trace_id="trace_parent_cancel_owner",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         foreign_run = runtime.run_history.start(
             session_id=foreign_session.session_id,
             trace_id="trace_parent_cancel_foreign",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         accepted = runtime.subagent_service.spawn(
             task="background task",
@@ -531,7 +517,6 @@ class SubagentBuiltinToolTests(unittest.TestCase):
             parent_session_id=owner_session.session_id,
             parent_run_id=owner_run.run_id,
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             context_mode="brief_only",

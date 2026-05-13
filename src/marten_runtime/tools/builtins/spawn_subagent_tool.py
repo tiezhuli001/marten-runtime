@@ -22,7 +22,6 @@ def run_spawn_subagent_tool(
         (tool_context or {}).get("agent_id"),
         default="main",
     ) or "main"
-    app_id = str((tool_context or {}).get("app_id") or "main_agent").strip() or "main_agent"
     if not session_id:
         raise ValueError("tool_context.session_id is required")
     if not run_id:
@@ -59,7 +58,6 @@ def run_spawn_subagent_tool(
         parent_session_id=session_id,
         parent_run_id=run_id,
         parent_agent_id=agent_id,
-        app_id=app_id,
         agent_id=requested_agent_id or agent_id,
         requested_tool_profile=requested_tool_profile,
         parent_allowed_tools=list((tool_context or {}).get("allowed_tools") or []),

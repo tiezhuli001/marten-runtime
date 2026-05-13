@@ -30,7 +30,6 @@ def normalize_schedule_input(
 
 REGISTRATION_REQUIRED_FIELDS = (
     "automation_id",
-    "app_id",
     "agent_id",
     "schedule_kind",
     "schedule_expr",
@@ -64,11 +63,6 @@ def normalize_registration_payload(
         normalized["skill_id"] = str(payload.get("skill", "")).strip()
     if "skill_id" in normalized:
         normalized["skill_id"] = str(normalized.get("skill_id", "")).strip()
-    normalized["app_id"] = _resolve_alias(
-        payload.get("app_id"),
-        context.get("app_id", ""),
-        {"default_app", "current_app"},
-    )
     normalized["agent_id"] = _resolve_alias(
         payload.get("agent_id"),
         context.get("agent_id", ""),
@@ -100,7 +94,6 @@ def build_registration_values(normalized: dict[str, object]) -> dict[str, object
     return {
         "automation_id": str(normalized["automation_id"]),
         "name": str(normalized.get("name", normalized["automation_id"])),
-        "app_id": str(normalized["app_id"]),
         "agent_id": str(normalized["agent_id"]),
         "prompt_template": str(normalized.get("prompt_template", "")),
         "schedule_kind": str(normalized["schedule_kind"]),

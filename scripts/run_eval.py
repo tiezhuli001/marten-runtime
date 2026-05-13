@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--db-path", default="data/evals.sqlite3")
     parser.add_argument("--report-root", default="reports/evals")
     parser.add_argument("--list-suites", action="store_true")
+    parser.add_argument("--case-timeout-seconds", type=float, default=120.0, help="live eval per-case timeout; default 120 seconds, <=0 disables")
     return parser
 
 
@@ -54,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
                 db_path=args.db_path,
                 report_root=args.report_root,
                 env=dict(os.environ),
+                case_timeout_seconds=args.case_timeout_seconds,
+                progress_printer=(lambda message: print(message, flush=True)),
             ),
             repo_root=repo_root,
         )

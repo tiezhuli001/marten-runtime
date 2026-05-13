@@ -26,7 +26,6 @@ class LLMClientInstructionTests(unittest.TestCase):
             trace_id="trace_test",
             message="hello",
             agent_id="main",
-            app_id="main_agent",
             available_tools=[],
         )
         return base.model_copy(update=updates)
@@ -516,7 +515,6 @@ class ScriptedLLMClientContractNormalizationTests(unittest.TestCase):
             trace_id="trace_test",
             message="what is my session id?",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["session"],
         )
         reply = ScriptedLLMClient(
@@ -541,7 +539,6 @@ class ScriptedLLMClientContractNormalizationTests(unittest.TestCase):
             trace_id="trace_test",
             message="现在几点？",
             agent_id="main",
-            app_id="main_agent",
             available_tools=["time"],
             tool_result={"tool_name": "time", "result_text": "现在是北京时间 2026-05-03 21:37", "iso_time": "2026-05-03T21:37:00+08:00"},
         )
@@ -557,7 +554,6 @@ class ScriptedLLMClientContractNormalizationTests(unittest.TestCase):
             trace_id="trace_test",
             message="hello",
             agent_id="main",
-            app_id="main_agent",
         )
 
         reply = DemoLLMClient(emit_explicit_empty_contract=True).complete(request)

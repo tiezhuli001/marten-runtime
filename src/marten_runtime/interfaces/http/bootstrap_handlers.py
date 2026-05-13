@@ -58,7 +58,7 @@ def _process_inbound_envelope(
     session = state.session_store.get_or_create_for_conversation(
         conversation_id=envelope.conversation_id,
         config_snapshot_id=state.config_snapshot.config_snapshot_id,
-        bootstrap_manifest_id=state.app_manifest.bootstrap_manifest_id,
+        bootstrap_manifest_id=state.default_prompt_manifest_id,
         channel_id=envelope.channel_id,
         user_id=envelope.user_id,
     )
@@ -67,22 +67,21 @@ def _process_inbound_envelope(
         active_agent_id=session.active_agent_id,
         requested_agent_id=envelope.requested_agent_id,
     )
-    app_runtime = state.app_runtimes.get(
-        routed_agent.app_id, state.app_runtimes[state.app_manifest.app_id]
+    app_runtime = state.agent_runtimes.get(
+        routed_agent.agent_id, state.agent_runtimes[state.default_agent.agent_id]
     )
     state.session_store.set_active_agent(session.session_id, routed_agent.agent_id)
     _ensure_session_catalog_metadata(
         state=state,
         session_id=session.session_id,
         trace_id=envelope.trace_id,
-        app_id=routed_agent.app_id,
         agent_id=routed_agent.agent_id,
         model_profile_name=getattr(routed_agent, "model_profile", None),
         user_id=envelope.user_id,
         user_message=envelope.body,
     )
     state.session_store.set_bootstrap_manifest(
-        session.session_id, app_runtime.manifest.bootstrap_manifest_id
+        session.session_id, app_runtime.prompt_manifest_id
     )
     source_before_message = state.session_store.get(session.session_id)
     source_updated_at_before_message = source_before_message.updated_at
@@ -108,7 +107,6 @@ def _process_inbound_envelope(
         {
             "channel_id": envelope.channel_id,
             "conversation_id": envelope.conversation_id,
-            "app_id": routed_agent.app_id,
             "agent_id": routed_agent.agent_id,
         }
     )
@@ -160,7 +158,6 @@ def _process_inbound_envelope(
         events=events,
         job_ids=[],
         channel_id=envelope.channel_id,
-        app_id=routed_agent.app_id,
         agent_id=routed_agent.agent_id,
         model_profile_name=getattr(routed_agent, "model_profile", None),
         suppress_assistant_history=same_session_resume_noop,
@@ -174,26 +171,25 @@ def _process_automation_dispatch(
     session = state.session_store.get_or_create_for_conversation(
         conversation_id=dispatch.session_id,
         config_snapshot_id=state.config_snapshot.config_snapshot_id,
-        bootstrap_manifest_id=state.app_manifest.bootstrap_manifest_id,
+        bootstrap_manifest_id=state.default_prompt_manifest_id,
         channel_id=dispatch.delivery_channel,
     )
     routed_agent = state.agent_registry.get(dispatch.agent_id)
-    app_runtime = state.app_runtimes.get(
-        routed_agent.app_id, state.app_runtimes[state.app_manifest.app_id]
+    app_runtime = state.agent_runtimes.get(
+        routed_agent.agent_id, state.agent_runtimes[state.default_agent.agent_id]
     )
     state.session_store.set_active_agent(session.session_id, routed_agent.agent_id)
     _ensure_session_catalog_metadata(
         state=state,
         session_id=session.session_id,
         trace_id=dispatch.trace_id,
-        app_id=routed_agent.app_id,
         agent_id=routed_agent.agent_id,
         model_profile_name=getattr(routed_agent, "model_profile", None),
         user_id="",
         user_message=dispatch.prompt_template,
     )
     state.session_store.set_bootstrap_manifest(
-        session.session_id, app_runtime.manifest.bootstrap_manifest_id
+        session.session_id, app_runtime.prompt_manifest_id
     )
     session = state.session_store.append_message(
         session.session_id, SessionMessage.user(dispatch.prompt_template)
@@ -233,7 +229,6 @@ def _process_automation_dispatch(
         events=events,
         job_ids=[dispatch.automation_id],
         channel_id=dispatch.delivery_channel,
-        app_id=routed_agent.app_id,
         agent_id=routed_agent.agent_id,
         model_profile_name=getattr(routed_agent, "model_profile", None),
     )
@@ -330,7 +325,7 @@ def _run_turn(
         system_prompt=app_runtime.system_prompt,
         agent=agent,
         config_snapshot_id=state.config_snapshot.config_snapshot_id,
-        bootstrap_manifest_id=app_runtime.manifest.bootstrap_manifest_id,
+        bootstrap_manifest_id=app_runtime.prompt_manifest_id,
         model_profile_name=resolved_profile_name,
         tokenizer_family=profile.tokenizer_family,
         skill_snapshot_id=skill_runtime.snapshot.skill_snapshot_id,
@@ -380,7 +375,6 @@ def _finalize_session_turn(
     events: list,
     job_ids: list[str],
     channel_id: str,
-    app_id: str,
     agent_id: str,
     model_profile_name: str | None,
     suppress_assistant_history: bool = False,
@@ -447,7 +441,6 @@ def _finalize_session_turn(
         state=state,
         session_id=persisted_session_id,
         trace_id=trace_id,
-        app_id=app_id,
         agent_id=agent_id,
         model_profile_name=model_profile_name,
     )
@@ -561,7 +554,6 @@ def _refresh_session_catalog_metadata_after_turn(
     state: HTTPRuntimeState,
     session_id: str,
     trace_id: str,
-    app_id: str,
     agent_id: str,
     model_profile_name: str | None,
 ) -> None:
@@ -582,7 +574,6 @@ def _refresh_session_catalog_metadata_after_turn(
         llm_client=llm_client,
         session_id=session_id,
         trace_id=trace_id,
-        app_id=app_id,
         agent_id=agent_id,
         user_message=_build_session_title_summary_source(session),
     )
@@ -600,7 +591,6 @@ def _ensure_session_catalog_metadata(
     state: HTTPRuntimeState,
     session_id: str,
     trace_id: str,
-    app_id: str,
     agent_id: str,
     model_profile_name: str | None,
     user_id: str,

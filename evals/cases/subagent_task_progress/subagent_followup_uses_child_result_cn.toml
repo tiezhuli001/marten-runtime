@@ -11,11 +11,11 @@ gate_components = ["child_completion", "parent_integration"]
 
 [[turns]]
 role = "user"
-content = "后台看一下最近提交都在改什么。"
+content = "后台看一下 README 描述的项目重点。任务只基于这段已知 README 摘要，不访问 GitHub MCP：项目聚焦 runtime 主链、MCP/skill 工具能力、provider 基线、eval 评测运维面。"
 
 [[turns]]
 role = "user"
-content = "直接告诉我你吸收后的结论，明确最近提交主要在改什么。"
+content = "直接告诉我你吸收后的结论，明确 README 主要描述的项目重点。"
 
 [setup]
 session_history_fixture = "none"
@@ -31,6 +31,6 @@ parent_integration = 50
 [grader_case]
 expected_spawn_count = 1
 await_child_completion = true
-integration_contains_all = ["提交"]
-integration_anchor_groups = [["提交", "commit"], ["docs", "文档"], ["provider", "基线"]]
+integration_contains_all = ["README"]
+integration_anchor_groups = [["README", "README 结构"], ["runtime", "主链"], ["eval", "评测"], ["provider", "基线"]]
 timeout_ms = 120000

@@ -153,7 +153,7 @@ class SubagentService:
         auto_start_background: bool = False,
         feishu_delivery=None,
         agent_registry=None,
-        app_runtimes: dict[str, object] | None = None,
+        agent_runtimes: dict[str, object] | None = None,
         llm_client_factory=None,
         models_config=None,
         terminal_callback=None,
@@ -170,7 +170,7 @@ class SubagentService:
         self.auto_start_background = auto_start_background
         self.feishu_delivery = feishu_delivery
         self.agent_registry = agent_registry
-        self.app_runtimes = dict(app_runtimes or {})
+        self.agent_runtimes = dict(agent_runtimes or {})
         self.llm_client_factory = llm_client_factory
         self.models_config = models_config
         self.terminal_callback = terminal_callback
@@ -191,7 +191,6 @@ class SubagentService:
         parent_session_id: str,
         parent_run_id: str,
         parent_agent_id: str,
-        app_id: str,
         agent_id: str,
         requested_tool_profile: str = "standard",
         parent_allowed_tools: list[str] | None = None,
@@ -204,14 +203,12 @@ class SubagentService:
         if not task.strip():
             raise ValueError("task must not be empty")
         resolved_agent_id = agent_id
-        resolved_app_id = app_id
         if self.agent_registry is not None:
             target = self._resolve_registered_agent(
                 requested_agent_id=agent_id,
                 fallback_agent_id=parent_agent_id,
             )
             resolved_agent_id = target.agent_id
-            resolved_app_id = target.app_id or app_id
         normalized_requested_profile = normalize_tool_profile_name(
             requested_tool_profile
         )
@@ -243,7 +240,6 @@ class SubagentService:
                 origin_channel_id=origin_channel_id,
                 origin_delivery_target=origin_delivery_target,
                 child_session_id=child.session_id,
-                app_id=resolved_app_id,
                 agent_id=resolved_agent_id,
                 tool_profile=normalized_requested_profile,
                 effective_tool_profile=effective_tool_profile,
@@ -685,7 +681,6 @@ class SubagentService:
             return AgentSpec(
                 agent_id=task.agent_id,
                 role="subagent_worker",
-                app_id=task.app_id,
                 allowed_tools=[],
                 prompt_mode="subagent",
             )
@@ -693,11 +688,7 @@ class SubagentService:
             requested_agent_id=task.agent_id,
             fallback_agent_id=task.parent_agent_id,
         )
-        return target.model_copy(
-            update={
-                "app_id": target.app_id or task.app_id,
-            }
-        )
+        return target
 
     def _resolve_registered_agent(
         self,
@@ -716,7 +707,9 @@ class SubagentService:
         return self.agent_registry.get(fallback_agent_id)
 
     def _runtime_assets_for_agent(self, agent: AgentSpec) -> dict[str, object]:
-        assets = self.app_runtimes.get(agent.app_id)
+        assets = self.agent_runtimes.get(agent.agent_id)
+        if assets is None:
+            assets = self.agent_runtimes.get("main")
         if assets is None:
             return {}
         profile_name = getattr(agent, "model_profile", None)
@@ -739,10 +732,20 @@ class SubagentService:
             "llm_client": shared_llm,
             "compact_llm_client": compact_llm,
             "system_prompt": assets.system_prompt,
-            "bootstrap_manifest_id": assets.manifest.bootstrap_manifest_id,
+            "bootstrap_manifest_id": self._asset_prompt_manifest_id(assets),
             "model_profile_name": profile_name,
             "tokenizer_family": profile.tokenizer_family,
         }
+
+    def _asset_prompt_manifest_id(self, assets: object) -> str:
+        value = getattr(assets, "prompt_manifest_id", None)
+        if value:
+            return str(value)
+        manifest = getattr(assets, "manifest", None)
+        value = getattr(manifest, "bootstrap_manifest_id", None)
+        if value:
+            return str(value)
+        return "agent_main_full"
 
     def _build_child_task_message(self, task_prompt: str) -> str:
         base = str(task_prompt or "").strip()

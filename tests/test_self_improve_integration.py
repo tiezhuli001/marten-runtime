@@ -26,7 +26,6 @@ class SelfImproveIntegrationTests(unittest.TestCase):
                 subagent_service=runtime.subagent_service,
                 run_history=runtime.run_history,
                 skill_service=runtime.skill_service,
-                app_id=runtime.app_manifest.app_id,
                 agent_id=runtime.default_agent.agent_id,
             )
             runtime.self_improve_store = isolated_store
@@ -135,7 +134,6 @@ class SelfImproveIntegrationTests(unittest.TestCase):
                 run_history=runtime.run_history,
                 skill_service=runtime.skill_service,
                 feishu_delivery=fake_delivery,
-                app_id=runtime.app_manifest.app_id,
                 agent_id=runtime.default_agent.agent_id,
             )
             runtime.self_improve_store = isolated_store

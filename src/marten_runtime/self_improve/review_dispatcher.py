@@ -25,7 +25,6 @@ class SelfImproveReviewDispatcher:
         run_history,
         skill_service: SkillService | None = None,
         feishu_delivery=None,
-        app_id: str = "main_agent",
         agent_id: str = "main",
     ) -> None:
         self.store = store
@@ -33,7 +32,6 @@ class SelfImproveReviewDispatcher:
         self.run_history = run_history
         self.skill_service = skill_service
         self.feishu_delivery = feishu_delivery
-        self.app_id = app_id
         self.agent_id = agent_id
         self._lock = threading.RLock()
 
@@ -70,7 +68,6 @@ class SelfImproveReviewDispatcher:
                         parent_session_id=parent_session_id,
                         parent_run_id=trigger.source_run_id,
                         parent_agent_id=agent_id,
-                        app_id=self.app_id,
                         agent_id=self.agent_id,
                         requested_tool_profile="restricted",
                         parent_allowed_tools=["runtime", "skill", "time"],
@@ -325,8 +322,6 @@ class SelfImproveReviewDispatcher:
         if str(getattr(task, "parent_agent_id", "") or "").strip() != trigger.agent_id:
             return False
         if str(getattr(task, "agent_id", "") or "").strip() != self.agent_id:
-            return False
-        if str(getattr(task, "app_id", "") or "").strip() != self.app_id:
             return False
         if str(getattr(task, "effective_tool_profile", "") or "").strip() != "restricted":
             return False

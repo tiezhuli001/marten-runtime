@@ -104,7 +104,6 @@ class SelfImproveService:
 def make_default_judge(
     llm: LLMClient | None = None,
     *,
-    app_id: str = "main_agent",
     agent_id: str = "main",
     min_score: float = 0.8,
 ) -> LessonJudge:
@@ -112,7 +111,6 @@ def make_default_judge(
         return _make_fallback_judge(min_score=min_score)
     return _make_llm_judge(
         llm,
-        app_id=app_id,
         agent_id=agent_id,
         min_score=min_score,
     )
@@ -139,7 +137,6 @@ def _make_fallback_judge(*, min_score: float = 0.8) -> LessonJudge:
 def _make_llm_judge(
     llm: LLMClient,
     *,
-    app_id: str,
     agent_id: str,
     min_score: float,
 ) -> LessonJudge:
@@ -152,8 +149,7 @@ def _make_llm_judge(
             trace_id=f"trace_self_improve_judge_{candidate.candidate_id}",
             message=_build_judge_message(candidate, active_lessons=active_lessons),
             agent_id=agent_id,
-            app_id=app_id,
-            system_prompt=_judge_system_prompt(),
+                system_prompt=_judge_system_prompt(),
             prompt_mode="compact",
         )
         try:

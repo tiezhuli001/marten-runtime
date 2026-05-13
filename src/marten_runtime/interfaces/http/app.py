@@ -73,6 +73,10 @@ def create_app(
                 logger.warning("subagent_service.shutdown failed: %s", exc, exc_info=True)
             finally:
                 try:
+                    runtime.mcp_client.shutdown()
+                except Exception as exc:
+                    logger.warning("mcp_client.shutdown failed: %s", exc, exc_info=True)
+                try:
                     await runtime.feishu_socket_service.stop_background()
                 except Exception as exc:
                     logger.warning(
@@ -135,7 +139,7 @@ def create_app(
         record = runtime.session_store.get_or_create_for_conversation(
             conversation_id=f"conversation_{runtime.session_store.count() + 1}",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         return {"session_id": record.session_id}
 

@@ -25,15 +25,19 @@ class EvalLoaderTests(unittest.TestCase):
     def test_load_family_scored_suites_from_repo_files(self) -> None:
         memory_suite = load_suite_spec(Path("evals/suites/memory_long_horizon.toml"))
         subagent_suite = load_suite_spec(Path("evals/suites/subagent_task_progress.toml"))
+        external_mcp_suite = load_suite_spec(Path("evals/suites/subagent_external_mcp_completion.toml"))
 
         self.assertEqual(memory_suite.grader_id, "memory_long_horizon")
         self.assertEqual(subagent_suite.grader_id, "subagent_task_progress")
+        self.assertEqual(external_mcp_suite.grader_id, "subagent_task_progress")
         self.assertEqual(len(memory_suite.cases), 7)
         self.assertEqual(len(subagent_suite.cases), 6)
+        self.assertEqual(len(external_mcp_suite.cases), 1)
         self.assertTrue(all(case.grader_id == "memory_long_horizon" for case in memory_suite.cases))
         self.assertTrue(all(case.grader_id == "subagent_task_progress" for case in subagent_suite.cases))
         self.assertEqual(memory_suite.cases[0].component_weights["capture"], 70)
-        self.assertEqual(subagent_suite.required_dependencies, ["provider", "subagent", "mcp"])
+        self.assertEqual(subagent_suite.required_dependencies, ["provider", "subagent"])
+        self.assertEqual(external_mcp_suite.required_dependencies, ["provider", "subagent", "mcp"])
         self.assertTrue(all(case.gate_components for case in subagent_suite.cases))
 
     def test_load_suite_spec_rejects_missing_case_file(self) -> None:

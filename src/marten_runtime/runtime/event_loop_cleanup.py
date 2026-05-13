@@ -37,7 +37,10 @@ def _close_known_global_loops() -> None:
             continue
         if loop.is_running() or loop.is_closed():
             continue
-        loop.close()
+        try:
+            loop.close()
+        except Exception:
+            pass
         try:
             setattr(module, attribute_name, None)
         except Exception:

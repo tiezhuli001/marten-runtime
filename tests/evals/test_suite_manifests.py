@@ -12,6 +12,7 @@ class EvalSuiteManifestTests(unittest.TestCase):
             Path("evals/suites/main_chain_subagent.toml"),
             Path("evals/suites/memory_long_horizon.toml"),
             Path("evals/suites/subagent_task_progress.toml"),
+            Path("evals/suites/subagent_external_mcp_completion.toml"),
         ]
 
         suites = [load_suite_spec(path) for path in suite_paths]
@@ -22,6 +23,7 @@ class EvalSuiteManifestTests(unittest.TestCase):
             "main_chain_subagent",
             "memory_long_horizon",
             "subagent_task_progress",
+            "subagent_external_mcp_completion",
         ])
 
     def test_main_chain_core_manifest_has_15_cases_and_existing_fixtures(self) -> None:
@@ -43,9 +45,13 @@ class EvalSuiteManifestTests(unittest.TestCase):
     def test_memory_and_subagent_progress_manifests_have_expected_case_counts(self) -> None:
         memory_suite = load_suite_spec(Path("evals/suites/memory_long_horizon.toml"))
         subagent_suite = load_suite_spec(Path("evals/suites/subagent_task_progress.toml"))
+        external_mcp_suite = load_suite_spec(Path("evals/suites/subagent_external_mcp_completion.toml"))
 
         self.assertEqual(len(memory_suite.cases), 7)
         self.assertEqual(len(subagent_suite.cases), 6)
+        self.assertEqual(len(external_mcp_suite.cases), 1)
+        self.assertEqual(subagent_suite.required_dependencies, ["provider", "subagent"])
+        self.assertEqual(external_mcp_suite.required_dependencies, ["provider", "subagent", "mcp"])
         for case in memory_suite.cases:
             self.assertEqual(sum(case.component_weights.values()), 100)
             for fixture_path in case.resolved_fixtures.values():

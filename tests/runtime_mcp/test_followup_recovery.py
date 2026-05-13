@@ -166,6 +166,30 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["result_text"], "echo:ok")
 
+    def test_stdio_mcp_client_reuses_one_server_process_for_list_and_call(self) -> None:
+        fixture = Path(__file__).resolve().parents[1] / "fixtures" / "mcp_stdio_server.py"
+        server = self._build_stdio_echo_server(fixture=fixture)
+
+        class CountingClient(MCPClient):
+            def __init__(self, servers):
+                super().__init__(servers)
+                self.start_count = 0
+
+            def _stdio_client_manager(self, params):  # type: ignore[override]
+                self.start_count += 1
+                return super()._stdio_client_manager(params)
+
+        client = CountingClient([server])
+        try:
+            tools = client.list_tools(server.server_id)
+            result = client.call_tool(server.server_id, "echo", {"query": "release notes"})
+        finally:
+            client.shutdown()
+
+        self.assertEqual([tool.name for tool in tools], ["echo"])
+        self.assertEqual(result["result_text"], "stdio:release notes")
+        self.assertEqual(client.start_count, 1)
+
     def test_discovery_can_run_inside_asyncio_thread(self) -> None:
         fixture = Path(__file__).resolve().parents[1] / "fixtures" / "mcp_stdio_server.py"
         server = self._build_stdio_echo_server(fixture=fixture)
@@ -260,7 +284,6 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -331,7 +354,6 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -404,7 +426,6 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -855,7 +876,6 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["echo"],
         )
 

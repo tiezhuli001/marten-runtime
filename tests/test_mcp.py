@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from marten_runtime.mcp.loader import load_mcp_servers
 from marten_runtime.mcp.normalize import normalize_mcp_request
@@ -222,6 +223,189 @@ class MCPTests(unittest.TestCase):
             client._resolve_server_env(server)["GITHUB_PERSONAL_ACCESS_TOKEN"],
             "literal-token",
         )
+
+    def test_persistent_stdio_session_is_recreated_after_startup_failure(self) -> None:
+        from marten_runtime.mcp.client import MCPClient
+
+        server = MCPServerSpec(
+            server_id="github",
+            transport="stdio",
+            command="docker",
+            args=["run"],
+            tools=[MCPToolSpec(name="search_code", description="search")],
+        )
+        client = MCPClient([server], env={})
+        attempts = {"count": 0}
+
+        class BrokenSession:
+            def __init__(self, *_args, **_kwargs):
+                attempts["count"] += 1
+                if attempts["count"] == 1:
+                    self._startup_error = RuntimeError("boom")
+                else:
+                    self._startup_error = None
+
+            def run_list_tools(self, **_kwargs):
+                if self._startup_error is not None:
+                    raise self._startup_error
+                return [MCPToolSpec(name="search_code", description="search")]
+
+            def close(self):
+                pass
+
+        with patch("marten_runtime.mcp.client._PersistentStdioSession", BrokenSession):
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                client.list_tools("github")
+            tools = client.list_tools("github")
+
+        self.assertEqual(attempts["count"], 2)
+        self.assertEqual([tool.name for tool in tools], ["search_code"])
+
+
+
+    def test_persistent_stdio_session_recreates_closed_cached_session(self) -> None:
+        from marten_runtime.mcp.client import MCPClient
+
+        server = MCPServerSpec(
+            server_id="github",
+            transport="stdio",
+            command="docker",
+            args=["run"],
+            tools=[MCPToolSpec(name="search_code", description="search")],
+        )
+        client = MCPClient([server], env={})
+        attempts = {"count": 0}
+
+        class CachedSession:
+            def __init__(self, *_args, **_kwargs):
+                attempts["count"] += 1
+                self.closed = attempts["count"] == 1
+
+            def is_closed(self):
+                return self.closed
+
+            def run_list_tools(self, **_kwargs):
+                if self.closed:
+                    raise AssertionError("closed cached session must not be reused")
+                return [MCPToolSpec(name="search_code", description="search")]
+
+            def close(self):
+                self.closed = True
+
+        with patch("marten_runtime.mcp.client._PersistentStdioSession", CachedSession):
+            client._persistent_stdio_sessions["github"] = CachedSession()
+            tools = client.list_tools("github")
+
+        self.assertEqual(attempts["count"], 2)
+        self.assertEqual([tool.name for tool in tools], ["search_code"])
+
+    def test_persistent_stdio_close_does_not_close_running_loop_after_join_timeout(self) -> None:
+        from marten_runtime.mcp.client import _PersistentStdioSession
+
+        server = MCPServerSpec(
+            server_id="github",
+            transport="stdio",
+            command="docker",
+            args=["run"],
+        )
+
+        class DummyClient:
+            pass
+
+        session = object.__new__(_PersistentStdioSession)
+        closed = {"set": False}
+        stop_called = {"value": False}
+
+        class ClosedFlag:
+            def is_set(self):
+                return closed["set"]
+
+            def set(self):
+                closed["set"] = True
+
+        class ReadyFlag:
+            def is_set(self):
+                return True
+
+        class RunningLoop:
+            def is_running(self):
+                return True
+
+            def is_closed(self):
+                return False
+
+            def call_soon_threadsafe(self, callback):  # noqa: ANN001
+                callback()
+
+            def close(self):
+                raise AssertionError("running loop must not be closed")
+
+        class AliveThread:
+            def join(self, timeout=None):  # noqa: ANN001
+                del timeout
+
+            def is_alive(self):
+                return True
+
+        class StopEvent:
+            def set(self):
+                stop_called["value"] = True
+
+        session._client = DummyClient()
+        session._server = server
+        session._loop = RunningLoop()
+        session._ready = ReadyFlag()
+        session._closed = ClosedFlag()
+        session._startup_error = None
+        session._session = object()
+        session._stop_async = StopEvent()
+        session._op_lock = None
+        session._thread = AliveThread()
+
+        session.close()
+
+        self.assertTrue(closed["set"])
+        self.assertTrue(stop_called["value"])
+
+    def test_persistent_stdio_startup_failure_closes_partial_stack(self) -> None:
+        import asyncio
+        from contextlib import asynccontextmanager
+
+        from marten_runtime.mcp.client import _PersistentStdioSession
+
+        server = MCPServerSpec(
+            server_id="github",
+            transport="stdio",
+            command="docker",
+            args=["run"],
+        )
+        closed = {"value": False}
+
+        @asynccontextmanager
+        async def broken_manager(_params):
+            try:
+                yield object(), object()
+            finally:
+                closed["value"] = True
+
+        class BrokenClient:
+            def _resolve_server_env(self, _server):
+                return {}
+
+            def _stdio_client_manager(self, params):
+                return broken_manager(params)
+
+            def _effective_timeout_seconds(self, _server, _override, _deadline):
+                return 0.1
+
+        session = _PersistentStdioSession(BrokenClient(), server)  # type: ignore[arg-type]
+        try:
+            with self.assertRaises(Exception):
+                session.run_list_tools(timeout_seconds_override=1)
+        finally:
+            session.close()
+
+        self.assertTrue(closed["value"])
 
 
 if __name__ == "__main__":

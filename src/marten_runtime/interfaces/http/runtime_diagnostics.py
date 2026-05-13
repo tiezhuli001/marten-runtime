@@ -100,8 +100,7 @@ def serialize_runtime_diagnostics(
     )
     return {
         "config_snapshot_id": runtime.config_snapshot.config_snapshot_id,
-        "app_id": runtime.app_manifest.app_id,
-        "default_agent_id": runtime.app_manifest.default_agent,
+        "default_agent_id": runtime.default_agent.agent_id,
         "llm_provider": getattr(runtime.runtime_loop.llm, "provider_name", "unknown"),
         "llm_model": getattr(runtime.runtime_loop.llm, "model_name", "unknown"),
         "llm_profile": getattr(runtime.runtime_loop.llm, "profile_name", "unknown"),

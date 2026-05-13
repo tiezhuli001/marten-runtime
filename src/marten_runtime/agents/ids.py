@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from marten_runtime.apps.runtime_defaults import DEFAULT_AGENT_ID
+from marten_runtime.agents.defaults import DEFAULT_AGENT_ID
 
 
 def canonicalize_runtime_agent_id(

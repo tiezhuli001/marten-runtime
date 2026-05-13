@@ -11,7 +11,7 @@ gate_components = ["parent_integration", "duplicate_dispatch_penalty"]
 
 [[turns]]
 role = "user"
-content = "把 README 结构放到后台看一下。"
+content = "把 README 结构放到后台看一下。任务只基于这段已知 README 摘要，不访问 GitHub MCP：README 包含项目定位、仓库结构、快速开始、运行、评测和测试。"
 
 [[turns]]
 role = "user"

@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
-from marten_runtime.apps.runtime_defaults import DEFAULT_AGENT_ID, DEFAULT_APP_ID
+from marten_runtime.agents.defaults import DEFAULT_AGENT_ID
 from marten_runtime.automation.models import AutomationJob
 from marten_runtime.channels.dead_letter import InMemoryDeadLetterQueue
 from marten_runtime.channels.delivery_retry import DeliveryRetryPolicy
@@ -32,14 +32,14 @@ from tests.support.finalization_contracts import contracted_final_reply
 
 class RuntimeContractTests(unittest.TestCase):
 
-    def test_runtime_bootstrap_keeps_current_default_runtime_asset(self) -> None:
+    def test_runtime_bootstrap_keeps_main_as_default_agent_asset(self) -> None:
         app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime
 
-        self.assertEqual(runtime.app_manifest.app_id, DEFAULT_APP_ID)
-        self.assertEqual(runtime.app_manifest.default_agent, DEFAULT_AGENT_ID)
-        self.assertEqual(runtime.default_agent.app_id, DEFAULT_APP_ID)
         self.assertEqual(runtime.default_agent.agent_id, DEFAULT_AGENT_ID)
+        self.assertEqual(runtime.agent_router.default_agent_id, DEFAULT_AGENT_ID)
+        self.assertEqual(runtime.agent_runtimes["main"].prompt_manifest_id, "agent_main_full")
+        self.assertFalse(hasattr(runtime, "app_manifest"))
 
     def test_runtime_router_keeps_main_as_the_only_default_runtime_agent_id(self) -> None:
         app = build_test_app(emit_explicit_empty_contract=True)
@@ -133,7 +133,6 @@ class RuntimeContractTests(unittest.TestCase):
                 lessons_path=Path(tmpdir) / "SYSTEM_LESSONS.md",
                 judge=make_default_judge(
                     runtime.runtime_loop.llm,
-                    app_id="main_agent",
                     agent_id="main",
                 ),
             )
@@ -141,7 +140,6 @@ class RuntimeContractTests(unittest.TestCase):
                 AutomationJob(
                     automation_id="self_improve_internal",
                     name="Internal Self Improve",
-                    app_id="main_agent",
                     agent_id="main",
                     prompt_template="Summarize repeated failures and later recoveries.",
                     schedule_kind="daily",
@@ -207,7 +205,6 @@ class RuntimeContractTests(unittest.TestCase):
             )
             runtime.self_improve_service.judge = make_default_judge(
                 runtime.runtime_loop.llm,
-                app_id="main_agent",
                 agent_id="main",
             )
 
@@ -231,7 +228,6 @@ class RuntimeContractTests(unittest.TestCase):
                         "action": "register",
                         "automation_id": "github_digest_daily",
                         "name": "github_digest_daily",
-                        "app_id": "default_app",
                         "agent_id": "default_agent",
                         "prompt_template": "",
                         "schedule_kind": "cron",
@@ -424,7 +420,6 @@ class RuntimeContractTests(unittest.TestCase):
                         "action": "register",
                         "automation_id": "daily_hot",
                         "name": "Daily GitHub Hot Repos",
-                        "app_id": "main_agent",
                         "agent_id": "main",
                         "prompt_template": "Summarize today's hot repositories.",
                         "schedule_kind": "daily",

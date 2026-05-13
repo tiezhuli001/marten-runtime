@@ -13,13 +13,13 @@ class SubagentContractTests(unittest.TestCase):
             session_id="sess_contract_parent",
             conversation_id="conv-contract-parent",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         parent_run = runtime.run_history.start(
             session_id=session.session_id,
             trace_id="trace_contract_parent",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         accepted = runtime.subagent_service.spawn(
             task="inspect contract flow",
@@ -27,7 +27,6 @@ class SubagentContractTests(unittest.TestCase):
             parent_session_id=session.session_id,
             parent_run_id=parent_run.run_id,
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             context_mode="brief_only",
@@ -57,13 +56,13 @@ class SubagentContractTests(unittest.TestCase):
             session_id="sess_contract_parent_2",
             conversation_id="conv-contract-parent-2",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         parent_run = runtime.run_history.start(
             session_id=session.session_id,
             trace_id="trace_contract_parent_2",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         )
         accepted = runtime.subagent_service.spawn(
             task="inspect contract flow",
@@ -71,7 +70,6 @@ class SubagentContractTests(unittest.TestCase):
             parent_session_id=session.session_id,
             parent_run_id=parent_run.run_id,
             parent_agent_id="main",
-            app_id="main_agent",
             agent_id="main",
             requested_tool_profile="restricted",
             context_mode="brief_only",

@@ -200,7 +200,6 @@ class RuntimeLoopProviderFailoverTests(unittest.TestCase):
         self.agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["time"],
         )
         self.profiles = {
@@ -368,7 +367,6 @@ class RuntimeLoopProviderFailoverTests(unittest.TestCase):
         compaction_agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp", "runtime", "session", "skill"],
         )
         runtime = RuntimeLoop(
@@ -748,7 +746,6 @@ class RuntimeLoopProviderFailoverTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -985,7 +982,6 @@ class RuntimeLoopProviderFailoverTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["session"],
         )
 
@@ -1066,7 +1062,6 @@ class RuntimeLoopProviderFailoverTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["session", "spawn_subagent"],
         )
 
@@ -1132,7 +1127,6 @@ class RuntimeLoopProviderFailoverTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["spawn_subagent"],
         )
 

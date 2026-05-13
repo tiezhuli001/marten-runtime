@@ -22,7 +22,7 @@ def seed_case_state(  # noqa: ANN001
             session_id="sess_catalog_current",
             conversation_id=conversation_id,
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
             channel_id="http",
             user_id=user_id,
         )
@@ -37,7 +37,7 @@ def seed_case_state(  # noqa: ANN001
             session_id="sess_catalog_other",
             conversation_id="eval-session-catalog-other",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
             channel_id="http",
             user_id=user_id,
         )
@@ -53,7 +53,7 @@ def seed_case_state(  # noqa: ANN001
             session_id="sess_resume_current",
             conversation_id=conversation_id,
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
             channel_id="http",
             user_id=user_id,
         )
@@ -68,7 +68,7 @@ def seed_case_state(  # noqa: ANN001
             session_id="sess_resume_target",
             conversation_id="eval-resume-target",
             config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-            bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+            bootstrap_manifest_id=runtime.default_prompt_manifest_id,
             channel_id="http",
             user_id=user_id,
         )
@@ -108,7 +108,7 @@ def _seed_long_history_session(  # noqa: ANN001
         session_id=session_id,
         conversation_id=conversation_id,
         config_snapshot_id=runtime.config_snapshot.config_snapshot_id,
-        bootstrap_manifest_id=runtime.app_manifest.bootstrap_manifest_id,
+        bootstrap_manifest_id=runtime.default_prompt_manifest_id,
         channel_id="http",
         user_id=user_id,
     )

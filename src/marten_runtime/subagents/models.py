@@ -23,7 +23,6 @@ class SubagentTask(BaseModel):
     origin_delivery_target: str | None = None
     child_session_id: str
     child_run_id: str | None = None
-    app_id: str
     agent_id: str
     tool_profile: str
     effective_tool_profile: str

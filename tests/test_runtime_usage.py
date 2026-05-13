@@ -32,8 +32,7 @@ class RuntimeUsageTests(unittest.TestCase):
                 trace_id="trace_usage_text",
                 message="hello",
                 agent_id="main",
-                app_id="main_agent",
-            )
+                )
         )
 
         self.assertEqual(reply.final_text, "ok")
@@ -83,8 +82,7 @@ class RuntimeUsageTests(unittest.TestCase):
                 trace_id="trace_usage_tool",
                 message="what time",
                 agent_id="main",
-                app_id="main_agent",
-                available_tools=["time"],
+                    available_tools=["time"],
                 tool_snapshot=ToolSnapshot(tool_snapshot_id="tool_usage", builtin_tools=["time"]),
             )
         )
@@ -114,8 +112,7 @@ class RuntimeUsageTests(unittest.TestCase):
                 trace_id="trace_usage_missing",
                 message="hello",
                 agent_id="main",
-                app_id="main_agent",
-            )
+                )
         )
 
         self.assertEqual(reply.final_text, "ok")
@@ -162,8 +159,7 @@ class RuntimeUsageTests(unittest.TestCase):
                 trace_id="trace_usage_responses",
                 message="hello",
                 agent_id="main",
-                app_id="main_agent",
-            )
+                )
         )
 
         self.assertEqual(calls, 1)

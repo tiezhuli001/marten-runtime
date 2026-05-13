@@ -19,7 +19,6 @@ class AutomationToolSupportTests(unittest.TestCase):
             {
                 "task_name": "GitHub热榜推荐",
                 "skill": "github_trending_digest",
-                "app_id": "current_app",
                 "agent_id": "current_agent",
                 "schedule_kind": "cron",
                 "schedule_expr": "0 10 21 * * *",
@@ -28,7 +27,6 @@ class AutomationToolSupportTests(unittest.TestCase):
                 "delivery_target": "current_conversation",
             },
             {
-                "app_id": "main_agent",
                 "agent_id": "main",
                 "channel_id": "feishu",
                 "conversation_id": "oc_test_chat",
@@ -37,7 +35,6 @@ class AutomationToolSupportTests(unittest.TestCase):
 
         self.assertEqual(normalized["name"], "GitHub热榜推荐")
         self.assertEqual(normalized["skill_id"], "github_trending_digest")
-        self.assertEqual(normalized["app_id"], "main_agent")
         self.assertEqual(normalized["agent_id"], "main")
         self.assertEqual(normalized["delivery_channel"], "feishu")
         self.assertEqual(normalized["delivery_target"], "oc_test_chat")
@@ -49,7 +46,6 @@ class AutomationToolSupportTests(unittest.TestCase):
         values = build_registration_values(
             {
                 "automation_id": "daily_hot",
-                "app_id": "main_agent",
                 "agent_id": "main",
                 "schedule_kind": "daily",
                 "schedule_expr": "09:30",

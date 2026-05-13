@@ -23,7 +23,6 @@ class RuntimeLoopAutomationRouteTests(unittest.TestCase):
                 AutomationJob(
                     automation_id="daily_hot",
                     name="GitHub热榜推荐",
-                    app_id="main_agent",
                     agent_id="main",
                     prompt_template="x",
                     schedule_kind="daily",
@@ -51,7 +50,6 @@ class RuntimeLoopAutomationRouteTests(unittest.TestCase):
             agent = AgentSpec(
                 agent_id="main",
                 role="general_assistant",
-                app_id="main_agent",
                 allowed_tools=["automation"],
             )
 
@@ -82,7 +80,6 @@ class RuntimeLoopAutomationRouteTests(unittest.TestCase):
                 AutomationJob(
                     automation_id="github_trending_digest_2230",
                     name="GitHub热榜推荐",
-                    app_id="main_agent",
                     agent_id="main",
                     prompt_template="x",
                     schedule_kind="daily",
@@ -116,7 +113,6 @@ class RuntimeLoopAutomationRouteTests(unittest.TestCase):
             agent = AgentSpec(
                 agent_id="main",
                 role="general_assistant",
-                app_id="main_agent",
                 allowed_tools=["automation"],
             )
 
@@ -160,8 +156,7 @@ class RuntimeLoopAutomationRouteTests(unittest.TestCase):
                             "action": "register",
                             "automation_id": "daily_hot",
                             "name": "Daily GitHub Hot Repos",
-                            "app_id": "main_agent",
-                            "agent_id": "main",
+                                "agent_id": "main",
                             "prompt_template": "Summarize today's hot repositories.",
                             "schedule_kind": "daily",
                             "schedule_expr": "09:30",
@@ -179,7 +174,6 @@ class RuntimeLoopAutomationRouteTests(unittest.TestCase):
             agent = AgentSpec(
                 agent_id="main",
                 role="general_assistant",
-                app_id="main_agent",
                 allowed_tools=["automation"],
             )
 
@@ -235,8 +229,7 @@ class RuntimeLoopAutomationRouteTests(unittest.TestCase):
                             "action": "register",
                             "automation_id": "daily_hot",
                             "name": "Daily GitHub Hot Repos",
-                            "app_id": "main_agent",
-                            "agent_id": "main",
+                                "agent_id": "main",
                             "prompt_template": "Summarize today's hot repositories.",
                             "schedule_kind": "daily",
                             "schedule_expr": "09:30",
@@ -254,7 +247,6 @@ class RuntimeLoopAutomationRouteTests(unittest.TestCase):
             agent = AgentSpec(
                 agent_id="main",
                 role="general_assistant",
-                app_id="main_agent",
                 allowed_tools=["automation", "mcp"],
             )
 
@@ -315,7 +307,6 @@ class RuntimeLoopAutomationRouteTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -385,7 +376,6 @@ class RuntimeLoopAutomationRouteTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 
@@ -445,7 +435,6 @@ class RuntimeLoopAutomationRouteTests(unittest.TestCase):
         agent = AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=["mcp"],
         )
 

@@ -1,14 +1,34 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
 from pathlib import Path
 
-from marten_runtime.apps.manifest import AppManifest
+from marten_runtime.agents.specs import AgentSpec
 
 
-def load_bootstrap_prompt(*, repo_root: Path, manifest: AppManifest) -> str:
-    app_root = repo_root / manifest.bootstrap.root
+@dataclass(frozen=True)
+class AgentRuntimeAssets:
+    agent_id: str
+    asset_root: str
+    prompt_manifest_id: str
+    system_prompt: str
+
+
+def load_agent_runtime_assets(*, repo_root: Path, spec: AgentSpec) -> AgentRuntimeAssets:
+    return AgentRuntimeAssets(
+        agent_id=spec.agent_id,
+        asset_root=spec.asset_root,
+        prompt_manifest_id=spec.prompt_manifest_id,
+        system_prompt=load_agent_system_prompt(repo_root=repo_root, spec=spec),
+    )
+
+
+def load_agent_system_prompt(*, repo_root: Path, spec: AgentSpec) -> str:
+    agent_root = repo_root / spec.asset_root
     sections: list[str] = [
         "[Runtime]",
         (
-            f"你是 `{manifest.app_id}`，运行在 `marten-runtime` 中。"
+            f"你是 `{spec.agent_id}`，运行在 `marten-runtime` 中。"
             " 你必须以当前 runtime 助手身份回答，不要自称 Cursor、Claude、ChatGPT 或 Codex。"
             " 当用户问你是谁时，直接说明你是运行在 marten-runtime 中的助手。"
         ),
@@ -30,21 +50,21 @@ def load_bootstrap_prompt(*, repo_root: Path, manifest: AppManifest) -> str:
         ),
     ]
     for title, relative_path in (
-        ("Bootstrap", manifest.bootstrap.bootstrap),
-        ("Identity", manifest.bootstrap.identity),
-        ("Agents", manifest.bootstrap.agents),
-        ("Tools", manifest.bootstrap.tools),
+        ("Bootstrap", spec.bootstrap_file),
+        ("Identity", spec.identity_file),
+        ("Agents", spec.agents_file),
+        ("Tools", spec.tools_file),
     ):
         if not relative_path:
             continue
-        path = app_root / relative_path
+        path = agent_root / relative_path
         if not path.exists():
             continue
         text = path.read_text(encoding="utf-8").strip()
         if not text:
             continue
         sections.append(f"[{title}]\n{text}")
-    lessons_path = app_root / "SYSTEM_LESSONS.md"
+    lessons_path = agent_root / "SYSTEM_LESSONS.md"
     if lessons_path.exists():
         lessons_text = lessons_path.read_text(encoding="utf-8").strip()
         if lessons_text:

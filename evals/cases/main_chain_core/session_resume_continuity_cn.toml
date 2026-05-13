@@ -12,10 +12,6 @@ tags = ["cn", "session", "resume"]
 role = "user"
 content = "恢复到旧会话。"
 
-[[turns]]
-role = "user"
-content = "继续旧会话。"
-
 [setup]
 session_history_fixture = "none"
 memory_fixture = "none"

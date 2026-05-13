@@ -24,6 +24,28 @@
 
 ## 条目
 
+### 2026-05-12: Runtime App Abstraction Was Removed And Agents Own Runtime Assets
+
+- Change:
+  - removed the legacy runtime package from active code.
+  - moved prompt assets to agent-owned roots such as `agents/main/`.
+  - `config/agents.toml` now uses `asset_root` with `allowed_tools`, `prompt_mode`, and `model_profile`.
+  - new bootstrap manifest ids are generated from agent identity and prompt mode, for example `agent_main_full`.
+  - runtime diagnostics expose `default_agent_id` and selected `agent_id` without a legacy runtime surface identity.
+- Why:
+  - personal-assistant routing is centered on agents. Keeping a separate legacy runtime surface identity made configuration harder to explain and added migration burden.
+  - agent-owned assets match the active routing path: `channel -> binding -> agent router -> selected agent -> runtime loop -> tools/subagents -> delivery`.
+- Source of truth:
+  - `config/agents.toml`
+  - `agents/main/`
+  - `src/marten_runtime/agents/assets.py`
+  - `src/marten_runtime/interfaces/http/bootstrap_runtime.py`
+- Verification:
+  - `PYTHONPATH=src /tmp/marten-runtime-py313-verify/bin/python -m pytest tests/test_agent_specs.py tests/contracts/test_runtime_contracts.py -q`
+  - `PYTHONPATH=src /tmp/marten-runtime-py313-verify/bin/python -m pytest tests/test_bootstrap_prompt.py tests/test_router.py tests/test_automation.py tests/test_self_improve_gate.py tests/test_self_improve_integration.py tests/test_self_improve_review_dispatcher.py tests/tools/test_runtime_and_skill_tools.py tests/contracts/test_gateway_contracts.py tests/runtime_mcp/test_followup_recovery.py tests/test_models.py tests/test_session_compaction_worker.py tests/test_tool_followup_support.py tests/test_automation_tool_support.py tests/test_init_script.py -q`
+  - `PYTHONPATH=src /tmp/marten-runtime-py313-verify/bin/python -m compileall -q src tests`
+  - `git diff --check`
+
 ### 2026-05-11: provider 可靠性轻量层进入主链诊断与 eval 页面
 
 - 变化：
@@ -652,7 +674,7 @@
     - `mcp:<server>`
   - child execution now resolves the requested `agent_id` through the real `AgentRegistry` and runtime assets:
     - child `role`
-    - child `app_id`
+    - child legacy app identity
     - child `prompt_mode`
     - child `model_profile`
     - matching `llm_client` / prompt assets when available
@@ -666,7 +688,7 @@
   - `agent_id` could not remain a schema-only field; child execution and diagnostics had to reflect the real target agent
   - MCP cancellation had to become stronger than “ignore the eventual result” to reduce hanging background workers under timeout pressure
 - Source of truth:
-  - `apps/main_agent/AGENTS.md`
+  - legacy main-agent AGENTS prompt asset
   - `src/marten_runtime/subagents/policy.py`
   - `src/marten_runtime/subagents/tool_profiles.py`
   - `src/marten_runtime/subagents/service.py`
@@ -683,17 +705,17 @@
   - live proof:
     - real Feishu -> main agent -> child agent -> GitHub MCP -> Feishu completion notification path recorded in `docs/LIVE_VERIFICATION_CHECKLIST.md`
 
-### 2026-04-14: Default Runtime App Was Renamed To `main_agent` And The Main Prompt Was Repositioned As An Execution Agent
+### 2026-04-14: Default Runtime Surface Was Renamed To `main_agent` And The Main Prompt Was Repositioned As An Execution Agent
 
 - Change:
-  - the default runtime app id and app root moved from `example_assistant` to `main_agent`
+  - the default legacy runtime surface id and legacy asset root moved from `example_assistant` to `main_agent`
   - the default main agent id moved from `assistant` to `main`
   - the canonical prompt asset root now lives under:
-    - `apps/main_agent/app.toml`
-    - `apps/main_agent/AGENTS.md`
-    - `apps/main_agent/BOOTSTRAP.md`
-    - `apps/main_agent/SOUL.md`
-    - `apps/main_agent/TOOLS.md`
+    - legacy main-agent manifest file
+    - legacy main-agent AGENTS prompt asset
+    - legacy main-agent BOOTSTRAP prompt asset
+    - legacy main-agent SOUL prompt asset
+    - legacy main-agent TOOLS prompt asset
   - the default prompt posture changed from a generic helper/demo-assistant tone to a primary execution-agent stance
   - the refreshed prompt now explicitly tells the default agent to:
     - act as the default main agent
@@ -707,12 +729,12 @@
     - `channel -> binding -> agent -> LLM -> MCP -> skill -> LLM -> channel`
   - the new prompt position is intentionally closer to execution-first open-agent runtimes than to a demo helper persona
 - Source of truth:
-  - `apps/main_agent/app.toml`
-  - `apps/main_agent/AGENTS.md`
-  - `apps/main_agent/BOOTSTRAP.md`
-  - `apps/main_agent/SOUL.md`
-  - `apps/main_agent/TOOLS.md`
-  - `src/marten_runtime/apps/runtime_defaults.py`
+  - legacy main-agent manifest file
+  - legacy main-agent AGENTS prompt asset
+  - legacy main-agent BOOTSTRAP prompt asset
+  - legacy main-agent SOUL prompt asset
+  - legacy main-agent TOOLS prompt asset
+  - legacy runtime defaults module
   - `src/marten_runtime/agents/registry.py`
   - `config/agents.toml`
   - `config/bindings.toml`
@@ -806,7 +828,7 @@
     - `runtime`
     - `self_improve`
   - default runtime asset truth is now thinner and shared:
-    - added `src/marten_runtime/apps/runtime_defaults.py`
+    - added legacy runtime defaults module
     - `bootstrap_runtime.py` and `config/agents_loader.py` now resolve the current default runtime asset from one shared module instead of repeating `example_assistant` path/default literals inline
   - `src/marten_runtime/runtime/llm_client.py` moved request-specific/tool-followup instruction assembly into:
     - `src/marten_runtime/runtime/llm_request_instructions.py`
@@ -838,7 +860,7 @@
   - `./archive/plans/2026-04-11-repo-slimming-summary.md`
   - `src/marten_runtime/runtime/tool_outcome_flow.py`
   - `src/marten_runtime/interfaces/http/bootstrap_runtime.py`
-  - `src/marten_runtime/apps/runtime_defaults.py`
+  - legacy runtime defaults module
   - `src/marten_runtime/channels/feishu/service_support.py`
   - `src/marten_runtime/channels/feishu/rendering_support.py`
   - `src/marten_runtime/runtime/llm_provider_support.py`
@@ -1262,7 +1284,7 @@
 ### 2026-04-01: Repository Hygiene Boundaries Were Tightened
 
 - Change:
-  - added `apps/example_assistant/SYSTEM_LESSONS.md` to `.gitignore`
+  - added legacy example assistant SYSTEM_LESSONS artifact to `.gitignore`
   - formalized `SYSTEM_LESSONS.md` as a runtime-managed artifact instead of a repository baseline file
   - introduced `docs/archive/` and moved completed one-off audits and the completed refinement plan out of the primary docs path
   - recorded the bootstrap cleanup plan at `docs/archive/plans/2026-04-01-bootstrap-assembly-hygiene-plan.md`

@@ -143,7 +143,6 @@ The root trace should use the existing runtime correlation identifiers:
 - `run_id`: canonical run history id
 - `session_id`
 - `agent_id`
-- `app_id`
 - `channel_id`
 - `request_kind`
 - `parent_run_id`
@@ -302,7 +301,7 @@ This behavior keeps local development smooth and keeps observability optional.
 | `run_id` | root trace metadata and session-level run identifier |
 | `session_id` | session id / conversation metadata |
 | `request_kind` | trace metadata |
-| `agent_id`, `app_id` | trace metadata and tags |
+| `agent_id` | trace metadata and tags |
 | `provider_calls[*]` | generation metadata for retry diagnostics |
 | `tool_calls[*]` | tool spans |
 | `latest_actual_usage` | generation usage and final trace summary |

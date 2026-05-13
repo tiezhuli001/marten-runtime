@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def _write_test_repo(root: Path) -> None:
     copytree(REPO_ROOT / "config", root / "config")
-    copytree(REPO_ROOT / "apps", root / "apps")
+    copytree(REPO_ROOT / "agents", root / "agents")
     copytree(REPO_ROOT / "skills", root / "skills")
     if (REPO_ROOT / "mcps.example.json").exists():
         copy2(REPO_ROOT / "mcps.example.json", root / "mcps.example.json")

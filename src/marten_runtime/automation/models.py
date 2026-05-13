@@ -10,7 +10,6 @@ from marten_runtime.automation.skill_ids import canonicalize_automation_skill_id
 class AutomationJob(BaseModel):
     automation_id: str
     name: str = ""
-    app_id: str
     agent_id: str
     prompt_template: str = ""
     schedule_kind: str = "daily"
@@ -54,7 +53,6 @@ class AutomationJob(BaseModel):
 def build_automation_semantic_fingerprint(job: "AutomationJob | dict[str, object]") -> str:
     if isinstance(job, AutomationJob):
         source = {
-            "app_id": job.app_id,
             "agent_id": job.agent_id,
             "delivery_channel": job.delivery_channel,
             "delivery_target": job.delivery_target,
@@ -67,7 +65,6 @@ def build_automation_semantic_fingerprint(job: "AutomationJob | dict[str, object
         }
     else:
         source = {
-            "app_id": str(job.get("app_id", "")),
             "agent_id": str(job.get("agent_id", "")),
             "delivery_channel": str(job.get("delivery_channel", "")),
             "delivery_target": str(job.get("delivery_target", "")),

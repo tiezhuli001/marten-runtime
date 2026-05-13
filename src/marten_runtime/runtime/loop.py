@@ -12,7 +12,10 @@ from marten_runtime.observability.langfuse import (
 )
 from marten_runtime.runtime.context import assemble_runtime_context
 from marten_runtime.runtime.events import OutboundEvent
-from marten_runtime.runtime.finalization_contract_prompt import FinalizationContractDraft
+from marten_runtime.runtime.finalization_contract_prompt import (
+    FinalizationContractDraft,
+    SessionSwitchClaimDraft,
+)
 from marten_runtime.runtime.history import CompactionDiagnostics, InMemoryRunHistory
 from marten_runtime.runtime.run_outcome_flow import (
     elapsed_ms,
@@ -118,6 +121,38 @@ DEFAULT_ALLOWED_TOOLS = [
 _build_contract_repair_request = build_contract_repair_request
 
 
+
+
+def _infer_required_first_turn_contract_from_text(
+    final_text: str,
+    *,
+    user_message: str,
+    actual_draft: FinalizationContractDraft | None = None,
+) -> FinalizationContractDraft | None:
+    normalized_text = " ".join(str(final_text or "").split())
+    normalized_message = " ".join(str(user_message or "").split())
+    if not normalized_text or not normalized_message:
+        return actual_draft
+    resume_cues = ("恢复", "切换", "继续")
+    session_cues = ("旧会话", "已有会话", "历史会话", "sess_")
+    previous_switch_confirmed = (
+        actual_draft is not None
+        and actual_draft.session_switch is not None
+        and actual_draft.session_switch.kind == "resume_switch"
+    )
+    if (
+        any(cue in normalized_message for cue in resume_cues)
+        and any(cue in normalized_message for cue in session_cues)
+        and any(cue in normalized_text for cue in ("已在", "已切换", "已恢复"))
+        and any(cue in normalized_text for cue in session_cues)
+        and not previous_switch_confirmed
+    ):
+        inferred = (actual_draft or FinalizationContractDraft()).model_copy(deep=True)
+        inferred.session_switch = inferred.session_switch or SessionSwitchClaimDraft(
+            kind="resume_switch"
+        )
+        return inferred
+    return actual_draft
 
 class RuntimeLoop:
 
@@ -268,7 +303,6 @@ class RuntimeLoop:
         resolved_agent = agent or AgentSpec(
             agent_id="main",
             role="general_assistant",
-            app_id="main_agent",
             allowed_tools=list(DEFAULT_ALLOWED_TOOLS),
         )
         resolved_llm = llm_client or self.llm
@@ -294,7 +328,6 @@ class RuntimeLoop:
             trace_id=trace_id,
             message=message,
             agent_id=resolved_agent.agent_id,
-            app_id=resolved_agent.app_id,
             model_name=getattr(resolved_llm, "model_name", None),
             tokenizer_family=provider_state.active_tokenizer_family,
             system_prompt=system_prompt,
@@ -415,7 +448,6 @@ class RuntimeLoop:
                 "run_id": run.run_id,
                 "session_id": session_id,
                 "agent_id": resolved_agent.agent_id,
-                "app_id": resolved_agent.app_id,
                 "channel_id": channel_id,
                 "request_kind": request_kind,
                 "config_snapshot_id": config_snapshot_id,
@@ -434,7 +466,6 @@ class RuntimeLoop:
             trace_id=trace_id,
             message=message,
             agent_id=resolved_agent.agent_id,
-            app_id=resolved_agent.app_id,
             model_name=getattr(resolved_llm, "model_name", None),
             tokenizer_family=provider_state.active_tokenizer_family,
             channel_protocol_instruction_text=channel_protocol_instruction_text,
@@ -872,8 +903,7 @@ class RuntimeLoop:
                             "user_id": user_id,
                             "source_transport": source_transport,
                             "agent_id": resolved_agent.agent_id,
-                            "app_id": resolved_agent.app_id,
-                            "allowed_tools": list(resolved_agent.allowed_tools),
+                                        "allowed_tools": list(resolved_agent.allowed_tools),
                             "model_profile": provider_state.active_profile_name,
                             "llm_client": resolved_llm,
                             "session_replay_user_turns": session_replay_user_turns,
@@ -1320,12 +1350,19 @@ class RuntimeLoop:
                 )
             if tool_result is None:
                 final_text = (reply.final_text or "").strip()
+                effective_finalization_contract_draft = (
+                    _infer_required_first_turn_contract_from_text(
+                        final_text,
+                        user_message=message,
+                        actual_draft=reply.finalization_contract_draft,
+                    )
+                )
                 invalid_first_turn_finalization_contract = (
                     _first_violated_finalization_contract(
                         tool_history,
                         final_text,
                         user_message=message,
-                        finalization_contract_draft=reply.finalization_contract_draft,
+                        finalization_contract_draft=effective_finalization_contract_draft,
                         enforce_structured_contract=True,
                     )
                     is not None

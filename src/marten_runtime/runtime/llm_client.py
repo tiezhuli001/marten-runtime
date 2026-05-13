@@ -51,7 +51,6 @@ class LLMRequest(BaseModel):
     trace_id: str
     message: str
     agent_id: str
-    app_id: str
     model_name: str | None = None
     tokenizer_family: str | None = None
     system_prompt: str | None = None

@@ -11,11 +11,11 @@ gate_components = ["child_completion", "parent_integration", "duplicate_dispatch
 
 [[turns]]
 role = "user"
-content = "把这个任务拆成两个子任务：一个看最近提交，一个看 README 结构，完成后我再来问你。"
+content = "把这个任务拆成两个子任务：一个看 README 的项目定位，一个看 README 的运行与评测入口，完成后我再来问你。两个子任务都只基于这段已知 README 摘要，不访问 GitHub MCP：项目定位是自托管 agent runtime harness；运行入口包含快速开始和本地启动；评测入口包含离线评测和 eval 报告。"
 
 [[turns]]
 role = "user"
-content = "把两个子任务的结果合并告诉我，明确最近提交部分和 README 结构部分各自的结论。"
+content = "把两个子任务的结果合并告诉我，明确项目定位部分和运行评测入口部分各自的结论。"
 
 [setup]
 session_history_fixture = "none"
@@ -33,6 +33,6 @@ duplicate_dispatch_penalty = 20
 [grader_case]
 expected_spawn_count = 2
 await_child_completion = true
-integration_contains_all = ["最近提交", "README"]
-integration_anchor_groups = [["最近提交", "近期提交"], ["README", "README结构", "README 结构"], ["快速开始", "离线评测", "仓库结构"]]
+integration_contains_all = ["项目定位", "运行", "评测"]
+integration_anchor_groups = [["项目定位", "核心能力"], ["运行", "快速开始"], ["评测", "离线评测"], ["README", "README结构", "README 结构"]]
 timeout_ms = 120000

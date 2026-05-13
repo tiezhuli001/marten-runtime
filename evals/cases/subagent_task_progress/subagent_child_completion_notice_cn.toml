@@ -11,7 +11,7 @@ gate_components = ["child_completion", "parent_integration"]
 
 [[turns]]
 role = "user"
-content = "把这个仓库的结构梳理放到后台做，完成后通知我。"
+content = "把这个仓库的结构梳理放到后台做，完成后通知我。任务只基于这段已知 README 摘要，不访问 GitHub MCP：顶层目录包含 src、config、agents、skills、evals、tests、docs；主要模块覆盖 runtime、MCP、skills、sessions、diagnostics；关键配置在 config；测试与文档在 tests 和 docs。"
 
 [[turns]]
 role = "user"

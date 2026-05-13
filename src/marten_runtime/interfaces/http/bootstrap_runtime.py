@@ -6,11 +6,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from marten_runtime.agents.bindings import AgentBindingRegistry
+from marten_runtime.agents.assets import AgentRuntimeAssets
+from marten_runtime.agents.defaults import DEFAULT_AGENT_ID, default_lessons_path
 from marten_runtime.agents.registry import AgentRegistry
 from marten_runtime.agents.router import AgentRouter
 from marten_runtime.agents.specs import AgentSpec
-from marten_runtime.apps.manifest import AppManifest, load_app_manifest
-from marten_runtime.apps.runtime_defaults import default_app_manifest_path, default_lessons_path
 from marten_runtime.automation.sqlite_store import SQLiteAutomationStore
 from marten_runtime.automation.store import AutomationStore
 from marten_runtime.channels.delivery_retry import DeliveryRetryPolicy
@@ -46,10 +46,9 @@ from marten_runtime.interfaces.http.feishu_runtime_services import (
     build_feishu_websocket_service,
 )
 from marten_runtime.interfaces.http.bootstrap_runtime_support import (
-    AppRuntimeAssets,
     build_stateful_stores,
     has_feishu_credentials,
-    load_app_runtimes,
+    load_agent_runtimes,
 )
 from marten_runtime.interfaces.http.runtime_tool_registration import (
     register_builtin_time_tool,
@@ -236,7 +235,6 @@ class HTTPRuntimeState:
     repo_root: Path
     env: dict[str, str]
     env_load_result: EnvLoadResult
-    app_manifest: AppManifest
     platform_config: PlatformConfig
     models_config: ModelsConfig
     providers_config: ProvidersConfig
@@ -256,6 +254,7 @@ class HTTPRuntimeState:
     binding_registry: AgentBindingRegistry
     agent_router: AgentRouter
     default_agent: AgentSpec
+    default_prompt_manifest_id: str
     skill_service: SkillService
     subagent_service: SubagentService
     capability_catalog_text: str | None
@@ -265,7 +264,7 @@ class HTTPRuntimeState:
     feishu_receipts: InMemoryReceiptStore
     feishu_socket_service: FeishuWebsocketService
     lane_manager: ConversationLaneManager
-    app_runtimes: dict[str, AppRuntimeAssets]
+    agent_runtimes: dict[str, AgentRuntimeAssets]
     llm_client_factory: CachedLLMClientFactory
     langfuse_observer: LangfuseObserver
     repository_context_note: str | None = None
@@ -306,24 +305,20 @@ def build_http_runtime(
         capability_declarations,
         mcp_catalog_text=build_mcp_capability_catalog(mcp_servers, mcp_discovery),
     )
-    default_app_manifest = load_app_manifest(
-        str(default_app_manifest_path(resolved_repo_root))
-    )
     agent_specs = load_agent_specs(str(resolved_repo_root / "config/agents.toml"))
-    app_runtimes = load_app_runtimes(
+    agent_runtimes = load_agent_runtimes(
         repo_root=resolved_repo_root,
-        app_ids={spec.app_id for spec in agent_specs if spec.enabled}
-        | {default_app_manifest.app_id},
+        agent_specs=agent_specs,
     )
     agent_registry, binding_registry, agent_router, default_agent = (
         _build_agent_runtime(
             repo_root=resolved_repo_root,
-            app_manifest=default_app_manifest,
             agent_specs=agent_specs,
         )
     )
-    app_manifest = app_runtimes[default_agent.app_id].manifest
-    system_prompt = app_runtimes[default_agent.app_id].system_prompt
+    default_agent_runtime = agent_runtimes[default_agent.agent_id]
+    default_prompt_manifest_id = default_agent_runtime.prompt_manifest_id
+    system_prompt = default_agent_runtime.system_prompt
     skill_service = SkillService([str(resolved_repo_root / "skills")])
     automation_store, self_improve_store, session_store = build_stateful_stores(
         resolved_repo_root
@@ -371,7 +366,7 @@ def build_http_runtime(
         auto_start_background=True,
         feishu_delivery=feishu_delivery,
         agent_registry=agent_registry,
-        app_runtimes=app_runtimes,
+        agent_runtimes=agent_runtimes,
         llm_client_factory=llm_client_factory,
         models_config=models_config,
         repository_context=resolve_repository_context(
@@ -385,7 +380,6 @@ def build_http_runtime(
         run_history=runtime_loop.history,
         skill_service=skill_service,
         feishu_delivery=feishu_delivery,
-        app_id=app_manifest.app_id,
         agent_id=default_agent.agent_id,
     )
     subagent_service.set_terminal_callback(review_dispatcher.handle_terminal_task)
@@ -395,7 +389,6 @@ def build_http_runtime(
         lessons_path=default_lessons_path(resolved_repo_root),
         judge=make_default_judge(
             runtime_loop.llm,
-            app_id=app_manifest.app_id,
             agent_id=default_agent.agent_id,
         ),
     )
@@ -408,7 +401,6 @@ def build_http_runtime(
         repo_root=resolved_repo_root,
         env=resolved_env,
         env_load_result=env_load_result,
-        app_manifest=app_manifest,
         platform_config=platform_config,
         models_config=models_config,
         providers_config=providers_config,
@@ -428,6 +420,7 @@ def build_http_runtime(
         binding_registry=binding_registry,
         agent_router=agent_router,
         default_agent=default_agent,
+        default_prompt_manifest_id=default_prompt_manifest_id,
         skill_service=skill_service,
         subagent_service=subagent_service,
         capability_catalog_text=capability_catalog_text,
@@ -437,7 +430,7 @@ def build_http_runtime(
         feishu_receipts=feishu_receipts,
         feishu_socket_service=None,  # type: ignore[arg-type]
         lane_manager=ConversationLaneManager(),
-        app_runtimes=app_runtimes,
+        agent_runtimes=agent_runtimes,
         llm_client_factory=llm_client_factory,
         langfuse_observer=langfuse_observer,
         repository_context_note=render_repository_context_note(repository_context),
@@ -508,7 +501,6 @@ def _load_runtime_config(
 def _build_agent_runtime(
     *,
     repo_root: Path,
-    app_manifest: AppManifest,
     agent_specs: list[AgentSpec],
 ) -> tuple[AgentRegistry, AgentBindingRegistry, AgentRouter, AgentSpec]:
     agent_registry = AgentRegistry()
@@ -521,8 +513,8 @@ def _build_agent_runtime(
     )
     agent_router = AgentRouter(
         agent_registry,
-        default_agent_id=app_manifest.default_agent,
+        default_agent_id=DEFAULT_AGENT_ID,
         bindings=binding_registry,
     )
-    default_agent = agent_registry.get(app_manifest.default_agent)
+    default_agent = agent_registry.get(DEFAULT_AGENT_ID)
     return agent_registry, binding_registry, agent_router, default_agent

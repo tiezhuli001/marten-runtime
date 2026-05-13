@@ -92,7 +92,8 @@ PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
 - `main_chain_mcp`：MCP 工具链路
 - `main_chain_subagent`：主线程与子代理链路
 - `memory_long_horizon`：长期记忆收益
-- `subagent_task_progress`：子代理任务推进
+- `subagent_task_progress`：子代理调度与非 MCP 任务推进
+- `subagent_external_mcp_completion`：子代理外部 MCP 完成链路
 
 产物位置：
 
@@ -105,12 +106,12 @@ PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
 
 ## 当前状态
 
-- 离线评测已经进入当前运维基线，当前可稳定回放 `main_chain_core`、`memory_long_horizon`、`subagent_task_progress` 并生成 compare / stability 报告
-- 默认 runtime app 已经是 `main_agent`
+- 离线评测已经进入当前运维基线，当前可稳定回放 `main_chain_core`、`memory_long_horizon`、`subagent_task_progress`、`subagent_external_mcp_completion` 并生成 compare / stability 报告
+- 默认 runtime agent 已经是 `main`
 - Milestone A 的 agent runtime harness 已经落地
 - HTTP `/messages` 与 Feishu interactive ingress 已具备 same-conversation FIFO queueing
 - durable SQLite session persistence 已成为当前基线
-- `requested_agent_id` 已能真实切换 app manifest、bootstrap 资产、allowed tool surface 和 model profile
+- `requested_agent_id` 已能真实切换 agent 资产、allowed tool surface 和 model profile
 - `session.new` / `session.resume` 已成为显式会话目录与切换控制面
 - thin `memory` builtin 已作为一条受控 continuity slice 接入
 - narrow self-improve loop 已实现并进入 runtime 基线

@@ -26,6 +26,72 @@ class RunEvalScriptTests(unittest.TestCase):
         self.assertIn("main_chain_core", result.stdout)
         self.assertIn("memory_long_horizon", result.stdout)
         self.assertIn("subagent_task_progress", result.stdout)
+        self.assertIn("subagent_external_mcp_completion", result.stdout)
+
+    def test_run_eval_accepts_case_timeout_seconds_argument(self) -> None:
+        result = subprocess.run(
+            [
+                ".venv/bin/python",
+                "scripts/run_eval.py",
+                "--list-suites",
+                "--case-timeout-seconds",
+                "1",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("main_chain_core", result.stdout)
+
+    def test_run_eval_writes_blocked_report_when_live_case_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "evals.sqlite3"
+            report_root = Path(tmpdir) / "reports"
+            result = subprocess.run(
+                [
+                    ".venv/bin/python",
+                    "scripts/run_eval.py",
+                    "--suite",
+                    "main_chain_core",
+                    "--mode",
+                    "live",
+                    "--profile",
+                    "openai_gpt_5_4",
+                    "--case-timeout-seconds",
+                    "1",
+                    "--db-path",
+                    str(db_path),
+                    "--report-root",
+                    str(report_root),
+                ],
+                env={
+                    "PYTHONPATH": "src",
+                    "PATH": __import__("os").environ.get("PATH", ""),
+                    "OPENAI_API_KEY": "test-key",
+                    "MINIMAX_API_KEY": "test-key",
+                    "http_proxy": "",
+                    "https_proxy": "",
+                    "all_proxy": "",
+                    "HTTP_PROXY": "",
+                    "HTTPS_PROXY": "",
+                    "ALL_PROXY": "",
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+            self.assertIn("case_start case_id=direct_answer_cn mode=live", result.stdout)
+            self.assertIn("case_done case_id=direct_answer_cn status=blocked", result.stdout)
+            self.assertIn("status=blocked", result.stdout)
+            artifact_root = next(report_root.iterdir())
+            summary = json.loads((artifact_root / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["status"], "blocked")
+            self.assertIn("case_blocked", summary["blocked_reason"])
+            self.assertTrue(any(item["status"] == "blocked" for item in summary["case_results"]))
 
     def test_run_eval_scripted_core_supports_latest_passed_compare(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -182,7 +248,7 @@ class RunEvalScriptTests(unittest.TestCase):
                     ".venv/bin/python",
                     "scripts/run_eval.py",
                     "--suite",
-                    "subagent_task_progress",
+                    "subagent_external_mcp_completion",
                     "--mode",
                     "live",
                     "--profile",
@@ -428,7 +494,7 @@ class RunEvalScriptTests(unittest.TestCase):
 
     def _copy_eval_repo(self, target: Path) -> None:
         source = Path.cwd()
-        for name in ("config", "apps", "skills", "evals"):
+        for name in ("config", "agents", "skills", "evals"):
             shutil.copytree(source / name, target / name)
         for name in ("mcps.json", "mcps.example.json"):
             path = source / name

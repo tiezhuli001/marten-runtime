@@ -1,7 +1,7 @@
 [agents.main]
 enabled = true
 role = "general_assistant"
-app_id = "main_agent"
+asset_root = "agents/main"
 allowed_tools = ["automation", "mcp", "runtime", "self_improve", "session", "memory", "skill", "time", "spawn_subagent", "cancel_subagent"]
 prompt_mode = "full"
 model_profile = "openai_gpt_5_4"
@@ -9,7 +9,7 @@ model_profile = "openai_gpt_5_4"
 [agents.coding]
 enabled = true
 role = "coding_agent"
-app_id = "main_agent"
+asset_root = "agents/main"
 allowed_tools = ["runtime", "skill", "time"]
 prompt_mode = "child"
 model_profile = "openai_gpt_5_4"
@@ -17,6 +17,6 @@ model_profile = "openai_gpt_5_4"
 [agents.ops]
 enabled = false
 role = "ops_agent"
-app_id = "main_agent"
+asset_root = "agents/main"
 allowed_tools = ["runtime", "time"]
 prompt_mode = "full"

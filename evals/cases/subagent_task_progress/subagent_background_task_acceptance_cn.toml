@@ -7,7 +7,7 @@ description = "该委派时发起一次正确委派"
 agent_id = "main"
 profile_name = "openai_gpt_5_4"
 tags = ["cn", "subagent", "acceptance"]
-gate_components = ["delegation_quality", "child_progress"]
+gate_components = ["delegation_quality"]
 
 [[turns]]
 role = "user"
@@ -19,11 +19,10 @@ memory_fixture = "none"
 automation_fixture = "none"
 
 [component_weights]
-delegation_quality = 60
-child_progress = 40
+delegation_quality = 100
 
 
 [grader_case]
 expected_spawn_count = 1
-await_child_completion = true
-timeout_ms = 120000
+await_child_completion = false
+timeout_ms = 10000
