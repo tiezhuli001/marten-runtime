@@ -1,4 +1,5 @@
 import os
+import queue
 import unittest
 from unittest.mock import patch
 
@@ -10,13 +11,16 @@ from marten_runtime.evals.executor import (
     REPO_ROOT,
     _copy_repo_scaffold,
     _execute_case_live,
+    _execute_case_live_child,
+    _execute_case_live_with_timeout,
     _is_retryable_live_subagent_timeout,
     _seed_case_state,
+    _should_collect_subagent_diagnostics,
     _should_include_live_mcp_scaffold,
     execute_suite,
 )
 from marten_runtime.evals.graders import grade_case_result
-from marten_runtime.evals.loader import load_case_spec
+from marten_runtime.evals.loader import load_case_spec, load_suite_spec
 from marten_runtime.evals.scripted_runtime import (
     FixedReplyLLMClient,
     PromptTooLongThenCompactThenFinalEvalClient,
@@ -734,9 +738,480 @@ class EvalExecutorTests(unittest.TestCase):
             {"OPENAI_API_KEY": "test-key", "MINIMAX_API_KEY": "test-key"},
             clear=False,
         ):
-            execute_suite(suite, mode="live", profile_name="openai_gpt_5_4")
+            _execute_case_live(
+                case,
+                source_repo_root=REPO_ROOT,
+                include_mcp=False,
+                profile_name="openai_gpt_5_4",
+            )
 
-        self.assertEqual(captured["subagent_timeout_seconds"], 180)
+        self.assertEqual(captured["subagent_timeout_seconds"], 300)
+
+
+    def test_subagent_dispatch_case_collects_diagnostics_after_single_turn(self) -> None:
+        case = load_case_spec(
+            Path("evals/cases/subagent_task_progress/subagent_background_task_acceptance_cn.toml")
+        ).model_copy(update={"grader_id": "subagent_task_progress"})
+
+        self.assertTrue(_should_collect_subagent_diagnostics(case, 1))
+
+    def test_subagent_external_mcp_suite_keeps_mcp_dependency_separate(self) -> None:
+        progress_suite = load_suite_spec(Path("evals/suites/subagent_task_progress.toml"))
+        external_suite = load_suite_spec(Path("evals/suites/subagent_external_mcp_completion.toml"))
+
+        self.assertEqual(progress_suite.required_dependencies, ["provider", "subagent"])
+        self.assertEqual(external_suite.required_dependencies, ["provider", "subagent", "mcp"])
+        self.assertEqual(external_suite.cases[0].grader_case["timeout_ms"], 300000)
+
+
+    def test_live_case_timeout_uses_case_grader_timeout_when_larger_than_global_default(self) -> None:
+        case = load_case_spec(
+            Path("evals/cases/subagent_task_progress/subagent_external_mcp_completion_cn.toml")
+        )
+        suite = EvalSuiteSpec(
+            suite_id="subagent_external_mcp_completion",
+            grader_id="subagent_task_progress",
+            description="probe",
+            default_mode="live",
+            scripted_supported=True,
+            required_dependencies=["provider", "subagent", "mcp"],
+            baseline_policy="latest_passed_auto",
+            case_files=[],
+            cases=[case],
+            suite_fingerprint="suite123",
+        )
+        captured: list[float | None] = []
+
+        def _fake_execute_case_live_with_timeout(case_arg, **kwargs):  # noqa: ANN001
+            del case_arg
+            captured.append(kwargs.get("case_timeout_seconds"))
+            return EvalCaseObservation(case_id=case.case_id, family=case.family)
+
+        with patch(
+            "marten_runtime.evals.executor._execute_case_live_with_timeout",
+            side_effect=_fake_execute_case_live_with_timeout,
+        ), patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": "test-key", "MINIMAX_API_KEY": "test-key"},
+            clear=False,
+        ):
+            execute_suite(
+                suite,
+                mode="live",
+                profile_name="openai_gpt_5_4",
+                case_timeout_seconds=120,
+            )
+
+        self.assertEqual(captured, [300.0])
+
+    def test_live_case_timeout_uses_global_timeout_when_larger_than_case_timeout(self) -> None:
+        case = load_case_spec(
+            Path("evals/cases/subagent_task_progress/subagent_background_task_acceptance_cn.toml")
+        )
+        suite = EvalSuiteSpec(
+            suite_id="subagent_task_progress",
+            grader_id="subagent_task_progress",
+            description="probe",
+            default_mode="live",
+            scripted_supported=True,
+            required_dependencies=["provider", "subagent"],
+            baseline_policy="latest_passed_auto",
+            case_files=[],
+            cases=[case],
+            suite_fingerprint="suite123",
+        )
+        captured: list[float | None] = []
+
+        def _fake_execute_case_live_with_timeout(case_arg, **kwargs):  # noqa: ANN001
+            del case_arg
+            captured.append(kwargs.get("case_timeout_seconds"))
+            return EvalCaseObservation(case_id=case.case_id, family=case.family)
+
+        with patch(
+            "marten_runtime.evals.executor._execute_case_live_with_timeout",
+            side_effect=_fake_execute_case_live_with_timeout,
+        ), patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": "test-key", "MINIMAX_API_KEY": "test-key"},
+            clear=False,
+        ):
+            execute_suite(
+                suite,
+                mode="live",
+                profile_name="openai_gpt_5_4",
+                case_timeout_seconds=120,
+            )
+
+        self.assertEqual(captured, [120.0])
+
+
+    def test_live_case_timeout_zero_disables_parent_case_timeout_even_when_case_declares_timeout(self) -> None:
+        case = load_case_spec(
+            Path("evals/cases/subagent_task_progress/subagent_external_mcp_completion_cn.toml")
+        )
+        suite = EvalSuiteSpec(
+            suite_id="subagent_external_mcp_completion",
+            grader_id="subagent_task_progress",
+            description="probe",
+            default_mode="live",
+            scripted_supported=True,
+            required_dependencies=["provider", "subagent", "mcp"],
+            baseline_policy="latest_passed_auto",
+            case_files=[],
+            cases=[case],
+            suite_fingerprint="suite123",
+        )
+        captured: list[float | None] = []
+
+        def _fake_execute_case_live_with_timeout(case_arg, **kwargs):  # noqa: ANN001
+            del case_arg
+            captured.append(kwargs.get("case_timeout_seconds"))
+            return EvalCaseObservation(case_id=case.case_id, family=case.family)
+
+        with patch(
+            "marten_runtime.evals.executor._execute_case_live_with_timeout",
+            side_effect=_fake_execute_case_live_with_timeout,
+        ), patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": "test-key", "MINIMAX_API_KEY": "test-key"},
+            clear=False,
+        ):
+            execute_suite(
+                suite,
+                mode="live",
+                profile_name="openai_gpt_5_4",
+                case_timeout_seconds=0,
+            )
+
+        self.assertEqual(captured, [None])
+
+    def test_execute_suite_live_blocked_diagnostics_use_effective_case_timeout(self) -> None:
+        case = load_case_spec(
+            Path("evals/cases/subagent_task_progress/subagent_external_mcp_completion_cn.toml")
+        )
+        suite = EvalSuiteSpec(
+            suite_id="subagent_external_mcp_completion",
+            grader_id="subagent_task_progress",
+            description="probe",
+            default_mode="live",
+            scripted_supported=True,
+            required_dependencies=["provider", "subagent", "mcp"],
+            baseline_policy="latest_passed_auto",
+            case_files=[],
+            cases=[case],
+            suite_fingerprint="suite123",
+        )
+
+        with patch(
+            "marten_runtime.evals.executor._execute_case_live_with_timeout",
+            side_effect=TimeoutError("eval case timed out: subagent_external_mcp_completion_cn"),
+        ), patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": "test-key", "MINIMAX_API_KEY": "test-key"},
+            clear=False,
+        ):
+            _summary, observations = execute_suite(
+                suite,
+                mode="live",
+                profile_name="openai_gpt_5_4",
+                case_timeout_seconds=120,
+            )
+
+        self.assertEqual(observations[0].diagnostics_json["case_timeout_seconds"], 300.0)
+
+    def test_execute_case_live_with_timeout_raises_when_case_hangs(self) -> None:
+        case = load_case_spec(Path("evals/cases/main_chain_core/direct_answer_cn.toml"))
+
+        def _hang(*args, **kwargs):  # noqa: ANN001
+            del args, kwargs
+            import time
+            time.sleep(5)
+            return EvalCaseObservation(case_id=case.case_id, family=case.family)
+
+        with patch("marten_runtime.evals.executor._execute_case_live", side_effect=_hang):
+            with self.assertRaises(TimeoutError) as ctx:
+                _execute_case_live_with_timeout(
+                    case,
+                    source_repo_root=REPO_ROOT,
+                    include_mcp=False,
+                    profile_name="openai_gpt_5_4",
+                    case_timeout_seconds=0.05,
+                )
+
+        self.assertIn(case.case_id, str(ctx.exception))
+
+    def test_execute_case_live_with_timeout_reads_queue_result_before_join_timeout(self) -> None:
+        case = load_case_spec(Path("evals/cases/main_chain_core/direct_answer_cn.toml"))
+        observation = EvalCaseObservation(case_id=case.case_id, family=case.family, final_text="ok")
+
+        class FakeQueue:
+            def __init__(self, *args, **kwargs):
+                del args, kwargs
+                self._items: list[object] = []
+
+            def put(self, item):  # noqa: ANN001
+                self._items.append(item)
+
+            def get_nowait(self):
+                if not self._items:
+                    raise queue.Empty
+                return self._items.pop(0)
+
+        class FakeProcess:
+            exitcode = None
+
+            def __init__(self, *, target, kwargs, daemon):  # noqa: ANN001
+                del daemon
+                self._target = target
+                self._kwargs = kwargs
+                self.started = False
+
+            def start(self):
+                self.started = True
+                self._target(**self._kwargs)
+
+            def join(self, timeout=None):  # noqa: ANN001
+                del timeout
+                self.started = False
+
+            def is_alive(self):
+                return self.started
+
+            def terminate(self):
+                raise AssertionError("successful queued result must be read before terminate")
+
+            def kill(self):
+                raise AssertionError("successful queued result must be read before kill")
+
+        class FakeContext:
+            def Queue(self, maxsize=0):  # noqa: N802
+                del maxsize
+                return FakeQueue()
+
+            def Process(self, *, target, kwargs, daemon):  # noqa: N802, ANN001
+                return FakeProcess(target=target, kwargs=kwargs, daemon=daemon)
+
+        with patch("marten_runtime.evals.executor.multiprocessing.get_context", return_value=FakeContext()), patch(
+            "marten_runtime.evals.executor._execute_case_live",
+            return_value=observation,
+        ):
+            result = _execute_case_live_with_timeout(
+                case,
+                source_repo_root=REPO_ROOT,
+                include_mcp=False,
+                profile_name="openai_gpt_5_4",
+                case_timeout_seconds=0.05,
+            )
+
+        self.assertEqual(result.final_text, "ok")
+
+    def test_execute_case_live_with_timeout_waits_for_result_after_process_exit(self) -> None:
+        case = load_case_spec(Path("evals/cases/main_chain_core/direct_answer_cn.toml"))
+        observation = EvalCaseObservation(case_id=case.case_id, family=case.family, final_text="ok")
+
+        class DelayedQueue:
+            def __init__(self, *args, **kwargs):
+                del args, kwargs
+                self._items: list[object] = []
+                self.nowait_calls = 0
+
+            def put(self, item):  # noqa: ANN001
+                self._items.append(item)
+
+            def get_nowait(self):
+                self.nowait_calls += 1
+                raise queue.Empty
+
+            def get(self, timeout=None):  # noqa: ANN001
+                del timeout
+                if not self._items:
+                    raise queue.Empty
+                return self._items.pop(0)
+
+        class ExitedProcess:
+            exitcode = 0
+
+            def __init__(self, *, target, kwargs, daemon):  # noqa: ANN001
+                del daemon
+                self._target = target
+                self._kwargs = kwargs
+
+            def start(self):
+                self._target(**self._kwargs)
+
+            def join(self, timeout=None):  # noqa: ANN001
+                del timeout
+
+            def is_alive(self):
+                return False
+
+            def terminate(self):
+                raise AssertionError("exited process must not be terminated")
+
+            def kill(self):
+                raise AssertionError("exited process must not be killed")
+
+        class FakeContext:
+            def Queue(self, maxsize=0):  # noqa: N802
+                del maxsize
+                return DelayedQueue()
+
+            def Process(self, *, target, kwargs, daemon):  # noqa: N802, ANN001
+                return ExitedProcess(target=target, kwargs=kwargs, daemon=daemon)
+
+        with patch("marten_runtime.evals.executor.multiprocessing.get_context", return_value=FakeContext()), patch(
+            "marten_runtime.evals.executor._execute_case_live",
+            return_value=observation,
+        ):
+            result = _execute_case_live_with_timeout(
+                case,
+                source_repo_root=REPO_ROOT,
+                include_mcp=False,
+                profile_name="openai_gpt_5_4",
+                case_timeout_seconds=0.05,
+            )
+
+        self.assertEqual(result.final_text, "ok")
+
+    def test_execute_case_live_with_timeout_terminates_child_after_reading_result(self) -> None:
+        case = load_case_spec(Path("evals/cases/main_chain_core/direct_answer_cn.toml"))
+        observation = EvalCaseObservation(case_id=case.case_id, family=case.family, final_text="ok")
+        actions: list[str] = []
+
+        class FakeQueue:
+            def __init__(self, *args, **kwargs):
+                del args, kwargs
+                self._items: list[object] = []
+
+            def put(self, item):  # noqa: ANN001
+                self._items.append(item)
+
+            def get_nowait(self):
+                if not self._items:
+                    raise queue.Empty
+                return self._items.pop(0)
+
+        class LingeringProcess:
+            exitcode = None
+
+            def __init__(self, *, target, kwargs, daemon):  # noqa: ANN001
+                del daemon
+                self._target = target
+                self._kwargs = kwargs
+                self._alive = True
+
+            def start(self):
+                self._target(**self._kwargs)
+
+            def join(self, timeout=None):  # noqa: ANN001
+                del timeout
+
+            def is_alive(self):
+                return self._alive
+
+            def terminate(self):
+                actions.append("terminate")
+                self._alive = False
+
+            def kill(self):
+                actions.append("kill")
+                self._alive = False
+
+        class FakeContext:
+            def Queue(self, maxsize=0):  # noqa: N802
+                del maxsize
+                return FakeQueue()
+
+            def Process(self, *, target, kwargs, daemon):  # noqa: N802, ANN001
+                return LingeringProcess(target=target, kwargs=kwargs, daemon=daemon)
+
+        with patch("marten_runtime.evals.executor.multiprocessing.get_context", return_value=FakeContext()), patch(
+            "marten_runtime.evals.executor._execute_case_live",
+            return_value=observation,
+        ):
+            result = _execute_case_live_with_timeout(
+                case,
+                source_repo_root=REPO_ROOT,
+                include_mcp=False,
+                profile_name="openai_gpt_5_4",
+                case_timeout_seconds=0.05,
+            )
+
+        self.assertEqual(result.final_text, "ok")
+        self.assertEqual(actions, ["terminate"])
+
+
+    def test_execute_suite_live_turns_case_timeout_into_blocked_observation(self) -> None:
+        case = load_case_spec(Path("evals/cases/main_chain_core/direct_answer_cn.toml"))
+        suite = EvalSuiteSpec(
+            suite_id="main_chain_core",
+            description="probe",
+            default_mode="live",
+            scripted_supported=True,
+            required_dependencies=["provider"],
+            baseline_policy="latest_passed_auto",
+            case_files=[],
+            cases=[case],
+            suite_fingerprint="suite123",
+        )
+        progress: list[str] = []
+
+        with patch(
+            "marten_runtime.evals.executor._execute_case_live_with_timeout",
+            side_effect=TimeoutError("eval case timed out: direct_answer_cn"),
+        ), patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": "test-key", "MINIMAX_API_KEY": "test-key"},
+            clear=False,
+        ):
+            _summary, observations = execute_suite(
+                suite,
+                mode="live",
+                profile_name="openai_gpt_5_4",
+                case_timeout_seconds=1,
+                progress_printer=progress.append,
+            )
+
+        self.assertEqual(observations[0].blocked_reason, "eval case timed out: direct_answer_cn")
+        self.assertEqual(observations[0].error_code, "EVAL_CASE_TIMEOUT")
+        self.assertTrue(any("case_start case_id=direct_answer_cn" in item for item in progress))
+        self.assertTrue(any("case_done case_id=direct_answer_cn status=blocked" in item for item in progress))
+
+    def test_execute_suite_live_turns_case_exception_into_blocked_observation(self) -> None:
+        case = load_case_spec(Path("evals/cases/main_chain_core/direct_answer_cn.toml"))
+        suite = EvalSuiteSpec(
+            suite_id="main_chain_core",
+            description="probe",
+            default_mode="live",
+            scripted_supported=True,
+            required_dependencies=["provider"],
+            baseline_policy="latest_passed_auto",
+            case_files=[],
+            cases=[case],
+            suite_fingerprint="suite123",
+        )
+        progress: list[str] = []
+
+        with patch(
+            "marten_runtime.evals.executor._execute_case_live_with_timeout",
+            side_effect=RuntimeError("provider exploded"),
+        ), patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": "test-key", "MINIMAX_API_KEY": "test-key"},
+            clear=False,
+        ):
+            _summary, observations = execute_suite(
+                suite,
+                mode="live",
+                profile_name="openai_gpt_5_4",
+                case_timeout_seconds=1,
+                progress_printer=progress.append,
+            )
+
+        self.assertIn("eval case failed: direct_answer_cn: RuntimeError: provider exploded", observations[0].blocked_reason or "")
+        self.assertEqual(observations[0].error_code, "EVAL_CASE_ERROR")
+        self.assertEqual(observations[0].diagnostics_json["exception_type"], "RuntimeError")
+        self.assertTrue(any("case_done case_id=direct_answer_cn status=blocked" in item for item in progress))
 
     def test_should_include_live_mcp_scaffold_only_when_suite_declares_mcp_dependency(self) -> None:
         with TemporaryDirectory() as tmpdir:

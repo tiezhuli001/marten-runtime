@@ -135,6 +135,7 @@ class SQLiteAutomationStore(AutomationStore):
                     ADD COLUMN semantic_fingerprint TEXT NOT NULL DEFAULT ''
                     """
                 )
+                columns.add("semantic_fingerprint")
             if "internal" not in columns:
                 conn.execute(
                     """
@@ -142,6 +143,13 @@ class SQLiteAutomationStore(AutomationStore):
                     ADD COLUMN internal INTEGER NOT NULL DEFAULT 0
                     """
                 )
+                columns.add("internal")
+            if "app_id" in columns:
+                self._drop_legacy_app_id_column(conn)
+                columns = {
+                    row[1]
+                    for row in conn.execute("PRAGMA table_info(automations)").fetchall()
+                }
             legacy_rows = conn.execute(
                 """
                 SELECT automation_id, name, agent_id, prompt_template,
@@ -162,6 +170,45 @@ class SQLiteAutomationStore(AutomationStore):
                     """,
                     (job.agent_id, job.semantic_fingerprint, job.automation_id),
                 )
+
+    def _drop_legacy_app_id_column(self, conn: sqlite3.Connection) -> None:
+        conn.execute("DROP TABLE IF EXISTS automations_new")
+        conn.execute(
+            """
+            CREATE TABLE automations_new (
+                automation_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                prompt_template TEXT NOT NULL,
+                schedule_kind TEXT NOT NULL,
+                schedule_expr TEXT NOT NULL,
+                timezone TEXT NOT NULL,
+                session_target TEXT NOT NULL,
+                delivery_channel TEXT NOT NULL,
+                delivery_target TEXT NOT NULL,
+                skill_id TEXT NOT NULL,
+                enabled INTEGER NOT NULL,
+                internal INTEGER NOT NULL DEFAULT 0,
+                semantic_fingerprint TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO automations_new (
+                automation_id, name, agent_id, prompt_template,
+                schedule_kind, schedule_expr, timezone, session_target,
+                delivery_channel, delivery_target, skill_id, enabled, internal, semantic_fingerprint
+            )
+            SELECT automation_id, name, agent_id, prompt_template,
+                   schedule_kind, schedule_expr, timezone, session_target,
+                   delivery_channel, delivery_target, skill_id, enabled,
+                   COALESCE(internal, 0), COALESCE(semantic_fingerprint, '')
+            FROM automations
+            """
+        )
+        conn.execute("DROP TABLE automations")
+        conn.execute("ALTER TABLE automations_new RENAME TO automations")
 
     def _row_to_job(self, row: tuple[object, ...]) -> AutomationJob:
         return AutomationJob(

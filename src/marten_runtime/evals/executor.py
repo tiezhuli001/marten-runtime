@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import math
+import multiprocessing
 import os
+import queue
+import time
+import traceback
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -35,6 +39,8 @@ def execute_suite(
     mode: str,
     profile_name: str,
     repo_root: str | Path | None = None,
+    case_timeout_seconds: float | None = None,
+    progress_printer=None,
 ) -> tuple[EvalRunSummary, list[EvalCaseObservation]]:
     source_repo_root = Path(repo_root) if repo_root is not None else REPO_ROOT
     include_mcp = "mcp" in set(suite.required_dependencies or [])
@@ -60,31 +66,93 @@ def execute_suite(
         artifact_root=f"reports/evals/{eval_run_id}",
     )
     observations: list[EvalCaseObservation] = []
+    live_case_timeout_setting = (
+        _resolve_live_case_timeout_setting(case_timeout_seconds)
+        if mode == "live"
+        else _LiveCaseTimeoutSetting(disabled=False, timeout_seconds=None)
+    )
     for case in suite.cases:
         if not case.enabled:
             continue
         effective_case = case if case.grader_id is not None else case.model_copy(update={"grader_id": suite.grader_id})
+        _emit_progress(progress_printer, f"case_start case_id={effective_case.case_id} mode={mode}")
+        case_started_at = time.perf_counter()
         if mode == "scripted":
-            observations.append(
-                _execute_case_scripted(
-                    effective_case,
-                    source_repo_root=source_repo_root,
-                    effective_profile_name=resolved_profile_name,
-                    provider_name=profile.provider_ref,
-                    model_name=profile.model,
-                    include_mcp=False,
-                )
+            observation = _execute_case_scripted(
+                effective_case,
+                source_repo_root=source_repo_root,
+                effective_profile_name=resolved_profile_name,
+                provider_name=profile.provider_ref,
+                model_name=profile.model,
+                include_mcp=False,
             )
+            observations.append(observation)
+            _emit_case_done(progress_printer, effective_case, observation, case_started_at)
             continue
-        observations.append(
-            _execute_case_live(
+        effective_case_timeout_seconds = _effective_live_case_timeout_seconds(
+            effective_case,
+            live_case_timeout_setting,
+        )
+        try:
+            observation = _execute_case_live_with_timeout(
                 effective_case,
                 source_repo_root=source_repo_root,
                 include_mcp=include_mcp,
                 profile_name=resolved_profile_name,
+                case_timeout_seconds=effective_case_timeout_seconds,
             )
-        )
+        except TimeoutError as exc:
+            observation = _build_blocked_case_observation(
+                effective_case,
+                started_at=case_started_at,
+                blocked_reason=str(exc),
+                error_code="EVAL_CASE_TIMEOUT",
+                case_timeout_seconds=effective_case_timeout_seconds,
+                exception=exc,
+            )
+        except Exception as exc:  # noqa: BLE001
+            blocked_reason = f"eval case failed: {effective_case.case_id}: {type(exc).__name__}: {exc}"
+            observation = _build_blocked_case_observation(
+                effective_case,
+                started_at=case_started_at,
+                blocked_reason=blocked_reason,
+                error_code="EVAL_CASE_ERROR",
+                case_timeout_seconds=effective_case_timeout_seconds,
+                exception=exc,
+            )
+        observations.append(observation)
+        _emit_case_done(progress_printer, effective_case, observation, case_started_at)
     return summary, observations
+
+
+def _build_blocked_case_observation(
+    case,
+    *,
+    started_at: float,
+    blocked_reason: str,
+    error_code: str,
+    case_timeout_seconds: float | None,
+    exception: BaseException,
+) -> EvalCaseObservation:  # noqa: ANN001
+    return EvalCaseObservation(
+        case_id=case.case_id,
+        family=case.family,
+        duration_ms=int((time.perf_counter() - started_at) * 1000),
+        diagnostics_json={
+            "blocked_reason": blocked_reason,
+            "case_timeout_seconds": case_timeout_seconds,
+            "exception_type": type(exception).__name__,
+            "exception_message": str(exception),
+            "traceback": traceback.format_exception(
+                type(exception),
+                exception,
+                exception.__traceback__,
+                limit=8,
+            ),
+        },
+        blocked_reason=blocked_reason,
+        error_code=error_code,
+    )
 
 
 def _execute_case_scripted(
@@ -145,12 +213,121 @@ def _execute_case_scripted(
         return _run_case_via_http(app, case)
 
 
+def _execute_case_live_with_timeout(
+    case,
+    *,
+    source_repo_root: Path,
+    include_mcp: bool,
+    profile_name: str,
+    case_timeout_seconds: float | None = None,
+) -> EvalCaseObservation:
+    if case_timeout_seconds is None:
+        return _execute_case_live(
+            case,
+            source_repo_root=source_repo_root,
+            include_mcp=include_mcp,
+            profile_name=profile_name,
+        )
+    ctx = multiprocessing.get_context("fork")
+    result_queue = ctx.Queue(maxsize=1)
+    process = ctx.Process(
+        target=_execute_case_live_child,
+        kwargs={
+            "result_queue": result_queue,
+            "case": case,
+            "source_repo_root": source_repo_root,
+            "include_mcp": include_mcp,
+            "profile_name": profile_name,
+            "case_timeout_seconds": case_timeout_seconds,
+        },
+        daemon=True,
+    )
+    process.start()
+    deadline = time.monotonic() + float(case_timeout_seconds)
+    while True:
+        try:
+            kind, payload = result_queue.get_nowait()
+            _stop_process_after_result(process)
+            if kind == "ok":
+                return EvalCaseObservation.model_validate(payload)
+            raise RuntimeError(str(payload))
+        except queue.Empty:
+            pass
+        if not process.is_alive():
+            break
+        if time.monotonic() >= deadline:
+            break
+        process.join(timeout=min(0.05, max(0.0, deadline - time.monotonic())))
+    if process.is_alive():
+        process.terminate()
+        process.join(timeout=2)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=2)
+        raise TimeoutError(f"eval case timed out: {case.case_id}")
+    try:
+        kind, payload = result_queue.get(timeout=2)
+    except queue.Empty as exc:
+        raise RuntimeError(f"eval case exited without result: {case.case_id}: exit_code={process.exitcode}") from exc
+    if kind == "ok":
+        return EvalCaseObservation.model_validate(payload)
+    raise RuntimeError(str(payload))
+
+
+def _stop_process_after_result(process) -> None:  # noqa: ANN001
+    process.join(timeout=2)
+    if not process.is_alive():
+        return
+    process.terminate()
+    process.join(timeout=2)
+    if process.is_alive():
+        process.kill()
+        process.join(timeout=2)
+
+
+def _execute_case_live_child(
+    *,
+    result_queue,
+    case,
+    source_repo_root: Path,
+    include_mcp: bool,
+    profile_name: str,
+    case_timeout_seconds: float | None,
+) -> None:  # noqa: ANN001
+    try:
+        observation = _execute_case_live(
+            case,
+            source_repo_root=source_repo_root,
+            include_mcp=include_mcp,
+            profile_name=profile_name,
+            case_timeout_seconds=case_timeout_seconds,
+        )
+        result_queue.put(("ok", observation.model_dump(mode="json")))
+    except BaseException as exc:  # noqa: BLE001
+        result_queue.put(
+            (
+                "error",
+                {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                    "traceback": traceback.format_exception(
+                        type(exc),
+                        exc,
+                        exc.__traceback__,
+                        limit=8,
+                    ),
+                },
+            )
+        )
+
+
 def _execute_case_live(
     case,
     *,
     source_repo_root: Path,
     include_mcp: bool,
     profile_name: str,
+    case_timeout_seconds: float | None = None,
 ) -> EvalCaseObservation:
     with TemporaryDirectory(prefix=f"marten_eval_live_{case.case_id}_") as tmpdir:
         workspace_root = Path(tmpdir)
@@ -182,7 +359,16 @@ def _execute_case_live(
             mode="live",
         )
         seed_case_state(runtime, case, effective_profile_name=profile_name)
-        observation = _run_case_via_http(app, case)
+        deadline_monotonic = (
+            time.monotonic() + float(case_timeout_seconds)
+            if case_timeout_seconds is not None
+            else None
+        )
+        observation = (
+            _run_case_via_http(app, case, deadline_monotonic=deadline_monotonic)
+            if deadline_monotonic is not None
+            else _run_case_via_http(app, case)
+        )
         return _retry_live_subagent_case_after_timeout(
             app,
             case=case,
@@ -278,7 +464,7 @@ def _override_eval_subagent_timeout(
     )
 
 
-def _run_case_via_http(app, case) -> EvalCaseObservation:  # noqa: ANN001
+def _run_case_via_http(app, case, *, deadline_monotonic: float | None = None) -> EvalCaseObservation:  # noqa: ANN001
     conversation_id = f"eval-{case.case_id}"
     user_id = "eval-user"
     final_text = ""
@@ -293,6 +479,7 @@ def _run_case_via_http(app, case) -> EvalCaseObservation:  # noqa: ANN001
     turn_payloads: list[dict[str, object]] = []
     with TestClient(app) as client:
         for index, turn in enumerate(case.turns, start=1):
+            _raise_if_case_deadline_expired(deadline_monotonic, case.case_id)
             response = client.post(
                 "/messages",
                 json={
@@ -317,6 +504,7 @@ def _run_case_via_http(app, case) -> EvalCaseObservation:  # noqa: ANN001
             final_text = str(final_event.get("payload", {}).get("text") or "")
             final_run_id = str(final_event.get("run_id") or "")
             final_trace_id = str(payload.get("trace_id") or final_event.get("trace_id") or "")
+            _raise_if_case_deadline_expired(deadline_monotonic, case.case_id)
             run_diag = client.get(f"/diagnostics/run/{final_run_id}").json()
             trace_diag = client.get(f"/diagnostics/trace/{final_trace_id}").json()
             llm_request_count += int(run_diag.get("llm_request_count") or 0)
@@ -371,12 +559,60 @@ def _run_case_via_http(app, case) -> EvalCaseObservation:  # noqa: ANN001
         )
 
 
-def _should_collect_subagent_diagnostics(case, turn_index: int) -> bool:  # noqa: ANN001
-    return (
-        str(case.grader_id or "").strip() == "subagent_task_progress"
-        and turn_index < len(case.turns)
-        and bool(case.grader_case.get("await_child_completion"))
+class _LiveCaseTimeoutSetting:
+    def __init__(self, *, disabled: bool, timeout_seconds: float | None) -> None:
+        self.disabled = disabled
+        self.timeout_seconds = timeout_seconds
+
+
+def _resolve_live_case_timeout_setting(value: float | None) -> _LiveCaseTimeoutSetting:
+    if value is None:
+        return _LiveCaseTimeoutSetting(disabled=False, timeout_seconds=None)
+    if float(value) <= 0:
+        return _LiveCaseTimeoutSetting(disabled=True, timeout_seconds=None)
+    return _LiveCaseTimeoutSetting(disabled=False, timeout_seconds=float(value))
+
+
+def _effective_live_case_timeout_seconds(case, setting: _LiveCaseTimeoutSetting) -> float | None:  # noqa: ANN001
+    if setting.disabled:
+        return None
+    grader_case = getattr(case, "grader_case", {}) or {}
+    timeout_ms = int(grader_case.get("timeout_ms") or 0)
+    case_timeout_seconds = (timeout_ms / 1000.0) if timeout_ms > 0 else None
+    global_timeout_seconds = setting.timeout_seconds
+    if global_timeout_seconds is None:
+        return case_timeout_seconds
+    if case_timeout_seconds is None:
+        return global_timeout_seconds
+    return max(float(global_timeout_seconds), float(case_timeout_seconds))
+
+
+def _emit_progress(progress_printer, message: str) -> None:  # noqa: ANN001
+    if progress_printer is None:
+        return
+    progress_printer(message)
+
+
+def _emit_case_done(progress_printer, case, observation: EvalCaseObservation, started_at: float) -> None:  # noqa: ANN001
+    elapsed = time.perf_counter() - started_at
+    status = "blocked" if observation.blocked_reason else "done"
+    _emit_progress(
+        progress_printer,
+        f"case_done case_id={case.case_id} status={status} elapsed_seconds={elapsed:.2f}",
     )
+
+
+def _raise_if_case_deadline_expired(deadline_monotonic: float | None, case_id: str) -> None:
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        raise TimeoutError(f"eval case timed out: {case_id}")
+
+
+def _should_collect_subagent_diagnostics(case, turn_index: int) -> bool:  # noqa: ANN001
+    if str(case.grader_id or "").strip() != "subagent_task_progress":
+        return False
+    if bool(case.grader_case.get("await_child_completion")):
+        return turn_index < len(case.turns)
+    return turn_index == len(case.turns)
 
 
 def _parent_run_ids(turn_payloads: list[dict[str, object]]) -> list[str]:

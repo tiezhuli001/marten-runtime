@@ -45,6 +45,8 @@ class EvalRunRequest:
     db_path: str | Path = "data/evals.sqlite3"
     report_root: str | Path = "reports/evals"
     env: dict[str, str] | None = None
+    case_timeout_seconds: float | None = None
+    progress_printer: object | None = None
 
 
 @dataclass(frozen=True)
@@ -133,6 +135,8 @@ def run_eval_suite(
         mode=request.mode,
         profile_name=request.profile_name,
         repo_root=resolved_repo_root,
+        case_timeout_seconds=request.case_timeout_seconds,
+        progress_printer=request.progress_printer,
     )
     resolved_artifact_root = resolve_report_artifact_root(
         resolved_report_root,
@@ -168,7 +172,8 @@ def run_eval_suite(
         4,
     )
     pass_rate = round(passed_count / max(1, len(case_results)), 4)
-    final_status = "passed" if passed_count == len(case_results) else "failed"
+    blocked_count = sum(1 for item in case_results if item.status == "blocked")
+    final_status = "blocked" if blocked_count else ("passed" if passed_count == len(case_results) else "failed")
     finished = summary.model_copy(
         update={
             "total_score": total_score,
@@ -231,12 +236,23 @@ def run_eval_suite(
             if stability_result is not None
             else None
         ),
+        blocked_reason=_format_case_blocked_reason(case_results),
     )
     return EvalRunServiceResult(
         summary=finished,
         artifact_root=Path(artifact_root),
         case_count=len(case_results),
     )
+
+
+def _format_case_blocked_reason(case_results) -> str | None:  # noqa: ANN001
+    blocked = [item for item in case_results if item.blocked_reason]
+    if not blocked:
+        return None
+    if len(blocked) == 1:
+        item = blocked[0]
+        return f"case_blocked:{item.case_id}: {item.blocked_reason}"
+    return f"case_blocked_count:{len(blocked)}"
 
 
 def build_blocked_summary(

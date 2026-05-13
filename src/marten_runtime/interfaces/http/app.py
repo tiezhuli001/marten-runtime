@@ -73,6 +73,10 @@ def create_app(
                 logger.warning("subagent_service.shutdown failed: %s", exc, exc_info=True)
             finally:
                 try:
+                    runtime.mcp_client.shutdown()
+                except Exception as exc:
+                    logger.warning("mcp_client.shutdown failed: %s", exc, exc_info=True)
+                try:
                     await runtime.feishu_socket_service.stop_background()
                 except Exception as exc:
                     logger.warning(

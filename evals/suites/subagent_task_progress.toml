@@ -1,9 +1,9 @@
 suite_id = "subagent_task_progress"
 grader_id = "subagent_task_progress"
-description = "Subagent task progress golden replay suite"
+description = "Subagent dispatch and progress live suite"
 default_mode = "live"
 scripted_supported = true
-required_dependencies = ["provider", "subagent", "mcp"]
+required_dependencies = ["provider", "subagent"]
 baseline_policy = "latest_passed_auto"
 case_files = [
   "evals/cases/subagent_task_progress/subagent_background_task_acceptance_cn.toml",

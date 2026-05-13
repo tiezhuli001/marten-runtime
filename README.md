@@ -212,7 +212,8 @@ PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
 | `main_chain_mcp` | GitHub MCP 主链回放 |
 | `main_chain_subagent` | 主线程委派、子任务完成通知、父线程总结回放 |
 | `memory_long_horizon` | 记住、隔轮召回、跨会话召回、覆盖更新、抗干扰召回 |
-| `subagent_task_progress` | 子代理受理、执行、回传、父线程吸收子结果 |
+| `subagent_task_progress` | 子代理受理、调度、非 MCP 子任务进度与父线程吸收 |
+| `subagent_external_mcp_completion` | 子代理调用外部 MCP 后完成通知与父线程吸收 |
 
 产物位置：
 

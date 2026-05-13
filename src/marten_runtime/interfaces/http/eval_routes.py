@@ -24,6 +24,7 @@ class EvalRunHTTPCreateRequest(BaseModel):
     baseline: str | None = None
     baseline_run: str | None = None
     write_baseline: str | None = None
+    case_timeout_seconds: float | None = 120.0
 
 
 @dataclass
@@ -118,6 +119,7 @@ class EvalJobRegistry:
                     baseline_run_id=request.baseline_run,
                     write_baseline=request.write_baseline,
                     env=self.env,
+                    case_timeout_seconds=request.case_timeout_seconds,
                 ),
                 repo_root=self.repo_root,
             )
@@ -751,6 +753,7 @@ def _suite_label(value: str) -> str:
         "main_chain_subagent": "子代理链路",
         "memory_long_horizon": "记忆链路",
         "subagent_task_progress": "子代理进度链路",
+        "subagent_external_mcp_completion": "子代理外部 MCP 完成链路",
         "ops_smoke": "运维冒烟链路",
     }.get(value, value)
 

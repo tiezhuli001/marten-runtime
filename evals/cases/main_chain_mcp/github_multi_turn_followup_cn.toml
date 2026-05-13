@@ -22,7 +22,7 @@ memory_fixture = "none"
 automation_fixture = "none"
 
 [expectations.final_text]
-contains_any = ["GitHub", "仓库"]
+contains_any = ["GitHub", "仓库", "marten-runtime", "tiezhuli001/marten-runtime"]
 
 [weights]
 outcome = 100

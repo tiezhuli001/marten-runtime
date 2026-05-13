@@ -199,7 +199,7 @@ class SubagentBuiltinToolTests(unittest.TestCase):
                     "session_id": session.session_id,
                     "run_id": parent_run.run_id,
                     "agent_id": "main",
-                        "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
+                    "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
                 },
             )
 
@@ -303,7 +303,7 @@ class SubagentBuiltinToolTests(unittest.TestCase):
                     "session_id": session.session_id,
                     "run_id": parent_run.run_id,
                     "agent_id": "main",
-                        "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
+                    "allowed_tools": ["automation", "mcp", "runtime", "skill", "time", "spawn_subagent", "cancel_subagent"],
                 },
             )
 

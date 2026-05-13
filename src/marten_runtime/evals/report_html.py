@@ -673,6 +673,7 @@ def _suite_label(value: str) -> str:
         'main_chain_subagent': '子代理链路',
         'memory_long_horizon': '记忆链路',
         'subagent_task_progress': '子代理进度链路',
+        'subagent_external_mcp_completion': '子代理外部 MCP 完成链路',
         'ops_smoke': '运维冒烟链路',
     }.get(value, value)
 

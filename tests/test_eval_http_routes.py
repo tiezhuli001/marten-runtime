@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -222,6 +223,44 @@ class EvalHTTPRoutesTests(unittest.TestCase):
             self.assertIn("retry_count", recent_item)
             self.assertIn("fallback_count", recent_item)
             self.assertIn("empty_output_count", recent_item)
+        finally:
+            self._cleanup_app(app, temp_dir)
+
+
+    def test_eval_ops_passes_case_timeout_seconds_to_runner(self) -> None:
+
+        app, temp_dir = self._build_eval_app()
+        captured: dict[str, object] = {}
+
+        from marten_runtime.evals import service as eval_service
+
+        original_run_eval_suite = eval_service.run_eval_suite
+
+        def _capturing_run_eval_suite(request, *, repo_root=None):  # noqa: ANN001
+            captured["case_timeout_seconds"] = request.case_timeout_seconds
+            captured["repo_root"] = repo_root
+            return original_run_eval_suite(request, repo_root=repo_root)
+
+        try:
+            with patch(
+                "marten_runtime.evals.service.run_eval_suite",
+                side_effect=_capturing_run_eval_suite,
+            ):
+                with TestClient(app) as client:
+                    create_response = client.post(
+                        "/evals/runs",
+                        json={
+                            "suite_id": "ops_smoke",
+                            "mode": "scripted",
+                            "profile": "openai_gpt_5_4",
+                            "case_timeout_seconds": 240,
+                        },
+                    )
+                    self.assertEqual(create_response.status_code, 200, create_response.text)
+                    job_payload = self._wait_for_job(client, create_response.json()["job_id"])
+
+            self.assertEqual(job_payload["status"], "passed")
+            self.assertEqual(captured["case_timeout_seconds"], 240.0)
         finally:
             self._cleanup_app(app, temp_dir)
 

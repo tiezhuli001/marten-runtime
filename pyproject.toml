@@ -10,7 +10,7 @@ authors = [
 ]
 dependencies = [
   "fastapi",
-  "httpx",
+  "httpx[socks]",
   "lark-oapi",
   "mcp",
   "python-socks",

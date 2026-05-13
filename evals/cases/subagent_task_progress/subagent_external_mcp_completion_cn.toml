@@ -1,0 +1,37 @@
+case_id = "subagent_external_mcp_completion_cn"
+suite_id = "subagent_external_mcp_completion"
+family = "subagent_task_progress"
+enabled = true
+required = true
+description = "子代理完成外部 MCP 查询后父会话可吸收结果"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["cn", "subagent", "mcp", "completion_notice"]
+gate_components = ["child_completion", "parent_integration"]
+
+[[turns]]
+role = "user"
+content = "开一个子代理通过 GitHub MCP 查看这个仓库的 README 结构，完成后通知我。"
+
+[[turns]]
+role = "user"
+content = "子任务完成了吗？直接给我一句中文摘要，明确它查看的对象和结论。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+delegation_quality = 20
+child_progress = 20
+child_completion = 30
+parent_integration = 30
+
+
+[grader_case]
+expected_spawn_count = 1
+await_child_completion = true
+integration_contains_all = ["README"]
+integration_anchor_groups = [["README", "README结构", "README 结构"], ["快速开始", "运行", "评测", "配置"]]
+timeout_ms = 300000

@@ -225,6 +225,239 @@ class SQLiteAutomationStoreTests(unittest.TestCase):
         self.assertEqual(str(row[0]), "main")
         self.assertNotEqual(str(row[1]), "legacy_fingerprint")
 
+    def test_save_updates_legacy_schema_that_still_has_app_id_column(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "automation.sqlite3"
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE automations (
+                        automation_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        app_id TEXT NOT NULL,
+                        agent_id TEXT NOT NULL,
+                        prompt_template TEXT NOT NULL,
+                        schedule_kind TEXT NOT NULL,
+                        schedule_expr TEXT NOT NULL,
+                        timezone TEXT NOT NULL,
+                        session_target TEXT NOT NULL,
+                        delivery_channel TEXT NOT NULL,
+                        delivery_target TEXT NOT NULL,
+                        skill_id TEXT NOT NULL,
+                        enabled INTEGER NOT NULL,
+                        internal INTEGER NOT NULL DEFAULT 0,
+                        semantic_fingerprint TEXT NOT NULL DEFAULT ''
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO automations (
+                        automation_id, name, app_id, agent_id, prompt_template,
+                        schedule_kind, schedule_expr, timezone, session_target,
+                        delivery_channel, delivery_target, skill_id, enabled, internal, semantic_fingerprint
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "daily_hot",
+                        "Daily GitHub Hot Repos",
+                        "main_agent",
+                        "main",
+                        "Summarize today's hot repositories.",
+                        "daily",
+                        "09:30",
+                        "Asia/Shanghai",
+                        "isolated",
+                        "feishu",
+                        "oc_test_chat",
+                        "github_trending_digest",
+                        1,
+                        0,
+                        "legacy_fingerprint",
+                    ),
+                )
+
+            store = SQLiteAutomationStore(db_path)
+            updated = store.update("daily_hot", {"schedule_expr": "22:10"})
+            with sqlite3.connect(db_path) as conn:
+                columns = [row[1] for row in conn.execute("PRAGMA table_info(automations)")]
+                row = conn.execute(
+                    "SELECT agent_id, schedule_expr FROM automations WHERE automation_id = ?",
+                    ("daily_hot",),
+                ).fetchone()
+
+        self.assertNotIn("app_id", columns)
+        self.assertEqual(updated.schedule_expr, "22:10")
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(tuple(row), ("main", "22:10"))
+
+
+    def test_legacy_schema_migration_drops_stale_automations_new_table(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "automation.sqlite3"
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE automations (
+                        automation_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        app_id TEXT NOT NULL,
+                        agent_id TEXT NOT NULL,
+                        prompt_template TEXT NOT NULL,
+                        schedule_kind TEXT NOT NULL,
+                        schedule_expr TEXT NOT NULL,
+                        timezone TEXT NOT NULL,
+                        session_target TEXT NOT NULL,
+                        delivery_channel TEXT NOT NULL,
+                        delivery_target TEXT NOT NULL,
+                        skill_id TEXT NOT NULL,
+                        enabled INTEGER NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO automations (
+                        automation_id, name, app_id, agent_id, prompt_template,
+                        schedule_kind, schedule_expr, timezone, session_target,
+                        delivery_channel, delivery_target, skill_id, enabled
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "current_job",
+                        "Current",
+                        "main_agent",
+                        "main",
+                        "Current prompt",
+                        "daily",
+                        "09:30",
+                        "Asia/Shanghai",
+                        "isolated",
+                        "feishu",
+                        "oc_test_chat",
+                        "github_trending_digest",
+                        1,
+                    ),
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE automations_new (
+                        automation_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        agent_id TEXT NOT NULL,
+                        prompt_template TEXT NOT NULL,
+                        schedule_kind TEXT NOT NULL,
+                        schedule_expr TEXT NOT NULL,
+                        timezone TEXT NOT NULL,
+                        session_target TEXT NOT NULL,
+                        delivery_channel TEXT NOT NULL,
+                        delivery_target TEXT NOT NULL,
+                        skill_id TEXT NOT NULL,
+                        enabled INTEGER NOT NULL,
+                        internal INTEGER NOT NULL DEFAULT 0,
+                        semantic_fingerprint TEXT NOT NULL DEFAULT ''
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO automations_new (
+                        automation_id, name, agent_id, prompt_template, schedule_kind,
+                        schedule_expr, timezone, session_target, delivery_channel,
+                        delivery_target, skill_id, enabled, internal, semantic_fingerprint
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "stale_job",
+                        "Stale",
+                        "main",
+                        "Stale prompt",
+                        "daily",
+                        "08:00",
+                        "Asia/Shanghai",
+                        "isolated",
+                        "feishu",
+                        "oc_stale",
+                        "github_trending_digest",
+                        1,
+                        0,
+                        "stale",
+                    ),
+                )
+
+            store = SQLiteAutomationStore(db_path)
+            jobs = store.list_all()
+
+        self.assertEqual([job.automation_id for job in jobs], ["current_job"])
+
+    def test_legacy_schema_with_app_id_and_missing_new_columns_is_migrated(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "automation.sqlite3"
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE automations (
+                        automation_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        app_id TEXT NOT NULL,
+                        agent_id TEXT NOT NULL,
+                        prompt_template TEXT NOT NULL,
+                        schedule_kind TEXT NOT NULL,
+                        schedule_expr TEXT NOT NULL,
+                        timezone TEXT NOT NULL,
+                        session_target TEXT NOT NULL,
+                        delivery_channel TEXT NOT NULL,
+                        delivery_target TEXT NOT NULL,
+                        skill_id TEXT NOT NULL,
+                        enabled INTEGER NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO automations (
+                        automation_id, name, app_id, agent_id, prompt_template,
+                        schedule_kind, schedule_expr, timezone, session_target,
+                        delivery_channel, delivery_target, skill_id, enabled
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "daily_hot",
+                        "Daily GitHub Hot Repos",
+                        "main_agent",
+                        "assistant",
+                        "Summarize today's hot repositories.",
+                        "daily",
+                        "09:30",
+                        "Asia/Shanghai",
+                        "isolated",
+                        "feishu",
+                        "oc_test_chat",
+                        "github_trending_digest",
+                        1,
+                    ),
+                )
+
+            store = SQLiteAutomationStore(db_path)
+            job = store.get("daily_hot")
+            with sqlite3.connect(db_path) as conn:
+                columns = [row[1] for row in conn.execute("PRAGMA table_info(automations)")]
+                row = conn.execute(
+                    "SELECT agent_id, internal, semantic_fingerprint FROM automations WHERE automation_id = ?",
+                    ("daily_hot",),
+                ).fetchone()
+
+        self.assertNotIn("app_id", columns)
+        self.assertIn("internal", columns)
+        self.assertIn("semantic_fingerprint", columns)
+        self.assertEqual(job.agent_id, "main")
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(str(row[0]), "main")
+        self.assertEqual(int(row[1]), 0)
+        self.assertTrue(str(row[2]))
+
 
 if __name__ == "__main__":
     unittest.main()
