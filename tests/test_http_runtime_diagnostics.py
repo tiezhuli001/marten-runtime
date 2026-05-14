@@ -59,6 +59,25 @@ class HTTPRuntimeDiagnosticsTests(unittest.TestCase):
         self.assertIn("api_key_env", body["providers"][0])
         self.assertNotIn("test-key", str(body["providers"]))
 
+    def test_serialize_runtime_diagnostics_exposes_memory_summary(self) -> None:
+        app = build_test_app(emit_explicit_empty_contract=True)
+        runtime = app.state.runtime
+        self.addCleanup(self._stop_runtime_worker, runtime)
+        runtime.memory_service.append("demo", section="preferences", content="中文", type="preference")
+        runtime.memory_service.render_prompt_memory("demo", current_message="中文")
+        request = Mock()
+        request.base_url = "http://127.0.0.1:9000/"
+
+        body = serialize_runtime_diagnostics(runtime, request)
+
+        self.assertIn("memory", body)
+        memory = body["memory"]
+        self.assertEqual(memory["store_kind"], "sqlite")
+        self.assertGreaterEqual(memory["active_count"], 1)
+        self.assertTrue(memory["fts_enabled"])
+        self.assertEqual(memory["loaded_count_last_turn"], 1)
+        self.assertEqual(memory["budget_chars"], runtime.memory_service.prompt_char_limit)
+
     def test_serialize_runtime_diagnostics_exposes_provider_reliability_block(self) -> None:
         app = build_test_app(emit_explicit_empty_contract=True)
         runtime = app.state.runtime

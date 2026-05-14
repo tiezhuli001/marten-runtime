@@ -171,6 +171,12 @@ class SQLiteMemoryStore:
             rows = conn.execute(sql, tuple(params)).fetchall()
         return [self._row_to_item(row) for row in rows]
 
+
+    def count_active(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS count FROM memory_items WHERE status = 'active'").fetchone()
+        return int(row["count"] if row is not None else 0)
+
     def _insert_item(self, conn: sqlite3.Connection, item: MemoryItem) -> None:
         conn.execute(
             """
@@ -235,4 +241,5 @@ def _normalize_fts_query(query: str) -> str:
     value = str(query or "").strip().casefold()
     if len(value) < 3:
         return ""
-    return value
+    terms = re.findall(r"[0-9a-zA-Z_\u4e00-\u9fff]{3,}", value)
+    return " OR ".join(f'"{term}"' for term in terms[:8])
