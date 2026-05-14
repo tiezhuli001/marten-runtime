@@ -24,6 +24,28 @@
 
 ## 条目
 
+### 2026-05-14: Agent-scoped SQLite memory became the durable memory baseline
+
+- Change:
+  - SQLite structured memory is the primary durable memory store under `data/memory/memory.sqlite3`.
+  - FTS5, scope, type, section, status, priority, and agent/workspace discriminators drive prompt loading.
+  - `MEMORY.md` is now a generated readable export and can be explicitly imported after manual edits.
+  - legacy `app_id=main_agent` appears only in migration compatibility and maps to `scope=agent, agent_id=main`.
+- Why:
+  - personal-assistant memory needs local, explainable, editable, migratable storage with scoped retrieval after runtime app removal.
+  - first-stage memory stays deterministic with SQLite + FTS5; tags and embedding remain out of the first implementation.
+- Source of truth:
+  - `docs/2026-05-14-agent-scoped-sqlite-memory-design.md`
+  - `src/marten_runtime/memory/sqlite_store.py`
+  - `src/marten_runtime/memory/loader.py`
+  - `src/marten_runtime/memory/service.py`
+  - `scripts/migrate_memory_md_to_sqlite.py`
+- Verification:
+  - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_memory_sqlite_store tests.test_memory_loader tests.test_memory_service tests.test_memory_intent tests.tools.test_memory_tool tests.test_memory_migration`
+  - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_bootstrap_runtime_support tests.test_http_runtime_diagnostics tests.contracts.test_runtime_contracts tests.runtime_loop.test_context_status_and_usage`
+  - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.evals.test_loader tests.evals.test_memory_family_grader tests.evals.test_suite_manifests`
+  - `PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite memory_long_horizon --mode scripted --profile openai_gpt_5_4 --baseline latest_passed`
+
 ### 2026-05-12: Runtime App Abstraction Was Removed And Agents Own Runtime Assets
 
 - Change:
