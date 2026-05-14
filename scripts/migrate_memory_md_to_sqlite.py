@@ -42,7 +42,7 @@ def migrate_memory_root(
             user_id, scope, agent_id, workspace_id, memory_type, section = key
             for existing in store.list_active(user_id, scope=scope, agent_id=agent_id, workspace_id=workspace_id, type=memory_type):
                 if existing.section == section:
-                    store.delete(existing.memory_id)
+                    store.supersede(existing.memory_id)
     for item in planned:
         store.append(item)
     for user_id in sorted({item.user_id for item in planned}):

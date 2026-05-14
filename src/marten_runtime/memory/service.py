@@ -124,9 +124,14 @@ class ThinMemoryService:
         self._require_document(user_id)
         entries = [_normalize_entry(line) for line in str(content).splitlines() if _normalize_entry(line)] or [_normalize_entry(content)]
         targets = [self.store.get(memory_id)] if memory_id else self.store.list_active(user_id, scope=scope, agent_id=agent_id, workspace_id=workspace_id, type=type)
-        targets = [item for item in targets if item is not None and item.section == _normalize_section(section)]
-        for target in targets:
-            self.store.delete(target.memory_id)
+        targets = [
+            item
+            for item in targets
+            if item is not None
+            and item.user_id == user_id
+            and item.section == _normalize_section(section)
+        ]
+        replace_timestamp: str | None = None
         for index, entry in enumerate(entries):
             new_item = MemoryItem.new(
                 user_id=user_id,
@@ -140,10 +145,17 @@ class ThinMemoryService:
                 source_run_id=source_run_id,
                 priority=priority,
             )
-            if index == 0 and memory_id and targets:
-                self.store.replace(targets[0].memory_id, new_item)
+            if index == 0 and targets:
+                saved = self.store.replace(targets[0].memory_id, new_item)
+                replace_timestamp = saved.updated_at
             else:
-                self.store.append(new_item)
+                saved = self.store.append(new_item)
+                replace_timestamp = replace_timestamp or saved.updated_at
+        for target in targets[1:]:
+            if hasattr(self.store, "supersede"):
+                self.store.supersede(target.memory_id, updated_at=replace_timestamp)
+            else:
+                self.store.delete(target.memory_id)
         return self._save(user_id)
 
     def delete(
@@ -159,7 +171,9 @@ class ThinMemoryService:
     ) -> MemoryDocument:
         self._require_document(user_id)
         if memory_id:
-            self.store.delete(memory_id)
+            item = self.store.get(memory_id)
+            if item is not None and item.user_id == user_id and item.section == _normalize_section(section):
+                self.store.delete(memory_id)
             return self._save(user_id)
         entry = _normalize_entry(content) if content is not None else None
         items = self.store.list_active(user_id, scope=scope, agent_id=agent_id, workspace_id=workspace_id)

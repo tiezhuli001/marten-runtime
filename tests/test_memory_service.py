@@ -55,6 +55,58 @@ class ThinMemoryServiceTests(unittest.TestCase):
         self.assertIn("User memory:", rendered or "")
         self.assertIn("Prefer concise answers.", exported)
 
+
+    def test_replace_by_section_marks_previous_items_superseded(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = ThinMemoryService(tmpdir)
+            service.append("demo", section="preferences", content="Always reply in English.", type="preference")
+            service.replace("demo", section="preferences", content="Always reply in Chinese.", type="preference")
+
+            active = service.store.list_active("demo", scope="global", type="preference")
+            rows = []
+            with service.store._connect() as conn:  # type: ignore[attr-defined]
+                rows = conn.execute(
+                    "SELECT content, status FROM memory_items"
+                ).fetchall()
+
+        self.assertEqual([item.content for item in active], ["Always reply in Chinese."])
+        statuses_by_content = {str(row["content"]): str(row["status"]) for row in rows}
+        self.assertEqual(statuses_by_content["Always reply in English."], "superseded")
+        self.assertEqual(statuses_by_content["Always reply in Chinese."], "active")
+
+
+    def test_replace_by_memory_id_requires_same_user(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = ThinMemoryService(tmpdir)
+            service.append("alice", section="preferences", content="Alice only.", type="preference")
+            alice_item = service.store.list_active("alice", scope="global", type="preference")[0]
+
+            service.replace(
+                "bob",
+                section="preferences",
+                content="Bob overwrite.",
+                type="preference",
+                memory_id=alice_item.memory_id,
+            )
+
+            alice_active = service.store.list_active("alice", scope="global", type="preference")
+            bob_active = service.store.list_active("bob", scope="global", type="preference")
+
+        self.assertEqual([item.content for item in alice_active], ["Alice only."])
+        self.assertEqual([item.content for item in bob_active], ["Bob overwrite."])
+
+    def test_delete_by_memory_id_requires_same_user(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = ThinMemoryService(tmpdir)
+            service.append("alice", section="preferences", content="Alice only.", type="preference")
+            alice_item = service.store.list_active("alice", scope="global", type="preference")[0]
+
+            service.delete("bob", section="preferences", memory_id=alice_item.memory_id)
+
+            alice_active = service.store.list_active("alice", scope="global", type="preference")
+
+        self.assertEqual([item.content for item in alice_active], ["Alice only."])
+
     def test_agent_memory_only_renders_for_matching_agent(self) -> None:
         with TemporaryDirectory() as tmpdir:
             service = ThinMemoryService(tmpdir, prompt_char_limit=300)

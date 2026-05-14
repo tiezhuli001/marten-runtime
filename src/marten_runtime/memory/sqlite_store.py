@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 
@@ -124,6 +125,21 @@ class SQLiteMemoryStore:
             self._delete_fts(conn, memory_id)
         return deleted
 
+    def supersede(self, memory_id: str, *, updated_at: str | None = None) -> MemoryItem:
+        existing = self.get(memory_id)
+        if existing is None:
+            raise KeyError(f"memory item not found: {memory_id}")
+        superseded = existing.model_copy(
+            update={"status": "superseded", "updated_at": updated_at or existing.updated_at}
+        )
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE memory_items SET status = 'superseded', updated_at = ? WHERE memory_id = ?",
+                (superseded.updated_at, memory_id),
+            )
+            self._delete_fts(conn, memory_id)
+        return superseded
+
     def search(
         self,
         user_id: str,
@@ -234,12 +250,32 @@ class SQLiteMemoryStore:
         )
 
 
-import re
-
-
 def _normalize_fts_query(query: str) -> str:
     value = str(query or "").strip().casefold()
     if len(value) < 3:
         return ""
-    terms = re.findall(r"[0-9a-zA-Z_\u4e00-\u9fff]{3,}", value)
-    return " OR ".join(f'"{term}"' for term in terms[:8])
+    terms: list[str] = []
+    seen: set[str] = set()
+    for token in re.findall(r"[0-9a-zA-Z_]+|[\u4e00-\u9fff]+", value):
+        for term in _fts_terms_for_token(token):
+            if term in seen:
+                continue
+            seen.add(term)
+            terms.append(term)
+            if len(terms) >= 16:
+                break
+        if len(terms) >= 16:
+            break
+    return " OR ".join(f'"{term}"' for term in terms)
+
+
+def _fts_terms_for_token(token: str) -> list[str]:
+    if not token:
+        return []
+    if re.fullmatch(r"[\u4e00-\u9fff]+", token):
+        if len(token) < 3:
+            return []
+        if len(token) == 3:
+            return [token]
+        return [token[index : index + 3] for index in range(0, len(token) - 2)]
+    return [token] if len(token) >= 3 else []

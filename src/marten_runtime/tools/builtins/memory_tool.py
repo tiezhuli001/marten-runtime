@@ -68,7 +68,12 @@ def run_memory_tool(
         "available": True,
         "user_id": user_id,
         "memory_text": document.text,
-        "rendered_memory": memory_service.render_prompt_memory(user_id),
+        "rendered_memory": memory_service.render_prompt_memory(
+            user_id,
+            agent_id=str((tool_context or {}).get("agent_id") or "").strip() or None,
+            workspace_id=str((tool_context or {}).get("workspace_id") or "").strip() or None,
+            current_message=str((tool_context or {}).get("message") or ""),
+        ),
         "sections": document.sections,
         "items": [item.model_dump() for item in document.items],
     }

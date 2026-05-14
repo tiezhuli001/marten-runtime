@@ -47,9 +47,24 @@ class SQLiteMemoryStoreTests(unittest.TestCase):
                 content="回答默认使用中文标题。",
             ))
 
-            results = store.search("demo", "中文", scope="global")
+            results = store.search("demo", "请继续使用中文回答", scope="global")
 
         self.assertEqual([item.memory_id for item in results], [global_item.memory_id])
+
+    def test_search_splits_chinese_current_message_into_trigram_terms(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = SQLiteMemoryStore(Path(tmpdir) / "memory.sqlite3")
+            saved = store.append(MemoryItem.new(
+                user_id="demo",
+                scope="global",
+                type="fact",
+                section="profile",
+                content="用户喜欢番茄炒蛋。",
+            ))
+
+            results = store.search("demo", "晚餐和番茄炒蛋有关吗")
+
+        self.assertEqual([item.memory_id for item in results], [saved.memory_id])
 
     def test_agent_scope_requires_matching_agent(self) -> None:
         with TemporaryDirectory() as tmpdir:

@@ -81,9 +81,15 @@ class MemoryMigrationTests(unittest.TestCase):
             (user_dir / "MEMORY.md").write_text("# MEMORY\n\n## global / preferences\n- 新偏好。\n", encoding="utf-8")
 
             migrate_memory_root(memory_root=root, db_path=db_path, dry_run=False, import_edited_markdown=True)
-            active = SQLiteMemoryStore(db_path).list_active("demo", scope="global", type="preference")
+            reopened = SQLiteMemoryStore(db_path)
+            active = reopened.list_active("demo", scope="global", type="preference")
+            with reopened._connect() as conn:  # type: ignore[attr-defined]
+                rows = conn.execute("SELECT content, status FROM memory_items").fetchall()
 
         self.assertEqual([item.content for item in active], ["新偏好。"])
+        statuses_by_content = {str(row["content"]): str(row["status"]) for row in rows}
+        self.assertEqual(statuses_by_content["旧偏好。"], "superseded")
+        self.assertEqual(statuses_by_content["新偏好。"], "active")
 
 
 if __name__ == "__main__":
