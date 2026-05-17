@@ -236,8 +236,10 @@ def _scripted_memory_suite_reply(llm: ScriptedEvalLLMClient, message: str) -> LL
             tool_payload={
                 "action": "replace",
                 "intent": "durable_write",
+                "scope": "global",
                 "source_excerpt": message,
                 "section": "preferences",
+                "type": "preference",
                 "content": "以后所有答复都用中文，并保持简洁。",
             },
         )
@@ -249,7 +251,9 @@ def _scripted_memory_suite_reply(llm: ScriptedEvalLLMClient, message: str) -> LL
                     "action": "replace",
                     "intent": "durable_write",
                     "source_excerpt": message,
+                    "scope": "global",
                     "section": "preferences",
+                    "type": "preference",
                     "content": "周报默认先给结论后给细节。",
                 },
             )
@@ -262,7 +266,9 @@ def _scripted_memory_suite_reply(llm: ScriptedEvalLLMClient, message: str) -> LL
                     "action": "replace",
                     "intent": "durable_write",
                     "source_excerpt": message,
+                    "scope": "global",
                     "section": "preferences",
+                    "type": "preference",
                     "content": "技术方案默认用中文标题。",
                 },
             )
@@ -277,7 +283,9 @@ def _scripted_memory_suite_reply(llm: ScriptedEvalLLMClient, message: str) -> LL
                     "action": "append",
                     "intent": "durable_write",
                     "source_excerpt": message,
+                    "scope": "global",
                     "section": "preferences",
+                    "type": "preference",
                     "content": "日报默认只给结论，不展开风险。",
                 },
             )
@@ -288,7 +296,9 @@ def _scripted_memory_suite_reply(llm: ScriptedEvalLLMClient, message: str) -> LL
                     "action": "replace",
                     "intent": "durable_write",
                     "source_excerpt": message,
+                    "scope": "global",
                     "section": "preferences",
+                    "type": "preference",
                     "content": "以后日报先给风险，再给结论。",
                 },
             )
@@ -301,7 +311,9 @@ def _scripted_memory_suite_reply(llm: ScriptedEvalLLMClient, message: str) -> LL
                     "action": "replace",
                     "intent": "durable_write",
                     "source_excerpt": message,
+                    "scope": "global",
                     "section": "preferences",
+                    "type": "preference",
                     "content": "日报先给风险再给结论。",
                 },
             )
@@ -318,7 +330,9 @@ def _scripted_memory_suite_reply(llm: ScriptedEvalLLMClient, message: str) -> LL
                     "action": "replace",
                     "intent": "durable_write",
                     "source_excerpt": message,
+                    "scope": "global",
                     "section": "preferences",
+                    "type": "preference",
                     "content": "周报默认先结论，后细节。",
                 },
             )
@@ -439,7 +453,9 @@ def _scripted_main_chain_reply(llm: ScriptedEvalLLMClient, request, message: str
                     "action": "append",
                     "intent": "durable_write",
                     "source_excerpt": message,
+                    "scope": "global",
                     "section": "preferences",
+                    "type": "preference",
                     "content": "以后始终用中文回复。",
                 },
             )
@@ -452,7 +468,9 @@ def _scripted_main_chain_reply(llm: ScriptedEvalLLMClient, request, message: str
                     "action": "replace",
                     "intent": "durable_write",
                     "source_excerpt": message,
+                    "scope": "global",
                     "section": "preferences",
+                    "type": "preference",
                     "content": "以后回答尽量简洁。",
                 },
             )
@@ -469,7 +487,9 @@ def _scripted_main_chain_reply(llm: ScriptedEvalLLMClient, request, message: str
                     "action": "append",
                     "intent": "durable_write",
                     "source_excerpt": message,
+                    "scope": "global",
                     "section": "preferences",
+                    "type": "preference",
                     "content": "以后始终用中文回复。",
                 },
             )

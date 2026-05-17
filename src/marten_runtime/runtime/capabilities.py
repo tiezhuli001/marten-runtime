@@ -21,7 +21,7 @@ GLOBAL_CAPABILITY_RULES: tuple[str, ...] = (
     "If an earlier user turn already parked one concrete future task or topic for continuation, treat that named task/topic as valid session context when the current turn says 继续上一轮那个任务, 继续跟进, 接着做, or 压缩后继续.",
     "When a compact summary already gives the main task and unfinished items, phrasing such as 在压缩后的上下文里继续执行, 压缩后继续, or 继续这个长线程任务 means continue that task. Treat 上下文, 长线程, and 当前会话 there as continuation cues, not as session metadata or runtime-number queries.",
     "Ground live current time/date/datetime/timezone facts in the time tool result from this turn, and ground current-session context/token/window/compression facts in the runtime tool result from this turn.",
-    "For memory writes, include the durable bucket explicitly. append/replace/delete should carry section, and append/replace should also carry content. Typical section names include preferences, facts, profile, project, and constraints.",
+    "For memory writes/deletes, include the durable scope and bucket explicitly. append/replace/delete should carry scope and section, and append/replace should also carry content and type. Typical section names include preferences, facts, profile, project, and constraints.",
     "Only confirm a durable-memory write after a successful memory tool result in this turn, and only answer live current time/date/datetime after a time tool result in this turn.",
     "Even when similar facts already appear in memory, summaries, or prior replies, explicit durable-memory write requests still require a memory tool result in this turn, and live time/runtime status requests still require their corresponding time/runtime tool result in this turn.",
     "When the user already names one visible session by title or label, prefer one direct session.resume/session.show call with session_id or session_ref. Reserve session.list for explicit session catalog requests.",
@@ -319,7 +319,7 @@ def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
                 "For requests that update or overwrite a current durable preference or standing rule, prefer replace on section=preferences unless the user explicitly asked to append another separate item.",
                 "For append/replace/delete, include intent explicitly. Use intent=durable_write for append/replace and intent=durable_delete for delete so the host can verify that this turn is a structured durable-memory mutation.",
                 "For append/replace/delete, include source_excerpt copied from the current user message. Quote the exact request span that authorizes the durable mutation so the host can anchor this write/delete to the current turn without reparsing prose.",
-                "For append/replace/delete, include section explicitly. Typical stable buckets are preferences, facts, profile, project, and constraints.",
+                "For append/replace/delete, include scope, type, and section explicitly. Use scope=global for user-wide memory, scope=agent for the selected runtime agent, and scope=workspace only when a workspace_id is available. Type should be preference, fact, constraint, or workflow_hint. Typical sections are preferences, facts, profile, workflow_hints, and constraints.",
                 "For append/replace, include the durable content text as well. For delete, section is still required and content is optional when clearing a whole bucket.",
                 "Only confirm 已记住 / 已更新 after a successful memory tool result exists in this turn.",
                 "Even when the requested preference already appears in attached memory, an explicit 记住 / 更新记忆 / 修改记忆 request still requires a memory tool call in this turn before confirming success.",
@@ -331,8 +331,9 @@ def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
             ],
             examples=[
                 "记住这个长期偏好：我默认使用 minimax",
-                "记住：以后始终用中文回复（section=preferences）",
-                "更新记忆：以后回答尽量简洁（section=preferences）",
+                "记住：以后始终用中文回复（scope=global,type=preference,section=preferences）",
+                "更新记忆：以后回答尽量简洁（scope=global,type=preference,section=preferences）",
+                "记住 main agent 约束：保持 thin harness 边界（scope=agent,type=constraint）",
                 "说明你记住了什么",
                 "查看我的长期记忆",
                 "删除我之前存的偏好",
@@ -359,12 +360,42 @@ def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
                             "that authorizes this durable memory mutation."
                         ),
                     },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["global", "agent", "workspace"],
+                        "description": "Required for append/replace/delete. global is user-wide, agent is selected-agent memory, workspace is local workspace memory.",
+                    },
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Required when scope=agent unless supplied by runtime tool context.",
+                    },
+                    "workspace_id": {
+                        "type": "string",
+                        "description": "Required when scope=workspace.",
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": ["preference", "fact", "constraint", "workflow_hint"],
+                        "description": "Required for append/replace. Describes the durable memory kind.",
+                    },
                     "section": {
                         "type": "string",
                         "description": (
                             "Required for append/replace/delete. Use a stable durable bucket such as "
-                            "preferences, facts, profile, project, or constraints."
+                            "preferences, facts, profile, workflow_hints, or constraints."
                         ),
+                    },
+                    "priority": {
+                        "type": "integer",
+                        "description": "Optional 0-100 priority for prompt loading. Default is 50.",
+                    },
+                    "memory_id": {
+                        "type": "string",
+                        "description": "Optional exact memory item id for replace/delete.",
+                    },
+                    "source_run_id": {
+                        "type": "string",
+                        "description": "Optional run id provenance; runtime may supply it from tool context.",
                     },
                     "content": {
                         "type": "string",
@@ -375,6 +406,16 @@ def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
                     },
                 },
                 "required": ["action"],
+                "allOf": [
+                    {
+                        "if": {"properties": {"action": {"enum": ["append", "replace"]}}},
+                        "then": {"required": ["intent", "source_excerpt", "scope", "type", "section", "content"]},
+                    },
+                    {
+                        "if": {"properties": {"action": {"enum": ["delete"]}}},
+                        "then": {"required": ["intent", "source_excerpt", "scope", "section"]},
+                    },
+                ],
                 "additionalProperties": False,
             },
         ),

@@ -218,6 +218,7 @@ def serialize_runtime_diagnostics(
             "recent_tool_outcome_summary_limit": RECENT_TOOL_OUTCOME_SUMMARY_LIMIT,
         },
         "provider_reliability": provider_health_summary.model_dump(mode="json"),
+        "memory": runtime.memory_service.diagnostics_summary(),
         "compaction_worker": {
             "enabled": worker is not None,
             "running": bool(

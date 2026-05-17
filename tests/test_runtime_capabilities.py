@@ -99,6 +99,34 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
             "runtime" in runtime_description.lower() or "上下文" in runtime_description
         )
 
+
+    def test_memory_tool_schema_marks_scope_and_type_required_for_model_payloads(self) -> None:
+        declarations = get_capability_declarations()
+
+        schema = get_parameters_schema(declarations["memory"])
+
+        self.assertEqual(schema["required"], ["action"])
+        self.assertIn("scope", schema["properties"])
+        self.assertIn("type", schema["properties"])
+        append_replace_requirements = [
+            item.get("then", {}).get("required", [])
+            for item in schema.get("allOf", [])
+            if item.get("if", {}).get("properties", {}).get("action", {}).get("enum") == ["append", "replace"]
+        ]
+        self.assertEqual(
+            append_replace_requirements,
+            [["intent", "source_excerpt", "scope", "type", "section", "content"]],
+        )
+        delete_requirements = [
+            item.get("then", {}).get("required", [])
+            for item in schema.get("allOf", [])
+            if item.get("if", {}).get("properties", {}).get("action", {}).get("enum") == ["delete"]
+        ]
+        self.assertEqual(
+            delete_requirements,
+            [["intent", "source_excerpt", "scope", "section"]],
+        )
+
     def test_runtime_capability_description_requires_tool_for_natural_language_context_queries(self) -> None:
         declarations = get_capability_declarations()
 
@@ -171,6 +199,10 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         self.assertIn("append/replace/delete", memory_description.lower())
         self.assertIn("source_excerpt", memory_description.lower())
         self.assertIn("section", memory_description.lower())
+        self.assertIn("scope", memory_description.lower())
+        self.assertIn("agent", memory_description.lower())
+        self.assertIn("workspace", memory_description.lower())
+        self.assertIn("type", memory_description.lower())
         self.assertIn("preferences", memory_description.lower())
         self.assertIn("facts", memory_description.lower())
         self.assertIn("before confirming success", memory_description.lower())
@@ -184,6 +216,14 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         self.assertIn("exact current-user-message span", memory_schema["properties"]["source_excerpt"]["description"].lower())
         self.assertIn("required for append/replace/delete", memory_schema["properties"]["section"]["description"].lower())
         self.assertIn("preferences", memory_schema["properties"]["section"]["description"].lower())
+        self.assertIn("scope", memory_schema["properties"])
+        self.assertIn("type", memory_schema["properties"])
+        self.assertIn("agent_id", memory_schema["properties"])
+        self.assertIn("workspace_id", memory_schema["properties"])
+        self.assertIn("priority", memory_schema["properties"])
+        self.assertIn("memory_id", memory_schema["properties"])
+        self.assertNotIn("tags", memory_schema["properties"])
+        self.assertNotIn("app_id", memory_schema["properties"])
         self.assertIn("required for append/replace", memory_schema["properties"]["content"]["description"].lower())
         self.assertIn("session_ref", session_schema["properties"])
         self.assertIn("visible session title", session_schema["properties"]["session_ref"]["description"].lower())

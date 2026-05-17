@@ -298,6 +298,8 @@ def resolve_suite_dependency_block(
     profile_name: str,
     env: dict[str, str] | None = None,
 ) -> str | None:
+    if mode == "scripted" and not bool(getattr(suite, "scripted_supported", False)):
+        return f"suite {suite.suite_id} requires live mode; scripted mode is not supported"
     if mode == "scripted":
         return None
     resolved_env = dict(env or {})

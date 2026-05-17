@@ -194,6 +194,8 @@ Langfuse 和 run diagnostics 继续承担证据采集职责。
 
 覆盖真实 MCP 调用路径。
 
+运行模式：只使用 `live` mode。该套件的目标是评估真实 provider、真实 MCP server 和真实 GitHub 返回；scripted harness 仅用于其他套件验证 runtime、grader、report、diagnostics 的可重复回归。
+
 覆盖面：
 
 - GitHub MCP 主链
@@ -222,6 +224,26 @@ Langfuse 和 run diagnostics 继续承担证据采集职责。
 - live provider key
 - subagent surface enabled
 - 对应工具依赖
+
+### 8.4 `subagent_external_mcp_completion`
+
+覆盖 child agent 通过真实 MCP 完成外部任务的链路。
+
+运行模式：只使用 `live` mode。该套件的目标是评估 child agent、真实 provider、真实 MCP server 和真实 GitHub 返回共同作用后的完成质量；scripted harness 继续用于非外部 MCP 子代理回归。
+
+覆盖面：
+
+- parent 创建 child task
+- child 调用外部 MCP
+- child completion 回传
+- parent 整合结果
+
+依赖：
+
+- live provider key
+- live MCP 配置
+- 对应 PAT / 凭据
+- subagent surface enabled
 
 第一期实现只把 `main_chain_core` 作为必须套件进入基线。
 

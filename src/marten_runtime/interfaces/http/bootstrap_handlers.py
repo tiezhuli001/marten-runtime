@@ -352,7 +352,11 @@ def _run_turn(
             if channel_id == "feishu"
             else None
         ),
-        memory_text=state.memory_service.render_prompt_memory(user_id or ""),
+        memory_text=state.memory_service.render_prompt_memory(
+            user_id or "",
+            agent_id=agent.agent_id,
+            current_message=message,
+        ),
         repository_context_text=state.repository_context_note,
         compact_settings=build_compaction_settings(profile),
         session_replay_user_turns=state.platform_config.runtime.session_replay_user_turns,

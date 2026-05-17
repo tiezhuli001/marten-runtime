@@ -45,6 +45,68 @@ class RunEvalScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("main_chain_core", result.stdout)
 
+    def test_run_eval_rejects_scripted_mode_for_live_only_mcp_suite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "evals.sqlite3"
+            report_root = Path(tmpdir) / "reports"
+            result = subprocess.run(
+                [
+                    ".venv/bin/python",
+                    "scripts/run_eval.py",
+                    "--suite",
+                    "main_chain_mcp",
+                    "--mode",
+                    "scripted",
+                    "--profile",
+                    "openai_gpt_5_4",
+                    "--db-path",
+                    str(db_path),
+                    "--report-root",
+                    str(report_root),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 2)
+            latest_report = sorted(report_root.iterdir())[-1]
+            summary = json.loads((latest_report / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["status"], "blocked")
+            self.assertIn("scripted", json.dumps(summary, ensure_ascii=False))
+            self.assertIn("live", json.dumps(summary, ensure_ascii=False))
+
+    def test_run_eval_rejects_scripted_mode_for_live_only_external_mcp_subagent_suite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "evals.sqlite3"
+            report_root = Path(tmpdir) / "reports"
+            result = subprocess.run(
+                [
+                    ".venv/bin/python",
+                    "scripts/run_eval.py",
+                    "--suite",
+                    "subagent_external_mcp_completion",
+                    "--mode",
+                    "scripted",
+                    "--profile",
+                    "openai_gpt_5_4",
+                    "--db-path",
+                    str(db_path),
+                    "--report-root",
+                    str(report_root),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 2)
+            latest_report = sorted(report_root.iterdir())[-1]
+            summary = json.loads((latest_report / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["status"], "blocked")
+            self.assertIn("scripted", json.dumps(summary, ensure_ascii=False))
+            self.assertIn("live", json.dumps(summary, ensure_ascii=False))
+
     def test_run_eval_writes_blocked_report_when_live_case_errors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "evals.sqlite3"

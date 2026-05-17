@@ -154,8 +154,8 @@ def _seed_long_history_session(  # noqa: ANN001
         )
 
 
-def _seed_memory(runtime, user_id: str, section: str, content: str) -> None:  # noqa: ANN001
-    runtime.memory_service.replace(user_id, section=section, content=content)
+def _seed_memory(runtime, user_id: str, section: str, content: str, *, type: str) -> None:  # noqa: ANN001
+    runtime.memory_service.replace(user_id, section=section, content=content, type=type)
 
 
 def _seed_memory_fixture(runtime, case: EvalCaseSpec, user_id: str) -> None:  # noqa: ANN001
@@ -163,6 +163,7 @@ def _seed_memory_fixture(runtime, case: EvalCaseSpec, user_id: str) -> None:  # 
     if not fixture_path:
         return
     current_section = "preferences"
+    current_type = "preference"
     current_lines: list[str] = []
     for raw_line in Path(fixture_path).read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -170,14 +171,41 @@ def _seed_memory_fixture(runtime, case: EvalCaseSpec, user_id: str) -> None:  # 
             continue
         if line.startswith("## "):
             if current_lines:
-                _seed_memory(runtime, user_id, current_section, "\n".join(current_lines))
-            current_section = line[3:].strip() or "preferences"
+                _seed_memory(runtime, user_id, current_section, "\n".join(current_lines), type=current_type)
+            current_type, current_section = _memory_type_and_section_from_heading(line[3:].strip())
             current_lines = []
             continue
         if line.startswith("- "):
             current_lines.append(line[2:].strip())
     if current_lines:
-        _seed_memory(runtime, user_id, current_section, "\n".join(current_lines))
+        _seed_memory(runtime, user_id, current_section, "\n".join(current_lines), type=current_type)
+
+
+def _memory_type_and_section_from_heading(heading: str) -> tuple[str, str]:
+    parts = [part.strip() for part in str(heading or "").split("/")]
+    if len(parts) >= 3 and _normalize_memory_type(parts[1]):
+        section = "/".join(parts[2:]).strip() or "preferences"
+        return _normalize_memory_type(parts[1]) or "fact", section
+    section = (parts[-1] if parts else "").strip() or "preferences"
+    return _memory_type_from_section(section), section
+
+
+def _memory_type_from_section(section: str) -> str:
+    value = " ".join(str(section or "").split()).strip().lower().replace(" ", "_")
+    if value in {"preferences", "preference"}:
+        return "preference"
+    if value in {"constraints", "constraint"}:
+        return "constraint"
+    if value in {"workflow_hints", "workflow_hint"}:
+        return "workflow_hint"
+    return "fact"
+
+
+def _normalize_memory_type(value: str) -> str | None:
+    normalized = " ".join(str(value or "").split()).strip().lower()
+    if normalized in {"preference", "fact", "constraint", "workflow_hint"}:
+        return normalized
+    return None
 
 
 def load_history_fixture(case: EvalCaseSpec) -> list[SessionMessage]:

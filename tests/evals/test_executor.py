@@ -275,6 +275,21 @@ class EvalExecutorTests(unittest.TestCase):
             original_openai.context_window_tokens,
         )
 
+    def test_seed_case_state_preserves_memory_fixture_types(self) -> None:
+        app = build_test_app(emit_explicit_empty_contract=True)
+        runtime = app.state.runtime
+        case = load_case_spec(
+            Path("evals/cases/memory_long_horizon/memory_preference_applied_to_output_cn.toml")
+        )
+
+        _seed_case_state(runtime, case)
+        active = runtime.memory_service.store.list_active("eval-user")
+        exported = runtime.memory_service.memory_path("eval-user").read_text(encoding="utf-8")
+
+        self.assertEqual({item.type for item in active}, {"preference"})
+        self.assertIn("## global / preference / preferences", exported)
+        self.assertNotIn("## global / fact / preferences", exported)
+
     def test_copy_repo_scaffold_keeps_live_eval_memory_isolated_per_workspace(self) -> None:
         env = {"OPENAI_API_KEY": "test-key", "MINIMAX_API_KEY": "test-key"}
         with TemporaryDirectory() as left_dir, TemporaryDirectory() as right_dir:
@@ -292,12 +307,16 @@ class EvalExecutorTests(unittest.TestCase):
                 "eval-user",
                 section="preferences",
                 content="以后回答尽量简洁。",
+                type="preference",
             )
+            left_export = left_runtime.memory_service.memory_path("eval-user").read_text(encoding="utf-8")
 
             self.assertEqual(
                 left_runtime.memory_service.load("eval-user").sections,
                 {"preferences": ["以后回答尽量简洁。"]},
             )
+            self.assertIn("## global / preference / preferences", left_export)
+            self.assertNotIn("## global / fact / preferences", left_export)
             self.assertEqual(
                 right_runtime.memory_service.load("eval-user").sections,
                 {},
