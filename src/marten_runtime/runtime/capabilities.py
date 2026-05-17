@@ -21,7 +21,7 @@ GLOBAL_CAPABILITY_RULES: tuple[str, ...] = (
     "If an earlier user turn already parked one concrete future task or topic for continuation, treat that named task/topic as valid session context when the current turn says 继续上一轮那个任务, 继续跟进, 接着做, or 压缩后继续.",
     "When a compact summary already gives the main task and unfinished items, phrasing such as 在压缩后的上下文里继续执行, 压缩后继续, or 继续这个长线程任务 means continue that task. Treat 上下文, 长线程, and 当前会话 there as continuation cues, not as session metadata or runtime-number queries.",
     "Ground live current time/date/datetime/timezone facts in the time tool result from this turn, and ground current-session context/token/window/compression facts in the runtime tool result from this turn.",
-    "For memory writes, include the durable bucket explicitly. append/replace/delete should carry section, and append/replace should also carry content. Typical section names include preferences, facts, profile, project, and constraints.",
+    "For memory writes/deletes, include the durable scope and bucket explicitly. append/replace/delete should carry scope and section, and append/replace should also carry content and type. Typical section names include preferences, facts, profile, project, and constraints.",
     "Only confirm a durable-memory write after a successful memory tool result in this turn, and only answer live current time/date/datetime after a time tool result in this turn.",
     "Even when similar facts already appear in memory, summaries, or prior replies, explicit durable-memory write requests still require a memory tool result in this turn, and live time/runtime status requests still require their corresponding time/runtime tool result in this turn.",
     "When the user already names one visible session by title or label, prefer one direct session.resume/session.show call with session_id or session_ref. Reserve session.list for explicit session catalog requests.",
@@ -406,6 +406,16 @@ def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
                     },
                 },
                 "required": ["action"],
+                "allOf": [
+                    {
+                        "if": {"properties": {"action": {"enum": ["append", "replace"]}}},
+                        "then": {"required": ["intent", "source_excerpt", "scope", "type", "section", "content"]},
+                    },
+                    {
+                        "if": {"properties": {"action": {"enum": ["delete"]}}},
+                        "then": {"required": ["intent", "source_excerpt", "scope", "section"]},
+                    },
+                ],
                 "additionalProperties": False,
             },
         ),

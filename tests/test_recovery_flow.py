@@ -120,7 +120,9 @@ def _memory_write_history() -> list[ToolExchange]:
             tool_payload={
                 "action": "replace",
                 "intent": "durable_write",
+                "scope": "global",
                 "section": "preferences",
+                "type": "preference",
                 "content": "以后始终用中文回复",
             },
             tool_result={"ok": True},
@@ -135,7 +137,9 @@ def _memory_delete_history() -> list[ToolExchange]:
             tool_payload={
                 "action": "delete",
                 "intent": "durable_delete",
+                "scope": "global",
                 "section": "preferences",
+                "type": "preference",
                 "content": "以后始终用中文回复",
             },
             tool_result={"ok": True},

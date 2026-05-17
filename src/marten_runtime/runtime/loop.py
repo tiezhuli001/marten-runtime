@@ -1041,22 +1041,65 @@ class RuntimeLoop:
                         message=message,
                         summary=str(exc),
                     )
+                    failed_tool_result = {
+                        "ok": False,
+                        "is_error": True,
+                        "error_code": exc.error_code,
+                        "error_text": str(exc),
+                    }
                     self.history.record_tool_call(
                         run.run_id,
                         tool_name=reply.tool_name or "",
                         tool_payload=reply.tool_payload,
-                        tool_result={
-                            "ok": False,
-                            "is_error": True,
-                            "error_code": exc.error_code,
-                            "error_text": str(exc),
-                        },
+                        tool_result=failed_tool_result,
                     )
                     self.history.set_stage_timing(
                         run.run_id,
                         stage="tool",
                         elapsed_ms=elapsed_ms(tool_started_at),
                     )
+                    if (
+                        _is_repairable_memory_schema_failure(reply.tool_name, exc)
+                        and not contract_repair_used
+                    ):
+                        append_tool_exchange(
+                            tool_history,
+                            tool_name=reply.tool_name or "",
+                            tool_payload=reply.tool_payload,
+                            tool_result=failed_tool_result,
+                        )
+                        self.history.set_finalization_state(
+                            run.run_id,
+                            assessment="retryable_degraded",
+                            request_kind=current_request.request_kind,
+                            required_evidence_count=0,
+                            missing_evidence_items=[],
+                            retry_triggered=True,
+                            invalid_final_text=str(exc),
+                        )
+                        contract_repair_used = True
+                        self.history.set_contract_repair_state(
+                            run.run_id,
+                            triggered=True,
+                            reason="invalid_first_turn_finalization_contract",
+                            attempt_count=1,
+                            outcome="retrying",
+                            selected_tool=reply.tool_name or None,
+                            provider_ref=getattr(resolved_llm, "provider_name", None),
+                        )
+                        current_request = build_contract_repair_request(
+                            first_request,
+                            invalid_final_text=str(exc),
+                        ).model_copy(
+                            update={
+                                "timeout_seconds_override": timeout_seconds_override
+                                if timeout_seconds_override is not None
+                                else remaining_timeout_seconds(deadline_monotonic),
+                                "cooperative_stop_event": stop_event,
+                                "cooperative_deadline_monotonic": deadline_monotonic,
+                            }
+                        )
+                        continue
                     if tool_history:
                         recovered_text = recover_successful_tool_followup_text_with_meta(
                             tool_history,
@@ -1871,3 +1914,13 @@ class RuntimeLoop:
             agent_id=resolved_agent.agent_id,
             post_commit_callback=self.self_improve_post_commit_callback,
         )
+
+
+def _is_repairable_memory_schema_failure(tool_name: str | None, exc: ToolExecutionFailed) -> bool:
+    if str(tool_name or "").strip() != "memory":
+        return False
+    return str(getattr(exc, "cause_error_code", "") or "").strip() in {
+        "MEMORY_DELETE_SCOPE_REQUIRED",
+        "MEMORY_WRITE_SCOPE_REQUIRED",
+        "MEMORY_WRITE_TYPE_REQUIRED",
+    }

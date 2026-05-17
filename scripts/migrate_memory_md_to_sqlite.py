@@ -23,11 +23,14 @@ def migrate_memory_root(
     represented: dict[tuple[str, str, str | None, str | None, str, str], list[MemoryItem]] = {}
     for path in sorted((root / "users").glob("*/MEMORY.md")):
         user_id = unquote(path.parent.name)
-        items = _items_from_markdown(user_id, path.read_text(encoding="utf-8"))
-        planned.extend(items)
-        for item in items:
+        parsed = _parse_markdown_memory(user_id, path.read_text(encoding="utf-8"))
+        planned.extend(parsed.items)
+        for key in parsed.represented_buckets:
+            represented.setdefault(key, [])
+        for item in parsed.items:
             represented.setdefault(_bucket_key(item), []).append(item)
-    planned.extend(_items_from_legacy_jsonl(root))
+    if not import_edited_markdown:
+        planned.extend(_items_from_legacy_jsonl(root))
     summary = {
         "user_count": len({item.user_id for item in planned}),
         "item_count": len(planned),
@@ -43,16 +46,59 @@ def migrate_memory_root(
             for existing in store.list_active(user_id, scope=scope, agent_id=agent_id, workspace_id=workspace_id, type=memory_type):
                 if existing.section == section:
                     store.supersede(existing.memory_id)
+    else:
+        existing_keys = _active_item_keys(store, planned)
+        filtered: list[MemoryItem] = []
+        skipped_count = 0
+        for item in planned:
+            key = _dedupe_key(item)
+            if key in existing_keys:
+                skipped_count += 1
+                continue
+            existing_keys.add(key)
+            filtered.append(item)
+        planned = filtered
+        summary["changed_item_count"] = len(planned)
+        summary["skipped_count"] = skipped_count
     for item in planned:
         store.append(item)
-    for user_id in sorted({item.user_id for item in planned}):
+    export_user_ids = {item.user_id for item in planned}
+    if import_edited_markdown:
+        export_user_ids.update(key[0] for key in represented)
+    for user_id in sorted(export_user_ids):
         write_memory_export(root, user_id, store.list_active(user_id))
     return summary
+
+
+class ParsedMarkdownMemory:
+    def __init__(
+        self,
+        *,
+        items: list[MemoryItem],
+        represented_buckets: set[tuple[str, str, str | None, str | None, str, str]],
+    ) -> None:
+        self.items = items
+        self.represented_buckets = represented_buckets
+
+
+def _parse_markdown_memory(user_id: str, text: str) -> ParsedMarkdownMemory:
+    items = _items_from_markdown(user_id, text)
+    represented_buckets: set[tuple[str, str, str | None, str | None, str, str]] = set()
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("## "):
+            continue
+        scope, agent_id, workspace_id, memory_type, section = _parse_heading(line[3:].strip())
+        represented_buckets.add((user_id, scope, agent_id, workspace_id, memory_type, section))
+    for item in items:
+        represented_buckets.add(_bucket_key(item))
+    return ParsedMarkdownMemory(items=items, represented_buckets=represented_buckets)
 
 
 def _items_from_markdown(user_id: str, text: str) -> list[MemoryItem]:
     items: list[MemoryItem] = []
     current_section: str | None = None
+    current_type: str = "fact"
     current_scope = "global"
     current_agent_id: str | None = None
     current_workspace_id: str | None = None
@@ -60,7 +106,7 @@ def _items_from_markdown(user_id: str, text: str) -> list[MemoryItem]:
         line = raw_line.strip()
         if line.startswith("## "):
             heading = line[3:].strip()
-            current_scope, current_agent_id, current_workspace_id, current_section = _parse_heading(heading)
+            current_scope, current_agent_id, current_workspace_id, current_type, current_section = _parse_heading(heading)
             continue
         if not line.startswith("- ") or not current_section:
             continue
@@ -72,7 +118,7 @@ def _items_from_markdown(user_id: str, text: str) -> list[MemoryItem]:
             scope=current_scope,
             agent_id=current_agent_id,
             workspace_id=current_workspace_id,
-            type=_type_from_section(current_section),
+            type=current_type,
             section=current_section,
             content=content,
         ))
@@ -108,16 +154,24 @@ def _items_from_legacy_jsonl(root: Path) -> list[MemoryItem]:
     return items
 
 
-def _parse_heading(heading: str) -> tuple[str, str | None, str | None, str]:
-    parts = [part.strip() for part in heading.split("/", 1)]
+def _parse_heading(heading: str) -> tuple[str, str | None, str | None, str, str]:
+    parts = [part.strip() for part in heading.split("/")]
     if len(parts) == 1:
-        return "global", None, None, _normalize_section(parts[0])
-    scope_part, section = parts
+        section = _normalize_section(parts[0])
+        return "global", None, None, _type_from_section(section), section
+    if len(parts) >= 3 and _normalize_type(parts[1]) is not None:
+        scope_part = parts[0]
+        memory_type = _normalize_type(parts[1]) or "fact"
+        section = "/".join(parts[2:])
+    else:
+        scope_part = parts[0]
+        section = "/".join(parts[1:])
+        memory_type = _type_from_section(section)
     if scope_part.startswith("agent:"):
-        return "agent", scope_part.split(":", 1)[1].strip(), None, _normalize_section(section)
+        return "agent", unquote(scope_part.split(":", 1)[1].strip()), None, memory_type, _normalize_section(section)
     if scope_part.startswith("workspace:"):
-        return "workspace", None, scope_part.split(":", 1)[1].strip(), _normalize_section(section)
-    return "global", None, None, _normalize_section(section)
+        return "workspace", None, unquote(scope_part.split(":", 1)[1].strip()), memory_type, _normalize_section(section)
+    return "global", None, None, memory_type, _normalize_section(section)
 
 
 def _normalize_section(section: str) -> str:
@@ -138,8 +192,39 @@ def _type_from_section(section: str) -> str:
     return "fact"
 
 
+def _normalize_type(value: str) -> str | None:
+    normalized = " ".join(str(value or "").split()).strip().lower()
+    if normalized in {"preference", "fact", "constraint", "workflow_hint"}:
+        return normalized
+    return None
+
+
 def _bucket_key(item: MemoryItem) -> tuple[str, str, str | None, str | None, str, str]:
     return (item.user_id, item.scope, item.agent_id, item.workspace_id, item.type, item.section)
+
+
+def _dedupe_key(item: MemoryItem) -> tuple[str, str, str | None, str | None, str, str, str]:
+    return (
+        item.user_id,
+        item.scope,
+        item.agent_id,
+        item.workspace_id,
+        item.type,
+        item.section,
+        item.content,
+    )
+
+
+def _active_item_keys(
+    store: SQLiteMemoryStore,
+    planned: list[MemoryItem],
+) -> set[tuple[str, str, str | None, str | None, str, str, str]]:
+    keys: set[tuple[str, str, str | None, str | None, str, str, str]] = set()
+    seen_users = {item.user_id for item in planned}
+    for user_id in seen_users:
+        for item in store.list_active(user_id):
+            keys.add(_dedupe_key(item))
+    return keys
 
 
 def main() -> None:

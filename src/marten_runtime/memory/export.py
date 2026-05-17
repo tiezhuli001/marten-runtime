@@ -18,7 +18,7 @@ def render_memory_markdown(items: list[MemoryItem]) -> str:
         return ""
     groups: dict[str, list[MemoryItem]] = defaultdict(list)
     for item in sorted(active_items, key=lambda x: (_scope_label(x), x.type, x.section, -x.priority, x.updated_at, x.memory_id)):
-        groups[f"{_scope_label(item)} / {_section_label(item)}"].append(item)
+        groups[f"{_scope_label(item)} / {item.type} / {item.section}"].append(item)
     lines = ["# MEMORY"]
     for heading in sorted(groups):
         lines.extend(["", f"## {heading}"])
@@ -46,21 +46,7 @@ def sections_from_items(items: list[MemoryItem]) -> dict[str, list[str]]:
 
 def _scope_label(item: MemoryItem) -> str:
     if item.scope == "agent":
-        return f"agent:{item.agent_id}"
+        return f"agent:{quote(str(item.agent_id or ''), safe='-_.~')}"
     if item.scope == "workspace":
-        return f"workspace:{item.workspace_id}"
+        return f"workspace:{quote(str(item.workspace_id or ''), safe='-_.~')}"
     return "global"
-
-
-def _section_label(item: MemoryItem) -> str:
-    if item.section.endswith("s"):
-        return item.section
-    if item.type == "preference":
-        return "preferences"
-    if item.type == "constraint":
-        return "constraints"
-    if item.type == "workflow_hint":
-        return "workflow_hints"
-    if item.type == "fact":
-        return "facts" if item.section == "fact" else item.section
-    return item.section

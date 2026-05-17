@@ -309,13 +309,13 @@ Export example:
 ```markdown
 # MEMORY
 
-## global / preferences
+## global / preference / preferences
 - 回答默认使用中文，保持简洁。
 
-## agent:main / constraints
+## agent:main / constraint / constraints
 - 对 marten-runtime 的改动保持 thin harness 边界。
 
-## workspace:marten-runtime / workflow_hints
+## workspace:marten-runtime / workflow_hint / workflow_hints
 - 修改 runtime 主链后跑 targeted tests 和 memory_long_horizon eval。
 ```
 

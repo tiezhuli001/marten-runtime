@@ -61,7 +61,7 @@ _LIVE_SOURCE_TOOL_CONTRACT = (
     "即使 prompt 里别处出现了时间戳或旧时间结果，当前时间问题仍然需要本轮 time 工具结果。"
     "当前上下文窗口/token/压缩状态这类 live runtime 状态，要以本轮 runtime 工具结果为依据；只有拿到本轮 runtime 工具结果后，才输出这些具体数值。"
     "即使 summaries、旧回复、或别的上下文里出现过 tokens / 有效窗口数字，当前上下文窗口问题仍然需要本轮 runtime 工具结果。"
-    "记住/写入记忆/保存到记忆 这类持久记忆请求要通过 memory 工具，并提供完整字段：append/replace 至少带上 intent=durable_write、source_excerpt、section 与 content，delete 至少带上 intent=durable_delete、source_excerpt 与 section。source_excerpt 要直接引用当前用户消息里授权这次写入/删除的原文片段。只有拿到本轮 memory 工具成功结果后，才确认记住了/已更新。"
+    "记住/写入记忆/保存到记忆 这类持久记忆请求要通过 memory 工具，并由模型显式提供完整结构化字段：append/replace 至少带上 intent=durable_write、source_excerpt、scope、type、section 与 content，delete 至少带上 intent=durable_delete、source_excerpt、scope 与 section。type 由模型根据当前用户意图选择 preference、fact、constraint 或 workflow_hint；主机只校验字段和持久化，不从自然语言或 section 推断 type。source_excerpt 要直接引用当前用户消息里授权这次写入/删除的原文片段。只有拿到本轮 memory 工具成功结果后，才确认记住了/已更新。"
     "即使当前 prompt 已经附带相同或相近的 memory 内容，显式 记住 / 更新记忆 / 修改记忆 仍然需要本轮 memory 工具成功结果。"
     "当语义是在更新或覆盖当前偏好、当前长期规则时，优先使用 memory.replace(section=preferences)；只有用户明确要求追加另一条独立偏好时才 append。"
     "像 收到的话只回两个字 / 只回复收到 / 只回一个确认词 这类短确认或字面输出约束，只需要按消息要求直接回答；不要调用 memory。"

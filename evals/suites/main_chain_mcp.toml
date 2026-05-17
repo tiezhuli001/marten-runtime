@@ -1,7 +1,7 @@
 suite_id = "main_chain_mcp"
 description = "Main chain MCP golden replay suite"
 default_mode = "live"
-scripted_supported = true
+scripted_supported = false
 required_dependencies = ["provider", "mcp"]
 baseline_policy = "latest_passed_auto"
 case_files = [

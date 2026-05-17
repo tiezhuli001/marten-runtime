@@ -377,19 +377,29 @@ def _tool_parameters_schema_for_provider(
     request: "LLMRequest",
 ) -> dict[str, object]:
     schema = _tool_parameters_schema(tool_name, request)
-    return _normalize_provider_schema(_strip_schema_descriptions(schema))
+    strip_composition = tool_name == "memory"
+    return _normalize_provider_schema(
+        _strip_schema_descriptions(schema, strip_composition=strip_composition)
+    )
 
 
-def _strip_schema_descriptions(schema: object) -> object:
+def _strip_schema_descriptions(schema: object, *, strip_composition: bool = False) -> object:
     if isinstance(schema, dict):
         cleaned: dict[str, object] = {}
         for key, value in schema.items():
             if key in {"description", "title", "examples", "default"}:
                 continue
-            cleaned[key] = _strip_schema_descriptions(value)
+            if strip_composition and key in {"allOf", "anyOf", "oneOf", "if", "then", "else"}:
+                continue
+            cleaned[key] = _strip_schema_descriptions(
+                value, strip_composition=strip_composition
+            )
         return cleaned
     if isinstance(schema, list):
-        return [_strip_schema_descriptions(item) for item in schema]
+        return [
+            _strip_schema_descriptions(item, strip_composition=strip_composition)
+            for item in schema
+        ]
     return schema
 
 

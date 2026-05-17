@@ -20,6 +20,8 @@ from marten_runtime.runtime.loop import RuntimeLoop
 from marten_runtime.session.compacted_context import CompactedContext
 from marten_runtime.session.models import SessionMessage
 from marten_runtime.self_improve.recorder import SelfImproveRecorder
+from marten_runtime.memory.service import ThinMemoryService
+from marten_runtime.tools.builtins.memory_tool import run_memory_tool
 from marten_runtime.tools.builtins.time_tool import run_time_tool
 from marten_runtime.tools.registry import ToolRegistry
 from tests.support.domain_builders import build_self_improve_adapter
@@ -3153,6 +3155,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
             lambda payload: {
                 "action": "delete",
                 "intent": "durable_delete",
+                "scope": "global",
                 "ok": True,
                 "available": True,
                 "sections": {"preferences": []},
@@ -3168,7 +3171,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                         "action": "delete",
                         "intent": "durable_delete",
                         "source_excerpt": "删除这个偏好：以后始终用中文回复。",
+                        "scope": "global",
                         "section": "preferences",
+                        "type": "preference",
                         "content": "以后始终用中文回复。",
                     },
                 ),
@@ -3201,6 +3206,145 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self.assertEqual(run.contract_repair_selected_tool, "memory")
         self.assertEqual([item["tool_name"] for item in run.tool_calls], ["memory"])
 
+    def test_runtime_memory_schema_repair_only_retries_once(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = ThinMemoryService(tmpdir)
+            tools = ToolRegistry()
+            tools.register(
+                "memory",
+                lambda payload, *, tool_context=None: run_memory_tool(
+                    payload,
+                    memory_service=service,
+                    tool_context=tool_context,
+                ),
+            )
+            history = InMemoryRunHistory()
+            llm = ScriptedLLMClient(
+                [
+                    LLMReply(
+                        tool_name="memory",
+                        tool_payload={
+                            "action": "append",
+                            "intent": "durable_write",
+                            "source_excerpt": "记住：以后始终用中文回复",
+                            "section": "preferences",
+                            "content": "以后始终用中文回复。",
+                        },
+                    ),
+                    LLMReply(
+                        tool_name="memory",
+                        tool_payload={
+                            "action": "append",
+                            "intent": "durable_write",
+                            "source_excerpt": "记住：以后始终用中文回复",
+                            "section": "preferences",
+                            "content": "以后始终用中文回复。",
+                        },
+                    ),
+                ]
+            )
+            runtime = RuntimeLoop(llm, tools, history)
+            agent = AgentSpec(agent_id="main", role="general_assistant", allowed_tools=["memory"])
+
+            events = runtime.run(
+                session_id="sess_memory_schema_repair_once",
+                message="记住：以后始终用中文回复",
+                trace_id="trace_memory_schema_repair_once",
+                agent=agent,
+                user_id="demo",
+            )
+
+        self.assertEqual([request.request_kind for request in llm.requests], ["interactive", "contract_repair"])
+        self.assertEqual(events[-1].event_type, "error")
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.contract_repair_attempt_count, 1)
+        self.assertEqual(len(run.tool_calls), 2)
+
+    def test_runtime_repairs_memory_write_missing_scope_type_with_contract_repair(
+        self,
+    ) -> None:
+        tools = ToolRegistry()
+        saved_payloads: list[dict] = []
+
+        class MemorySchemaError(ValueError):
+            error_code = "MEMORY_WRITE_SCOPE_REQUIRED"
+
+        def memory_tool(payload: dict) -> dict:
+            if not payload.get("scope"):
+                raise MemorySchemaError("memory write payload is missing a required field")
+            if not payload.get("type"):
+                raise ValueError("type is required for memory writes")
+            saved_payloads.append(payload)
+            return {
+                "action": "append",
+                "intent": "durable_write",
+                "ok": True,
+                "available": True,
+                "sections": {"preferences": [payload["content"]]},
+            }
+
+        tools.register("memory", memory_tool)
+        history = InMemoryRunHistory()
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(
+                    tool_name="memory",
+                    tool_payload={
+                        "action": "append",
+                        "intent": "durable_write",
+                        "source_excerpt": "记住：以后始终用中文回复",
+                        "section": "preferences",
+                        "content": "以后始终用中文回复。",
+                    },
+                ),
+                LLMReply(
+                    tool_name="memory",
+                    tool_payload={
+                        "action": "append",
+                        "intent": "durable_write",
+                        "source_excerpt": "记住：以后始终用中文回复",
+                        "scope": "global",
+                        "section": "preferences",
+                        "type": "preference",
+                        "content": "以后始终用中文回复。",
+                    },
+                ),
+                _memory_write_reply(
+                    "已记住：以后始终用中文回复。",
+                    content="以后始终用中文回复。",
+                ),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            allowed_tools=["memory"],
+        )
+
+        events = runtime.run(
+            session_id="sess_memory_missing_fields_contract_repair",
+            message="记住：以后始终用中文回复",
+            trace_id="trace_memory_missing_fields_contract_repair",
+            agent=agent,
+        )
+
+        self.assertEqual([event.event_type for event in events], ["progress", "final"])
+        self.assertEqual(events[-1].payload["text"], "已记住：以后始终用中文回复。")
+        self.assertEqual(len(llm.requests), 3)
+        self.assertEqual([request.request_kind for request in llm.requests], ["interactive", "contract_repair", "interactive"])
+        self.assertIn("memory write payload is missing a required field", llm.requests[1].invalid_final_text or "")
+        self.assertEqual(saved_payloads[0]["scope"], "global")
+        self.assertEqual(saved_payloads[0]["type"], "preference")
+        run = history.get(events[-1].run_id)
+        self.assertTrue(run.contract_repair_triggered)
+        self.assertEqual(run.contract_repair_selected_tool, "memory")
+        self.assertEqual(len(run.tool_calls), 2)
+        self.assertEqual([item["tool_name"] for item in run.tool_calls], ["memory", "memory"])
+        self.assertFalse(run.tool_calls[0]["tool_result"]["ok"])
+        self.assertTrue(run.tool_calls[0]["tool_result"]["is_error"])
+        self.assertEqual(run.tool_calls[1]["tool_result"]["ok"], True)
+
     def test_runtime_repairs_unbacked_english_memory_write_claim_with_contract_repair(
         self,
     ) -> None:
@@ -3210,6 +3354,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
             lambda payload: {
                 "action": "append",
                 "intent": "durable_write",
+                "scope": "global",
                 "ok": True,
                 "available": True,
                 "sections": {"preferences": ["Always answer in Chinese."]},
@@ -3225,7 +3370,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                         "action": "append",
                         "intent": "durable_write",
                         "source_excerpt": "Remember this and save this to memory.",
+                        "scope": "global",
                         "section": "preferences",
+                        "type": "preference",
                         "content": "Always answer in Chinese.",
                     },
                 ),
@@ -3267,6 +3414,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
             lambda payload: {
                 "action": "delete",
                 "intent": "durable_delete",
+                "scope": "global",
                 "ok": True,
                 "available": True,
                 "sections": {"preferences": []},
@@ -3282,7 +3430,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                         "action": "delete",
                         "intent": "durable_delete",
                         "source_excerpt": "Delete this memory.",
+                        "scope": "global",
                         "section": "preferences",
+                        "type": "preference",
                         "content": "Always answer in Chinese.",
                     },
                 ),
@@ -3324,6 +3474,7 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
             lambda payload: {
                 "action": "append",
                 "intent": "durable_write",
+                "scope": "global",
                 "ok": True,
                 "available": True,
                 "sections": {"preferences": ["以后始终用中文回复。"]},
@@ -3338,7 +3489,9 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
                         "action": "append",
                         "intent": "durable_write",
                         "source_excerpt": "记住以后始终用中文回复",
+                        "scope": "global",
                         "section": "preferences",
+                        "type": "preference",
                         "content": "以后始终用中文回复。",
                     },
                 ),

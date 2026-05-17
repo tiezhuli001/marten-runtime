@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from marten_runtime.agents.ids import canonicalize_runtime_agent_id
 from marten_runtime.memory.export import memory_export_path, render_memory_markdown, sections_from_items, write_memory_export
 from marten_runtime.memory.loader import MemoryLoadRequest, MemoryLoadResult, MemoryLoader
 from marten_runtime.memory.models import MemoryDocument, MemoryItem
@@ -90,6 +91,7 @@ class ThinMemoryService:
     ) -> MemoryDocument:
         self._validate_write(content)
         document = self._require_document(user_id)
+        scope, agent_id, workspace_id = _normalize_scope_fields(scope, agent_id, workspace_id)
         item = MemoryItem.new(
             user_id=user_id,
             scope=scope,
@@ -122,6 +124,7 @@ class ThinMemoryService:
     ) -> MemoryDocument:
         self._validate_write(content)
         self._require_document(user_id)
+        scope, agent_id, workspace_id = _normalize_scope_fields(scope, agent_id, workspace_id)
         entries = [_normalize_entry(line) for line in str(content).splitlines() if _normalize_entry(line)] or [_normalize_entry(content)]
         targets = [self.store.get(memory_id)] if memory_id else self.store.list_active(user_id, scope=scope, agent_id=agent_id, workspace_id=workspace_id, type=type)
         targets = [
@@ -130,6 +133,10 @@ class ThinMemoryService:
             if item is not None
             and item.user_id == user_id
             and item.section == _normalize_section(section)
+            and item.scope == scope
+            and item.agent_id == agent_id
+            and item.workspace_id == workspace_id
+            and item.type == type
         ]
         replace_timestamp: str | None = None
         for index, entry in enumerate(entries):
@@ -170,9 +177,19 @@ class ThinMemoryService:
         memory_id: str | None = None,
     ) -> MemoryDocument:
         self._require_document(user_id)
+        if not str(scope or "").strip():
+            raise ValueError("scope is required for memory deletes")
+        scope, agent_id, workspace_id = _normalize_scope_fields(scope, agent_id, workspace_id)
         if memory_id:
             item = self.store.get(memory_id)
-            if item is not None and item.user_id == user_id and item.section == _normalize_section(section):
+            if (
+                item is not None
+                and item.user_id == user_id
+                and item.section == _normalize_section(section)
+                and item.scope == scope
+                and item.agent_id == agent_id
+                and item.workspace_id == workspace_id
+            ):
                 self.store.delete(memory_id)
             return self._save(user_id)
         entry = _normalize_entry(content) if content is not None else None
@@ -212,6 +229,27 @@ class ThinMemoryService:
             raise ValueError("content is required")
         if len(normalized) > self.max_write_chars:
             raise ValueError("memory write too large")
+
+
+def _normalize_scope_fields(
+    scope: str | None,
+    agent_id: str | None,
+    workspace_id: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    normalized_scope = str(scope or "").strip().lower() or None
+    normalized_agent_id = canonicalize_runtime_agent_id(agent_id, default=None)
+    normalized_workspace_id = " ".join(str(workspace_id or "").split()).strip() or None
+    if normalized_scope == "global":
+        return normalized_scope, None, None
+    if normalized_scope == "agent":
+        if not normalized_agent_id:
+            raise ValueError("agent_id is required for agent memory")
+        return normalized_scope, normalized_agent_id, None
+    if normalized_scope == "workspace":
+        if not normalized_workspace_id:
+            raise ValueError("workspace_id is required for workspace memory")
+        return normalized_scope, normalized_agent_id, normalized_workspace_id
+    raise ValueError("unsupported memory scope")
 
 
 def _normalize_section(section: str) -> str:

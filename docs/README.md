@@ -89,11 +89,27 @@ PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
 主要套件：
 
 - `main_chain_core`：主链黄金任务
-- `main_chain_mcp`：MCP 工具链路
+- `main_chain_mcp`：真实 MCP 工具链路，只用于 `live` mode
 - `main_chain_subagent`：主线程与子代理链路
 - `memory_long_horizon`：长期记忆收益
 - `subagent_task_progress`：子代理调度与非 MCP 任务推进
-- `subagent_external_mcp_completion`：子代理外部 MCP 完成链路
+- `subagent_external_mcp_completion`：子代理外部 MCP 完成链路，只用于 `live` mode
+
+`main_chain_mcp` 与 `subagent_external_mcp_completion` 的正式效果评估使用真实 provider、真实 MCP server 和真实 GitHub 返回：
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
+  --suite main_chain_mcp \
+  --mode live \
+  --profile openai_gpt_5_4 \
+  --baseline latest_passed
+
+PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
+  --suite subagent_external_mcp_completion \
+  --mode live \
+  --profile openai_gpt_5_4 \
+  --baseline latest_passed
+```
 
 产物位置：
 
@@ -106,7 +122,8 @@ PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
 
 ## 当前状态
 
-- 离线评测已经进入当前运维基线，当前可稳定回放 `main_chain_core`、`memory_long_horizon`、`subagent_task_progress`、`subagent_external_mcp_completion` 并生成 compare / stability 报告
+- 离线评测已经进入当前运维基线，当前可稳定回放 `main_chain_core`、`memory_long_horizon`、`subagent_task_progress` 并生成 compare / stability 报告
+- 真实 MCP 效果评估使用 live-only 套件：`main_chain_mcp`、`subagent_external_mcp_completion`
 - 默认 runtime agent 已经是 `main`
 - Milestone A 的 agent runtime harness 已经落地
 - HTTP `/messages` 与 Feishu interactive ingress 已具备 same-conversation FIFO queueing

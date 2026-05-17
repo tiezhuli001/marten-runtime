@@ -12,11 +12,14 @@ from marten_runtime.runtime.llm_client import (
     LLMRequest,
     ScriptedLLMClient,
 )
+from marten_runtime.runtime.llm_message_support import build_openai_chat_payload
 from marten_runtime.runtime.llm_request_instructions import (
     request_specific_instruction as _request_specific_instruction,
     tool_followup_instruction as _tool_followup_instruction,
 )
 from marten_runtime.runtime.recovery_flow import assess_finalization_text
+from marten_runtime.tools.registry import ToolSnapshot
+from marten_runtime.runtime.capabilities import get_capability_declarations
 
 
 class LLMClientInstructionTests(unittest.TestCase):
@@ -29,6 +32,56 @@ class LLMClientInstructionTests(unittest.TestCase):
             available_tools=[],
         )
         return base.model_copy(update=updates)
+
+
+    def test_memory_tool_provider_schema_uses_basic_required_shape(self) -> None:
+        declarations = get_capability_declarations()
+        memory_schema = declarations["memory"].parameters_schema
+        request = self._build_request(
+            available_tools=["memory"],
+            tool_snapshot=ToolSnapshot(
+                tool_snapshot_id="tool_memory",
+                builtin_tools=["memory"],
+                tool_metadata={"memory": {"parameters_schema": memory_schema}},
+            ),
+        )
+
+        payload = build_openai_chat_payload("gpt-test", request)
+        provider_schema = payload["tools"][0]["function"]["parameters"]
+
+        self.assertEqual(provider_schema["required"], ["action"])
+        self.assertNotIn("allOf", provider_schema)
+        self.assertNotIn("if", provider_schema)
+        self.assertNotIn("then", provider_schema)
+
+
+    def test_provider_schema_preserves_non_memory_composition_keywords(self) -> None:
+        custom_schema = {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["one"]},
+                "target": {"oneOf": [{"type": "string"}, {"type": "integer"}]},
+            },
+            "required": ["action"],
+            "oneOf": [
+                {"required": ["target"]},
+                {"required": ["action"]},
+            ],
+        }
+        request = self._build_request(
+            available_tools=["custom"],
+            tool_snapshot=ToolSnapshot(
+                tool_snapshot_id="tool_custom",
+                builtin_tools=["custom"],
+                tool_metadata={"custom": {"parameters_schema": custom_schema}},
+            ),
+        )
+
+        payload = build_openai_chat_payload("gpt-test", request)
+        provider_schema = payload["tools"][0]["function"]["parameters"]
+
+        self.assertIn("oneOf", provider_schema)
+        self.assertIn("oneOf", provider_schema["properties"]["target"])
 
     def test_request_specific_instruction_does_not_add_github_commit_specific_steering(
         self,
@@ -92,6 +145,9 @@ class LLMClientInstructionTests(unittest.TestCase):
         self.assertIn("显式 记住 / 更新记忆 / 修改记忆 仍然需要本轮 memory 工具成功结果", runtime_instruction)
         self.assertIn("memory.replace(section=preferences)", runtime_instruction)
         self.assertIn("source_excerpt", runtime_instruction)
+        self.assertIn("scope、type、section 与 content", runtime_instruction)
+        self.assertIn("type 由模型根据当前用户意图选择", runtime_instruction)
+        self.assertIn("主机只校验字段和持久化", runtime_instruction)
         self.assertIn("读取当前偏好 / 查看当前偏好 / 读取刚才记住的偏好", runtime_instruction)
         self.assertIn("说明你记住了什么 / 复述刚才记住的内容", runtime_instruction)
         self.assertIn("不要写成 当前记忆已更新 / 已保存 / 已写入", runtime_instruction)

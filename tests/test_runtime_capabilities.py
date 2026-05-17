@@ -99,6 +99,34 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
             "runtime" in runtime_description.lower() or "上下文" in runtime_description
         )
 
+
+    def test_memory_tool_schema_marks_scope_and_type_required_for_model_payloads(self) -> None:
+        declarations = get_capability_declarations()
+
+        schema = get_parameters_schema(declarations["memory"])
+
+        self.assertEqual(schema["required"], ["action"])
+        self.assertIn("scope", schema["properties"])
+        self.assertIn("type", schema["properties"])
+        append_replace_requirements = [
+            item.get("then", {}).get("required", [])
+            for item in schema.get("allOf", [])
+            if item.get("if", {}).get("properties", {}).get("action", {}).get("enum") == ["append", "replace"]
+        ]
+        self.assertEqual(
+            append_replace_requirements,
+            [["intent", "source_excerpt", "scope", "type", "section", "content"]],
+        )
+        delete_requirements = [
+            item.get("then", {}).get("required", [])
+            for item in schema.get("allOf", [])
+            if item.get("if", {}).get("properties", {}).get("action", {}).get("enum") == ["delete"]
+        ]
+        self.assertEqual(
+            delete_requirements,
+            [["intent", "source_excerpt", "scope", "section"]],
+        )
+
     def test_runtime_capability_description_requires_tool_for_natural_language_context_queries(self) -> None:
         declarations = get_capability_declarations()
 

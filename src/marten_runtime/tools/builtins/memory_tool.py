@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from marten_runtime.agents.ids import canonicalize_runtime_agent_id
 from marten_runtime.memory.intent import (
     MEMORY_SOURCE_EXCERPT_FIELD,
     has_explicit_memory_delete_intent,
     has_explicit_memory_write_intent,
 )
 from marten_runtime.memory.service import ThinMemoryService
+
+
+class MemoryWriteSchemaError(ValueError):
+    def __init__(self, message: str, *, error_code: str) -> None:
+        super().__init__(message)
+        self.error_code = error_code
 
 
 def run_memory_tool(
@@ -84,12 +91,22 @@ def _normalize_scope_payload(
     *,
     tool_context: dict | None,
 ) -> dict:
-    scope = str(payload.get("scope") or "global").strip().lower()
-    memory_type = str(payload.get("type") or _type_from_section(str(payload.get("section") or ""))).strip().lower()
+    scope = str(payload.get("scope") or "").strip().lower()
+    if not scope:
+        raise MemoryWriteSchemaError(
+            "scope is required for memory writes",
+            error_code="MEMORY_WRITE_SCOPE_REQUIRED",
+        )
+    memory_type = str(payload.get("type") or "").strip().lower()
+    if not memory_type:
+        raise MemoryWriteSchemaError(
+            "type is required for memory writes",
+            error_code="MEMORY_WRITE_TYPE_REQUIRED",
+        )
     agent_id = str(payload.get("agent_id") or "").strip()
     workspace_id = str(payload.get("workspace_id") or "").strip()
     if scope == "agent":
-        agent_id = agent_id or str((tool_context or {}).get("agent_id") or "").strip()
+        agent_id = _canonical_agent_id(agent_id or (tool_context or {}).get("agent_id"))
         if not agent_id:
             raise ValueError("agent_id is required for agent memory")
     if scope == "workspace" and not workspace_id:
@@ -110,27 +127,21 @@ def _normalize_delete_payload(
     *,
     tool_context: dict | None,
 ) -> dict:
-    scope = str(payload.get("scope") or "").strip().lower() or None
+    scope = str(payload.get("scope") or "").strip().lower()
+    if not scope:
+        raise MemoryWriteSchemaError(
+            "scope is required for memory deletes",
+            error_code="MEMORY_DELETE_SCOPE_REQUIRED",
+        )
     agent_id = str(payload.get("agent_id") or "").strip() or None
     workspace_id = str(payload.get("workspace_id") or "").strip() or None
     if scope == "agent":
-        agent_id = agent_id or str((tool_context or {}).get("agent_id") or "").strip() or None
+        agent_id = _canonical_agent_id(agent_id or (tool_context or {}).get("agent_id"))
         if not agent_id:
             raise ValueError("agent_id is required for agent memory")
     if scope == "workspace" and not workspace_id:
         raise ValueError("workspace_id is required for workspace memory")
     return {"scope": scope, "agent_id": agent_id, "workspace_id": workspace_id}
-
-
-def _type_from_section(section: str) -> str:
-    value = " ".join(str(section or "").split()).strip().lower()
-    if value in {"preferences", "preference"}:
-        return "preference"
-    if value in {"constraints", "constraint"}:
-        return "constraint"
-    if value in {"workflow_hints", "workflow hints", "workflow_hint"}:
-        return "workflow_hint"
-    return "fact"
 
 
 def _require_explicit_memory_intent(
@@ -169,3 +180,7 @@ def _require_memory_source_excerpt(
 
 def _normalize_memory_source_text(value: object) -> str:
     return " ".join(str(value or "").split()).strip().casefold()
+
+
+def _canonical_agent_id(value: object) -> str | None:
+    return canonicalize_runtime_agent_id(str(value or "").strip(), default=None)
