@@ -1,0 +1,102 @@
+case_id = "integrated_subagent_mcp_evidence_boundary_cn"
+suite_id = "challenge_integrated"
+family = "challenge"
+grader_id = "challenge"
+enabled = true
+required = true
+description = "Delegate MCP repo evidence work and avoid unsupported child-result claims"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["challenge", "integrated", "subagent", "mcp", "hard"]
+
+gate_components = ["tool_path_quality", "state_continuity"]
+
+[[turns]]
+role = "user"
+content = "派一个可用 MCP 的子代理读取 tiezhuli001/marten-runtime README.md。子代理完成前，父链路只说明受理状态；完成后才能综合 README 证据。"
+
+[[turns]]
+role = "user"
+content = "现在只基于子代理状态回答：完成了吗？有完成结果就给证据，没有完成就说明仍在进行。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+task_success = 35
+reasoning_quality = 20
+tool_path_quality = 20
+state_continuity = 15
+efficiency = 10
+
+[grader_case.task_success]
+contains_any = ["子代理", "已受理", "完成", "进行", "README"]
+forbid_all = ["工具执行失败", "请重试"]
+
+[[grader_case.task_success.rubric_items]]
+id = "honest_child_status"
+points = 4
+contains_any = ["已受理", "进行", "完成", "子代理"]
+
+[[grader_case.task_success.rubric_items]]
+id = "evidence_only_when_available"
+points = 4
+forbid_all = ["工具执行失败", "请重试"]
+
+[grader_case.reasoning_quality]
+contains_any = ["子代理", "状态", "证据"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "status_boundary"
+points = 4
+contains_any = ["状态", "完成", "进行"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "no_unsupported_claim"
+points = 3
+forbid_all = ["工具执行失败", "请重试"]
+
+[grader_case.tool_path_quality]
+required_tools = ["spawn_subagent"]
+min_tool_calls = 1
+max_tool_calls = 4
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "spawns_child"
+points = 4
+required_tools = ["spawn_subagent"]
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "no_parent_mcp_substitution"
+points = 2
+forbidden_tools = ["mcp"]
+
+[grader_case.state_continuity]
+required_subagent_labels = ["readme-mcp-evidence"]
+min_subagent_tasks = 1
+max_subagent_tasks = 1
+require_subagent_completion = false
+required_child_tools = ["mcp"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "child_task_recorded"
+points = 3
+required_subagent_labels = ["readme-mcp-evidence"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "child_mcp_observed"
+points = 5
+required_child_tools = ["mcp"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "single_child"
+points = 2
+min_subagent_tasks = 1
+max_subagent_tasks = 1
+
+[grader_case.efficiency]
+max_llm_requests = 10
+max_tool_calls = 4
+max_repair_attempts = 2

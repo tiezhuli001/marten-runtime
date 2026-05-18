@@ -1,0 +1,12 @@
+suite_id = "challenge_mcp"
+grader_id = "challenge"
+description = "Challenge eval for real MCP multi-step quality"
+default_mode = "live"
+scripted_supported = false
+required_dependencies = ["provider", "mcp"]
+baseline_policy = "latest_passed_auto"
+case_files = [
+  "evals/cases/challenge_mcp/mcp_multi_source_repo_evidence_cn.toml",
+  "evals/cases/challenge_mcp/mcp_empty_result_recovery_cn.toml",
+  "evals/cases/challenge_mcp/mcp_tool_result_attribution_cn.toml",
+]

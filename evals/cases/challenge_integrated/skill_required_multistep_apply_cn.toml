@@ -1,0 +1,86 @@
+case_id = "skill_required_multistep_apply_cn"
+suite_id = "challenge_integrated"
+family = "challenge"
+grader_id = "challenge"
+enabled = true
+required = true
+description = "Load requested long-run-execution skill and apply chunk verification discipline"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+channel_id = "eval"
+tags = ["challenge", "integrated", "skill", "positive", "hard"]
+
+gate_components = ["task_success", "tool_path_quality"]
+
+[[turns]]
+role = "user"
+content = "使用 long-run-execution skill，说明 challenge eval 执行时每个 chunk 后要验证什么，并给出执行到完成的检查点。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+task_success = 35
+reasoning_quality = 20
+tool_path_quality = 20
+state_continuity = 15
+efficiency = 10
+
+[grader_case.task_success]
+contains_all = ["chunk", "验证"]
+contains_any = ["测试", "文档", "eval", "完成"]
+
+[[grader_case.task_success.rubric_items]]
+id = "chunk_verification"
+points = 4
+contains_all = ["chunk", "验证"]
+
+[[grader_case.task_success.rubric_items]]
+id = "test_doc_drift"
+points = 4
+contains_any = ["测试", "文档", "偏移", "drift"]
+
+[[grader_case.task_success.rubric_items]]
+id = "completion_checkpoint"
+points = 3
+contains_any = ["完成", "检查点", "最终"]
+
+[grader_case.reasoning_quality]
+contains_any = ["执行", "完成", "结果"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "uses_skill_process"
+points = 4
+contains_any = ["source of truth", "验证", "STATUS", "执行"]
+
+[grader_case.tool_path_quality]
+required_tools = ["skill"]
+required_skill_ids = ["long-run-execution"]
+min_tool_calls = 1
+max_tool_calls = 3
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "loads_skill"
+points = 5
+required_tools = ["skill"]
+required_skill_ids = ["long-run-execution"]
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "bounded_skill_load"
+points = 2
+max_tool_calls = 3
+
+[grader_case.state_continuity]
+required_skill_ids = ["long-run-execution"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "skill_id_recorded"
+points = 4
+required_skill_ids = ["long-run-execution"]
+
+[grader_case.efficiency]
+max_llm_requests = 5
+max_tool_calls = 3
+max_repair_attempts = 1

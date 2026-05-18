@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from marten_runtime.evals.models import EvalCaseResult, EvalRunSummary
@@ -7,6 +8,47 @@ from marten_runtime.evals.store import SQLiteEvalStore
 
 
 class EvalStoreTests(unittest.TestCase):
+
+    def _summary(self, eval_run_id: str, *, suite_id: str = "main_chain_core") -> EvalRunSummary:
+        return EvalRunSummary(
+            eval_run_id=eval_run_id,
+            suite_id=suite_id,
+            git_branch="feature/eval",
+            git_sha="deadbeef",
+            git_dirty=False,
+            eval_mode="scripted",
+            agent_id="main",
+            profile_name="openai_gpt_5_4",
+            provider_ref="openai",
+            model_name="gpt-5.4",
+            config_fingerprint="cfg123",
+            suite_fingerprint="suite123",
+            total_score=100.0,
+            pass_rate=1.0,
+            status="passed",
+            artifact_root=f"reports/evals/{eval_run_id}",
+        )
+
+    def _case(self, eval_run_id: str, *, score: float = 100.0) -> EvalCaseResult:
+        return EvalCaseResult(
+            eval_run_id=eval_run_id,
+            case_id="direct_answer_cn",
+            family="direct_answer",
+            status="passed" if score >= 100.0 else "failed",
+            total_score=score,
+            outcome_score=score,
+            tool_path_score=0.0,
+            efficiency_score=0.0,
+            context_score=0.0,
+            llm_request_count=1,
+            tool_calls_count=0,
+            duration_ms=10,
+            run_id=f"run_{eval_run_id}",
+            trace_id=f"trace_{eval_run_id}",
+            final_text="你好",
+            diagnostics_json={"provider_ref": "openai"},
+            score_breakdown_json={"outcome": {"matched": score >= 100.0}},
+        )
     def test_store_initializes_schema_and_records_run_and_case_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SQLiteEvalStore(Path(tmpdir) / "evals.sqlite3")
@@ -189,6 +231,42 @@ class EvalStoreTests(unittest.TestCase):
             )
 
             self.assertEqual([item.eval_run_id for item in recent], ["eval_new", "eval_old"])
+
+
+    def test_store_creates_incrementing_eval_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = SQLiteEvalStore(Path(tmpdir) / "evals.sqlite3")
+            first = self._summary("eval_1")
+            second = self._summary("eval_2", suite_id="challenge_memory")
+            store.record_run_start(first)
+            store.record_run_start(second)
+
+            version = store.create_eval_version(
+                eval_run_ids=["eval_1", "eval_2"],
+                created_at=datetime(2026, 5, 18, tzinfo=timezone.utc),
+            )
+            next_version = store.create_eval_version(
+                eval_run_ids=["eval_1"],
+                created_at=datetime(2026, 5, 18, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(version["version_id"], "v2026.05.18-1")
+            self.assertEqual(next_version["version_id"], "v2026.05.18-2")
+            self.assertEqual(store.latest_eval_version()["version_id"], "v2026.05.18-2")
+            runs = store.list_eval_version_runs("v2026.05.18-1")
+            self.assertEqual({item["role"] for item in runs}, {"gate", "challenge"})
+
+    def test_store_rejects_duplicate_suite_when_creating_eval_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = SQLiteEvalStore(Path(tmpdir) / "evals.sqlite3")
+            first = self._summary("eval_1", suite_id="challenge_memory")
+            second = self._summary("eval_2", suite_id="challenge_memory")
+            store.record_run_start(first)
+            store.record_run_start(second)
+
+            with self.assertRaisesRegex(ValueError, "duplicate suite_id"):
+                store.create_eval_version(eval_run_ids=["eval_1", "eval_2"])
+
 
 
 if __name__ == "__main__":

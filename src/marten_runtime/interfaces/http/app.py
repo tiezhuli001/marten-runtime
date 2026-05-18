@@ -7,7 +7,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import RedirectResponse, PlainTextResponse
 
 from marten_runtime.gateway.ingress import ingest_message
 from marten_runtime.interfaces.http.bootstrap import (
@@ -125,6 +125,14 @@ def create_app(
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/")
+    def index_redirect():  # noqa: ANN201
+        return RedirectResponse(url="/evals", status_code=302)
+
+    @app.get("/index.html")
+    def index_html_redirect():  # noqa: ANN201
+        return RedirectResponse(url="/evals", status_code=302)
 
     @app.get("/readyz")
     def readyz() -> dict[str, str]:

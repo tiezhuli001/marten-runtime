@@ -1,0 +1,12 @@
+suite_id = "challenge_subagent"
+grader_id = "challenge"
+description = "Challenge eval for subagent delegation and synthesis quality"
+default_mode = "scripted"
+scripted_supported = true
+required_dependencies = ["subagent"]
+baseline_policy = "latest_passed_auto"
+case_files = [
+  "evals/cases/challenge_subagent/subagent_delegation_boundary_cn.toml",
+  "evals/cases/challenge_subagent/subagent_no_duplicate_dispatch_cn.toml",
+  "evals/cases/challenge_subagent/subagent_incomplete_child_handling_cn.toml",
+]

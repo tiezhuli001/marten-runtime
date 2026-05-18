@@ -1,0 +1,13 @@
+suite_id = "challenge_memory"
+grader_id = "challenge"
+description = "Challenge eval for scoped memory quality and regression sensitivity"
+default_mode = "scripted"
+scripted_supported = true
+required_dependencies = []
+baseline_policy = "latest_passed_auto"
+case_files = [
+  "evals/cases/challenge_memory/memory_interference_recall_cn.toml",
+  "evals/cases/challenge_memory/memory_scope_isolation_cn.toml",
+  "evals/cases/challenge_memory/memory_overwrite_conflict_cn.toml",
+  "evals/cases/challenge_memory/memory_should_not_write_cn.toml",
+]

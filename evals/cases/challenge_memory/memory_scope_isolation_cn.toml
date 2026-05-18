@@ -1,0 +1,110 @@
+case_id = "memory_scope_isolation_cn"
+suite_id = "challenge_memory"
+family = "challenge"
+grader_id = "challenge"
+enabled = true
+required = true
+description = "Load only visible global, current agent, and current workspace memory"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["challenge", "memory", "scope", "hard"]
+
+gate_components = ["task_success", "state_continuity"]
+
+[[turns]]
+role = "user"
+content = "按当前可见记忆回答：我的输出格式偏好、当前 agent 约束、当前 workspace 提醒分别是什么？"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "challenge_hard_scope_conflict_cn.md"
+automation_fixture = "none"
+
+[component_weights]
+task_success = 35
+reasoning_quality = 20
+tool_path_quality = 20
+state_continuity = 15
+efficiency = 10
+
+[grader_case.task_success]
+contains_all = ["三段式", "摘要", "风险", "下一步", "main", "pytest"]
+forbid_all = ["表格优先", "英文", "other-agent", "other-workspace"]
+
+[[grader_case.task_success.rubric_items]]
+id = "global_preference_visible"
+points = 3
+contains_all = ["三段式", "摘要", "风险", "下一步"]
+
+[[grader_case.task_success.rubric_items]]
+id = "agent_constraint_visible"
+points = 3
+contains_any = ["main", "当前 agent"]
+
+[[grader_case.task_success.rubric_items]]
+id = "workspace_hint_visible"
+points = 3
+contains_any = ["pytest", "当前 workspace"]
+
+[[grader_case.task_success.rubric_items]]
+id = "hidden_scope_absent"
+points = 3
+forbid_all = ["表格优先", "英文", "other-agent", "other-workspace"]
+
+[grader_case.reasoning_quality]
+contains_any = ["当前可见", "记忆", "scope"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "separates_scopes"
+points = 2
+contains_any = ["global", "agent", "workspace", "当前"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "no_hidden_scope_claim"
+points = 2
+forbid_all = ["其它 agent", "其它 workspace"]
+
+[grader_case.tool_path_quality]
+required_tools = ["memory"]
+min_tool_calls = 1
+max_tool_calls = 2
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "memory_loaded"
+points = 3
+required_tools = ["memory"]
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "no_extra_tools"
+points = 2
+max_tool_calls = 2
+forbidden_tools = ["mcp", "spawn_subagent"]
+
+[grader_case.state_continuity]
+required_memory_sections = ["preferences", "constraints", "workflow_hints"]
+forbidden_memory_tokens = ["表格优先", "英文", "other-agent", "other-workspace"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "preference_loaded"
+points = 2
+required_memory_sections = ["preferences"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "constraint_loaded"
+points = 2
+required_memory_sections = ["constraints"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "workflow_hint_loaded"
+points = 2
+required_memory_sections = ["workflow_hints"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "invisible_scopes_absent"
+points = 4
+forbidden_memory_tokens = ["表格优先", "英文", "other-agent", "other-workspace"]
+
+[grader_case.efficiency]
+max_llm_requests = 4
+max_tool_calls = 2
+max_repair_attempts = 1

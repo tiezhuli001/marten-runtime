@@ -1,0 +1,94 @@
+case_id = "mcp_tool_result_attribution_cn"
+suite_id = "challenge_mcp"
+family = "challenge"
+grader_id = "challenge"
+enabled = true
+required = true
+description = "Tie repository assessment claims to MCP result fields and paths"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["challenge", "mcp", "github", "attribution", "hard"]
+
+gate_components = ["task_success", "tool_path_quality"]
+
+[[turns]]
+role = "user"
+content = "调用 GitHub MCP 读取 tiezhuli001/marten-runtime 的 README.md 和仓库元数据。请输出三条评估，每条都写明来源字段或路径，例如 README.md、default_branch、最近提交字段。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+task_success = 35
+reasoning_quality = 20
+tool_path_quality = 30
+state_continuity = 5
+efficiency = 10
+
+[grader_case.task_success]
+anchor_groups = [["README.md", "README"], ["default_branch", "最近提交", "commit", "字段"]]
+forbid_all = ["工具执行失败", "请重试", "无法读取"]
+
+[[grader_case.task_success.rubric_items]]
+id = "three_assessments"
+points = 3
+contains_any = ["1.", "2.", "3.", "三条"]
+
+[[grader_case.task_success.rubric_items]]
+id = "path_attribution"
+points = 4
+contains_any = ["README.md", "路径"]
+
+[[grader_case.task_success.rubric_items]]
+id = "field_attribution"
+points = 5
+contains_any = ["default_branch", "字段", "commit", "最近提交"]
+
+[[grader_case.task_success.rubric_items]]
+id = "no_generic_failure"
+points = 2
+forbid_all = ["工具执行失败", "请重试", "无法读取"]
+
+[grader_case.reasoning_quality]
+contains_any = ["来源", "字段", "路径", "证据"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "claim_source_pairs"
+points = 5
+contains_any = ["来源", "字段", "路径"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "no_unattributed_generalities"
+points = 2
+forbid_all = ["大概", "可能"]
+
+[grader_case.tool_path_quality]
+required_tools = ["mcp"]
+min_tool_calls = 2
+max_tool_calls = 8
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "called_mcp"
+points = 3
+required_tools = ["mcp"]
+min_tool_calls = 1
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "multi_source_mcp"
+points = 8
+required_tools = ["mcp"]
+min_tool_calls = 2
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "bounded_calls"
+points = 2
+max_tool_calls = 8
+
+[grader_case.state_continuity]
+
+[grader_case.efficiency]
+max_llm_requests = 10
+max_tool_calls = 8
+max_repair_attempts = 2

@@ -154,14 +154,35 @@ def _seed_long_history_session(  # noqa: ANN001
         )
 
 
-def _seed_memory(runtime, user_id: str, section: str, content: str, *, type: str) -> None:  # noqa: ANN001
-    runtime.memory_service.replace(user_id, section=section, content=content, type=type)
+def _seed_memory(
+    runtime,
+    user_id: str,
+    section: str,
+    content: str,
+    *,
+    type: str,
+    scope: str = "global",
+    agent_id: str | None = None,
+    workspace_id: str | None = None,
+) -> None:  # noqa: ANN001
+    runtime.memory_service.replace(
+        user_id,
+        section=section,
+        content=content,
+        type=type,
+        scope=scope,
+        agent_id=agent_id,
+        workspace_id=workspace_id,
+    )
 
 
 def _seed_memory_fixture(runtime, case: EvalCaseSpec, user_id: str) -> None:  # noqa: ANN001
     fixture_path = case.resolved_fixtures.get("memory_fixture")
     if not fixture_path:
         return
+    current_scope = "global"
+    current_agent_id: str | None = None
+    current_workspace_id: str | None = None
     current_section = "preferences"
     current_type = "preference"
     current_lines: list[str] = []
@@ -171,23 +192,59 @@ def _seed_memory_fixture(runtime, case: EvalCaseSpec, user_id: str) -> None:  # 
             continue
         if line.startswith("## "):
             if current_lines:
-                _seed_memory(runtime, user_id, current_section, "\n".join(current_lines), type=current_type)
-            current_type, current_section = _memory_type_and_section_from_heading(line[3:].strip())
+                _seed_memory(
+                    runtime,
+                    user_id,
+                    current_section,
+                    "\n".join(current_lines),
+                    type=current_type,
+                    scope=current_scope,
+                    agent_id=current_agent_id,
+                    workspace_id=current_workspace_id,
+                )
+            current_scope, current_agent_id, current_workspace_id, current_type, current_section = _memory_heading_fields(line[3:].strip())
             current_lines = []
             continue
         if line.startswith("- "):
             current_lines.append(line[2:].strip())
     if current_lines:
-        _seed_memory(runtime, user_id, current_section, "\n".join(current_lines), type=current_type)
+        _seed_memory(
+            runtime,
+            user_id,
+            current_section,
+            "\n".join(current_lines),
+            type=current_type,
+            scope=current_scope,
+            agent_id=current_agent_id,
+            workspace_id=current_workspace_id,
+        )
 
 
-def _memory_type_and_section_from_heading(heading: str) -> tuple[str, str]:
+def _memory_heading_fields(heading: str) -> tuple[str, str | None, str | None, str, str]:
     parts = [part.strip() for part in str(heading or "").split("/")]
-    if len(parts) >= 3 and _normalize_memory_type(parts[1]):
-        section = "/".join(parts[2:]).strip() or "preferences"
-        return _normalize_memory_type(parts[1]) or "fact", section
-    section = (parts[-1] if parts else "").strip() or "preferences"
-    return _memory_type_from_section(section), section
+    type_index = next(
+        (index for index, part in enumerate(parts[1:], start=1) if _normalize_memory_type(part)),
+        -1,
+    )
+    if type_index >= 1:
+        scope_label = "/".join(parts[:type_index]).strip() or "global"
+        memory_type = _normalize_memory_type(parts[type_index])
+        section = "/".join(parts[type_index + 1:]).strip() or "preferences"
+    else:
+        scope_label = parts[0] if parts else "global"
+        section = (parts[-1] if parts else "").strip() or "preferences"
+        memory_type = _memory_type_from_section(section)
+    scope, agent_id, workspace_id = _memory_scope_from_label(scope_label)
+    return scope, agent_id, workspace_id, memory_type or _memory_type_from_section(section), section
+
+
+def _memory_scope_from_label(label: str) -> tuple[str, str | None, str | None]:
+    normalized = str(label or "").strip()
+    if normalized.startswith("agent:"):
+        return "agent", normalized.split(":", 1)[1].strip() or None, None
+    if normalized.startswith("workspace:"):
+        return "workspace", None, normalized.split(":", 1)[1].strip() or None
+    return "global", None, None
 
 
 def _memory_type_from_section(section: str) -> str:

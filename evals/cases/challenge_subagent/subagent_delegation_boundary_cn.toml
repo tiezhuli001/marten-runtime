@@ -1,0 +1,127 @@
+case_id = "subagent_delegation_boundary_cn"
+suite_id = "challenge_subagent"
+family = "challenge"
+grader_id = "challenge"
+enabled = true
+required = true
+description = "Delegate exactly one bounded investigation and integrate child result"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["challenge", "subagent", "boundary", "hard"]
+
+gate_components = ["task_success", "tool_path_quality"]
+
+[[turns]]
+role = "user"
+content = "请派一个子代理查看 README，判断 marten-runtime 的主链路和评测入口。子代理任务必须限定清楚，完成后父链路整合成两点结论。"
+
+[[turns]]
+role = "user"
+content = "子代理完成后，把结果整合成最终答复。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+task_success = 35
+reasoning_quality = 20
+tool_path_quality = 20
+state_continuity = 15
+efficiency = 10
+
+[grader_case.task_success]
+contains_all = ["主链路", "评测入口"]
+contains_any = ["README", "runtime", "eval", "scripts/run_eval.py"]
+forbid_all = ["工具执行失败", "请重试"]
+
+[[grader_case.task_success.rubric_items]]
+id = "main_chain_synthesized"
+points = 3
+contains_any = ["主链路", "channel"]
+
+[[grader_case.task_success.rubric_items]]
+id = "eval_entry_synthesized"
+points = 3
+contains_any = ["评测入口", "scripts/run_eval.py", "eval"]
+
+[[grader_case.task_success.rubric_items]]
+id = "integrates_child"
+points = 2
+contains_any = ["子代理", "整合", "结果"]
+
+[[grader_case.task_success.rubric_items]]
+id = "no_failure_text"
+points = 2
+forbid_all = ["工具执行失败", "请重试"]
+
+[grader_case.reasoning_quality]
+contains_any = ["子代理", "结果", "整合"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "bounded_delegation_explained"
+points = 3
+contains_any = ["限定", "README", "子代理"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "two_point_synthesis"
+points = 2
+contains_all = ["主链路", "评测入口"]
+
+[grader_case.tool_path_quality]
+required_tools = ["spawn_subagent"]
+min_tool_calls = 1
+max_tool_calls = 1
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "spawn_once"
+points = 4
+required_tools = ["spawn_subagent"]
+min_tool_calls = 1
+max_tool_calls = 1
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "no_unneeded_tools"
+points = 2
+forbidden_tools = ["memory", "skill"]
+max_tool_calls = 1
+
+[grader_case.state_continuity]
+required_subagent_labels = ["readme-investigation"]
+required_subagent_prompt_tokens = ["README", "主链路", "评测入口"]
+required_child_result_tokens_in_final = ["runtime 主链", "eval 评测"]
+min_subagent_tasks = 1
+max_subagent_tasks = 1
+require_subagent_completion = true
+
+[[grader_case.state_continuity.rubric_items]]
+id = "label_precise"
+points = 2
+required_subagent_labels = ["readme-investigation"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "single_child"
+points = 2
+min_subagent_tasks = 1
+max_subagent_tasks = 1
+
+[[grader_case.state_continuity.rubric_items]]
+id = "child_completed"
+points = 4
+require_subagent_completion = true
+
+[[grader_case.state_continuity.rubric_items]]
+id = "child_task_specific"
+points = 3
+required_subagent_prompt_tokens = ["README", "主链路", "评测入口"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "parent_uses_child_evidence"
+points = 3
+required_child_result_tokens_in_final = ["runtime 主链", "eval 评测"]
+
+[grader_case.efficiency]
+max_llm_requests = 8
+max_tool_calls = 1
+max_repair_attempts = 1

@@ -98,6 +98,22 @@ class EvalGraderRegistryTests(unittest.TestCase):
 
         self.assertEqual(resolve_case_grader(case).__name__, "grade_subagent_task_progress_case_result")
 
+    def test_registry_resolves_challenge_grader(self) -> None:
+        case = EvalCaseSpec(
+            case_id="challenge_sample",
+            suite_id="challenge_memory",
+            family="challenge",
+            grader_id="challenge",
+            description="sample",
+            agent_id="main",
+            profile_name="openai_gpt_5_4",
+            turns=[EvalTurnSpec(role="user", content="test")],
+            component_weights={"task_success": 100},
+            gate_components=["task_success"],
+        )
+
+        self.assertEqual(resolve_case_grader(case).__name__, "grade_challenge_case_result")
+
 
 if __name__ == "__main__":
     unittest.main()

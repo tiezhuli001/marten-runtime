@@ -1,0 +1,94 @@
+case_id = "memory_should_not_write_cn"
+suite_id = "challenge_memory"
+family = "challenge"
+grader_id = "challenge"
+enabled = true
+required = true
+description = "Temporary instruction stays ephemeral across follow-up recall attempt"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["challenge", "memory", "negative", "hard"]
+
+gate_components = ["task_success", "tool_path_quality"]
+
+[[turns]]
+role = "user"
+content = "这次回答临时用一句话说明 SQLite 是什么，不要记住这个格式。"
+
+[[turns]]
+role = "user"
+content = "刚才那个一句话格式是我的长期偏好吗？"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+task_success = 35
+reasoning_quality = 20
+tool_path_quality = 20
+state_continuity = 15
+efficiency = 10
+
+[grader_case.task_success]
+contains_all = ["SQLite"]
+contains_any = ["临时", "不是长期偏好", "没有记住", "不属于长期偏好"]
+forbid_all = ["已记住", "长期偏好是一句话"]
+
+[[grader_case.task_success.rubric_items]]
+id = "answers_sqlite"
+points = 2
+contains_all = ["SQLite"]
+
+[[grader_case.task_success.rubric_items]]
+id = "declares_ephemeral"
+points = 4
+contains_any = ["临时", "不是长期偏好", "没有记住", "不属于长期偏好"]
+
+[[grader_case.task_success.rubric_items]]
+id = "no_false_persistence"
+points = 4
+forbid_all = ["已记住", "长期偏好是一句话"]
+
+[grader_case.reasoning_quality]
+contains_any = ["临时", "不要记住", "长期"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "respects_do_not_remember"
+points = 4
+contains_any = ["不要记住", "临时", "长期"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "no_memory_claim"
+points = 2
+forbid_all = ["我已保存", "已记住"]
+
+[grader_case.tool_path_quality]
+forbidden_tools = ["memory"]
+max_tool_calls = 0
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "no_memory_write"
+points = 5
+forbidden_tools = ["memory"]
+max_tool_calls = 0
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "no_unneeded_tools"
+points = 3
+forbidden_tools = ["mcp", "spawn_subagent", "skill"]
+max_tool_calls = 0
+
+[grader_case.state_continuity]
+forbidden_memory_tokens = ["一句话说明 SQLite", "长期偏好是一句话"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "ephemeral_absent_from_memory"
+points = 5
+forbidden_memory_tokens = ["一句话说明 SQLite", "长期偏好是一句话"]
+
+[grader_case.efficiency]
+max_llm_requests = 4
+max_tool_calls = 0
+max_repair_attempts = 1

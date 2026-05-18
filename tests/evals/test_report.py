@@ -98,6 +98,9 @@ class EvalReportTests(unittest.TestCase):
                 "baseline_source": "latest_passed",
                 "total_score_delta": 0.0,
                 "pass_rate_delta": 0.0,
+                "token_total_delta": -500.0,
+                "tool_calls_delta": -1.0,
+                "llm_requests_delta": -1.0,
                 "component_summary": [
                     {
                         "key": "capture",
@@ -240,10 +243,12 @@ class EvalReportTests(unittest.TestCase):
             summary_json = artifact_root / "summary.json"
             summary_md = artifact_root / "summary.md"
             summary_html = artifact_root / "summary.html"
+            index_html = report_root / "index.html"
             case_json = artifact_root / "cases" / "direct_answer_cn.json"
             self.assertTrue(summary_json.exists())
             self.assertTrue(summary_md.exists())
             self.assertTrue(summary_html.exists())
+            self.assertTrue(index_html.exists())
             self.assertTrue(case_json.exists())
             body = json.loads(summary_json.read_text(encoding="utf-8"))
             self.assertEqual(body["eval_run_id"], "eval_1")
@@ -261,6 +266,8 @@ class EvalReportTests(unittest.TestCase):
             markdown = summary_md.read_text(encoding="utf-8")
             self.assertLess(markdown.index("blocked_reason"), markdown.index("## Provider 评估"))
             self.assertIn("## Baseline Compare", markdown)
+            self.assertIn("/evals/reports/eval_base", markdown)
+            self.assertNotIn("../eval_base/summary.html", markdown)
             self.assertIn("## Stability", markdown)
             self.assertIn("## Provider 评估", markdown)
             self.assertIn("eval_blocked", markdown)
@@ -269,16 +276,17 @@ class EvalReportTests(unittest.TestCase):
             self.assertIn("trace_1234", markdown)
             html = summary_html.read_text(encoding="utf-8")
             self.assertIn("<title>评测报告：eval_1</title>", html)
-            self.assertIn("latest_passed", html)
+            self.assertIn("最近一次通过的同套件运行", html)
             self.assertIn("cases/direct_answer_cn.json", html)
             self.assertIn("用例详情", html)
             self.assertIn("trace_1234", html)
-            self.assertIn("基线对比", html)
+            self.assertIn("本次结果与基线", html)
+            self.assertIn("运行元信息", html)
             self.assertIn("当前分数", html)
             self.assertIn("基线分数", html)
             self.assertIn("分数变化", html)
             self.assertIn("变化类型", html)
-            self.assertIn("improvement", html)
+            self.assertIn("提升", html)
             self.assertIn("仅看变化", html)
             self.assertIn("组件汇总", html)
             self.assertIn("稳定性观察", html)
@@ -293,6 +301,186 @@ class EvalReportTests(unittest.TestCase):
             self.assertIn("锚点强度", html)
             self.assertIn("记忆写入", html)
             self.assertIn("结果", html)
+            index = index_html.read_text(encoding="utf-8")
+            self.assertIn("Eval 总览", index)
+            self.assertIn("Gate Eval", index)
+            self.assertIn("scripted 优先", index)
+            self.assertIn("主链黄金链路", index)
+            self.assertIn("查看详情", index)
+            self.assertIn("/evals/reports/eval_1", index)
+            self.assertNotIn("eval_1/summary.html", index)
+
+
+    def test_write_eval_report_renders_challenge_delta_for_challenge_suites(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report_root = Path(tmpdir)
+            summary = self._summary().model_copy(update={"suite_id": "challenge_memory"})
+            compare_result = {
+                "baseline_eval_run_id": "eval_base",
+                "baseline_source": "latest_passed",
+                "total_score_delta": 5.0,
+                "pass_rate_delta": 0.0,
+                "token_total_delta": -500.0,
+                "tool_calls_delta": -1.0,
+                "llm_requests_delta": -1.0,
+                "component_summary": [],
+                "regressions": [],
+                "improvements": [],
+                "cases": [],
+            }
+
+            artifact_root = write_eval_report(
+                summary,
+                [self._case()],
+                report_root=report_root,
+                compare_result=compare_result,
+            )
+
+            markdown = (artifact_root / "summary.md").read_text(encoding="utf-8")
+            html = (artifact_root / "summary.html").read_text(encoding="utf-8")
+            self.assertIn("## Challenge Delta", markdown)
+            self.assertIn("token_total_delta", markdown)
+            self.assertIn("tool_calls_delta", markdown)
+            self.assertIn("llm_requests_delta", markdown)
+            self.assertIn("Challenge Delta", html)
+            self.assertIn("-500.0", html)
+
+
+    def test_write_eval_report_renders_challenge_failed_components_and_rubrics_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report_root = Path(tmpdir)
+            summary = self._summary().model_copy(
+                update={
+                    "eval_run_id": "eval_challenge_memory_1",
+                    "suite_id": "challenge_memory",
+                    "total_score": 68.75,
+                    "pass_rate": 0.5,
+                    "status": "failed",
+                }
+            )
+            case = self._case().model_copy(
+                update={
+                    "eval_run_id": "eval_challenge_memory_1",
+                    "case_id": "memory_scope_isolation_cn",
+                    "family": "challenge",
+                    "status": "failed",
+                    "total_score": 50.0,
+                    "score_breakdown_json": {
+                        "case_meta": {"display_name": "记忆 scope 隔离", "description": "Load only visible memory"},
+                        "components": [
+                            {
+                                "key": "task_success",
+                                "label": "任务完成",
+                                "score": 0.0,
+                                "passed": False,
+                                "details": {
+                                    "rubric_items": [
+                                        {"id": "hidden_scope_absent", "passed": False, "earned": 0.0, "points": 3.0}
+                                    ]
+                                },
+                            },
+                            {
+                                "key": "tool_path_quality",
+                                "label": "工具路径质量",
+                                "score": 20.0,
+                                "passed": True,
+                                "details": {},
+                            },
+                        ]
+                    },
+                }
+            )
+            compare_result = {
+                "baseline_eval_run_id": "eval_base",
+                "baseline_source": "latest_passed",
+                "total_score_delta": -10.0,
+                "pass_rate_delta": -0.25,
+                "token_total_delta": 200.0,
+                "tool_calls_delta": 1.0,
+                "llm_requests_delta": 2.0,
+                "component_summary": [
+                    {
+                        "key": "task_success",
+                        "label": "任务完成",
+                        "current_score": 40.0,
+                        "baseline_score": 60.0,
+                        "delta": -20.0,
+                        "case_count": 1,
+                    }
+                ],
+                "regressions": [
+                    {
+                        "case_id": "memory_scope_isolation_cn",
+                        "total_score_delta": -10.0,
+                        "change_kind": "regression",
+                    }
+                ],
+                "improvements": [],
+                "cases": [
+                    {
+                        "case_id": "memory_scope_isolation_cn",
+                        "current_status": "failed",
+                        "baseline_status": "passed",
+                        "current_total_score": 50.0,
+                        "baseline_total_score": 60.0,
+                        "total_score_delta": -10.0,
+                        "change_kind": "regression",
+                        "components": [
+                            {
+                                "key": "task_success",
+                                "label": "任务完成",
+                                "current_score": 0.0,
+                                "baseline_score": 20.0,
+                                "delta": -20.0,
+                                "current_passed": False,
+                                "baseline_passed": True,
+                            }
+                        ],
+                    }
+                ],
+            }
+            stability_result = {
+                "sample_size": 2,
+                "window_size": 5,
+                "history_eval_run_ids": ["eval_challenge_memory_1", "eval_base"],
+                "total_score": {"mean": 73.75, "range": 10.0, "stddev": 5.0},
+                "pass_rate": {"mean": 0.75, "range": 0.5, "stddev": 0.25},
+                "token_total": {"mean": 1000, "range": 100, "stddev": 50},
+                "failover_rate": 0.0,
+                "cases": [],
+                "components": [],
+            }
+
+            artifact_root = write_eval_report(
+                summary,
+                [case],
+                report_root=report_root,
+                compare_result=compare_result,
+                stability_result=stability_result,
+            )
+
+            html = (artifact_root / "summary.html").read_text(encoding="utf-8")
+            focus_index = html.index("Challenge 重点视图")
+            detail_index = html.index("用例详情")
+            self.assertLess(focus_index, detail_index)
+            self.assertIn("待提升组件", html)
+            self.assertIn("memory_scope_isolation_cn", html)
+            self.assertIn("task_success", html)
+            self.assertIn("hidden_scope_absent", html)
+            self.assertIn("历史报告", html)
+            self.assertIn("/evals/reports/eval_base", html)
+            self.assertIn("记忆 scope 隔离", html)
+            self.assertIn("待提升", html)
+            self.assertIn("Case 分数对比", html)
+            self.assertIn("基线 ID", html)
+            self.assertIn("eval_base", html)
+            self.assertIn("组件分数对比", html)
+            self.assertIn("score-chart", html)
+            self.assertIn("score-card", html)
+            self.assertIn("当前 50", html)
+            self.assertIn("基线 60", html)
+            self.assertNotIn("bar-pair", html)
+            self.assertNotIn("Load only visible memory", html.split("评分原始 JSON")[0])
 
     def test_write_eval_report_rewrites_artifact_paths_to_actual_custom_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

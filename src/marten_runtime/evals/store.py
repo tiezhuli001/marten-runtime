@@ -71,6 +71,23 @@ class SQLiteEvalStore:
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (suite_id, baseline_name)
                 );
+                CREATE TABLE IF NOT EXISTS eval_versions (
+                    version_id TEXT PRIMARY KEY,
+                    label TEXT NOT NULL,
+                    git_sha TEXT,
+                    git_branch TEXT,
+                    note TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS eval_version_runs (
+                    version_id TEXT NOT NULL,
+                    suite_id TEXT NOT NULL,
+                    eval_run_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (version_id, suite_id, role),
+                    FOREIGN KEY(version_id) REFERENCES eval_versions(version_id)
+                );
                 """
             )
 
@@ -299,6 +316,128 @@ class SQLiteEvalStore:
                 (suite_id, baseline_name),
             ).fetchone()
         return str(row[0]) if row is not None else None
+
+    def create_eval_version(
+        self,
+        *,
+        eval_run_ids: list[str],
+        note: str | None = None,
+        created_at: datetime | None = None,
+    ) -> dict[str, object]:
+        if not eval_run_ids:
+            raise ValueError("eval_run_ids is required")
+        created = created_at or datetime.now(timezone.utc)
+        ordered_runs = [self.get_run(run_id) for run_id in eval_run_ids]
+        duplicate_suite_ids = sorted(
+            {run.suite_id for run in ordered_runs if sum(1 for item in ordered_runs if item.suite_id == run.suite_id) > 1}
+        )
+        if duplicate_suite_ids:
+            raise ValueError(f"duplicate suite_id in eval version: {', '.join(duplicate_suite_ids)}")
+        version_id = self._next_version_id(created)
+        git_sha = ordered_runs[0].git_sha if ordered_runs else None
+        git_branch = ordered_runs[0].git_branch if ordered_runs else None
+        timestamp = created.isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO eval_versions (version_id, label, git_sha, git_branch, note, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (version_id, version_id, git_sha, git_branch, note, timestamp),
+            )
+            for run in ordered_runs:
+                conn.execute(
+                    """
+                    INSERT INTO eval_version_runs (
+                        version_id, suite_id, eval_run_id, role, created_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        version_id,
+                        run.suite_id,
+                        run.eval_run_id,
+                        "challenge" if run.suite_id.startswith("challenge_") else "gate",
+                        timestamp,
+                    ),
+                )
+        return {
+            "version_id": version_id,
+            "label": version_id,
+            "git_sha": git_sha,
+            "git_branch": git_branch,
+            "created_at": timestamp,
+            "run_count": len(ordered_runs),
+        }
+
+    def list_eval_versions(self, *, limit: int = 20) -> list[dict[str, object]]:
+        capped_limit = max(1, min(int(limit), 200))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT v.version_id, v.label, v.git_sha, v.git_branch, v.note, v.created_at,
+                       COUNT(r.eval_run_id) AS run_count
+                FROM eval_versions v
+                LEFT JOIN eval_version_runs r ON r.version_id = v.version_id
+                GROUP BY v.version_id, v.label, v.git_sha, v.git_branch, v.note, v.created_at
+                ORDER BY v.created_at DESC, v.version_id DESC
+                LIMIT ?
+                """,
+                (capped_limit,),
+            ).fetchall()
+        return [
+            {
+                "version_id": str(row[0]),
+                "label": str(row[1]),
+                "git_sha": row[2],
+                "git_branch": row[3],
+                "note": row[4],
+                "created_at": str(row[5]),
+                "run_count": int(row[6] or 0),
+            }
+            for row in rows
+        ]
+
+    def latest_eval_version(self) -> dict[str, object] | None:
+        items = self.list_eval_versions(limit=1)
+        return items[0] if items else None
+
+    def list_eval_version_runs(self, version_id: str) -> list[dict[str, object]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT version_id, suite_id, eval_run_id, role, created_at
+                FROM eval_version_runs
+                WHERE version_id = ?
+                ORDER BY role ASC, suite_id ASC
+                """,
+                (version_id,),
+            ).fetchall()
+        return [
+            {
+                "version_id": str(row[0]),
+                "suite_id": str(row[1]),
+                "eval_run_id": str(row[2]),
+                "role": str(row[3]),
+                "created_at": str(row[4]),
+            }
+            for row in rows
+        ]
+
+    def _next_version_id(self, created_at: datetime) -> str:
+        prefix = f"v{created_at:%Y.%m.%d}-"
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT version_id FROM eval_versions WHERE version_id LIKE ?",
+                (f"{prefix}%",),
+            ).fetchall()
+        max_seq = 0
+        for row in rows:
+            value = str(row[0])
+            try:
+                max_seq = max(max_seq, int(value.removeprefix(prefix)))
+            except ValueError:
+                continue
+        return f"{prefix}{max_seq + 1}"
 
     def _row_to_run_summary(self, row: sqlite3.Row | tuple[object, ...]) -> EvalRunSummary:
         return EvalRunSummary(

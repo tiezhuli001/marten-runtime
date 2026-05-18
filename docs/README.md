@@ -64,17 +64,20 @@
 
 ## 评测运维入口
 
-主 HTTP 服务启动后，访问 `/evals` 查看当前评测链路状态、suite、历史 runs、分数变化、基线对比和报告入口。
+主 HTTP 服务启动后，访问 `/evals` 查看 Gate / Challenge 当前主评测、suite、历史 runs、版本、基线和动态报告。
 
 ![Eval 运维总览](./assets/eval-ops-home.png)
 
 | 入口 | 内容 |
 | --- | --- |
-| `/evals` | 评测总览、最近运行、套件、分数变化 |
+| `/evals` 或 `/index.html` | 评测总览、当前主评测、版本采纳、基线采纳 |
 | `/evals/suites` | HTML 套件清单；`Accept: application/json` 返回 JSON |
 | `/evals/runs` | HTML 历史运行；`Accept: application/json` 返回 JSON |
+| `/evals/versions/compare` | 已采纳版本之间的 suite 分数、状态和报告对比 |
 | `/evals/runs/{eval_run_id}/view` | 单次运行详情、对比结果、稳定性、用例明细 |
-| `/evals/reports/{eval_run_id}` | 完整 HTML 报告 |
+| `/evals/reports/{eval_run_id}` | 动态 HTML 报告；对比部分按当前已采纳基线重新计算 |
+
+基线采纳更新后，报告查看页会用新基线重算对比；原始评测分数、case 输出、工具链路和 provider 结果保持该次运行记录。
 
 CLI 入口：
 
@@ -86,39 +89,48 @@ PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
   --baseline latest_passed
 ```
 
-主要套件：
+主要 Gate 套件：
 
 - `main_chain_core`：主链黄金任务
-- `main_chain_mcp`：真实 MCP 工具链路，只用于 `live` mode
+- `main_chain_mcp`：真实 MCP 工具链路，正式效果使用 `live` mode
 - `main_chain_subagent`：主线程与子代理链路
 - `memory_long_horizon`：长期记忆收益
 - `subagent_task_progress`：子代理调度与非 MCP 任务推进
-- `subagent_external_mcp_completion`：子代理外部 MCP 完成链路，只用于 `live` mode
-
-`main_chain_mcp` 与 `subagent_external_mcp_completion` 的正式效果评估使用真实 provider、真实 MCP server 和真实 GitHub 返回：
-
-```bash
-PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
-  --suite main_chain_mcp \
-  --mode live \
-  --profile openai_gpt_5_4 \
-  --baseline latest_passed
-
-PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
-  --suite subagent_external_mcp_completion \
-  --mode live \
-  --profile openai_gpt_5_4 \
-  --baseline latest_passed
-```
+- `subagent_external_mcp_completion`：子代理外部 MCP 完成链路，正式效果使用 `live` mode
 
 产物位置：
 
-- SQLite 历史：`data/evals.sqlite3`
+- SQLite 历史和基线/版本记录：`data/evals.sqlite3`
 - 报告目录：`reports/evals/<eval_run_id>/`
-- 汇总报告：`summary.md`、`summary.json`、`summary.html`
+- 汇总产物：`summary.md`、`summary.json`、`summary.html`
 - 单 case 详情：`cases/<case_id>.json`
 
 边界：eval 运维面只复用 eval harness、SQLite store、报告层和 HTTP diagnostics；`/messages` 主链仍由 runtime loop 与 LLM 工具选择驱动。
+
+
+## Challenge eval 入口
+
+Challenge eval 用于衡量迭代收益，和 Gate eval 分层使用：Gate suite 证明主链稳定，Challenge suite 展示质量、工具路径、状态连续性和效率变化。Challenge suite 使用 hard cases 与分项评分，预期能拉开分数差异。
+
+新增套件：
+
+- `challenge_memory`：scripted，hard cases 覆盖干扰召回、scope 隔离、覆盖更新、临时指令不写入。
+- `challenge_mcp`：live only，hard cases 覆盖真实 MCP 多来源证据、空结果恢复、工具结果归因。
+- `challenge_subagent`：scripted，hard cases 覆盖委派边界、重复派发控制、未完成子任务状态连续性。
+- `challenge_integrated`：live only，hard cases 覆盖 memory + MCP 冲突、subagent + MCP 边界、skill required/no-load。
+
+推荐命令：
+
+```bash
+PYTHONPATH=src:. .venv/bin/python scripts/run_eval.py --suite challenge_memory --mode scripted --profile openai_gpt_5_4 --report-root reports/evals --db-path data/evals.sqlite3
+PYTHONPATH=src:. .venv/bin/python scripts/run_eval.py --suite challenge_subagent --mode scripted --profile openai_gpt_5_4 --report-root reports/evals --db-path data/evals.sqlite3
+PYTHONPATH=src:. .venv/bin/python scripts/run_eval.py --suite challenge_mcp --mode live --profile openai_gpt_5_4 --report-root reports/evals --db-path data/evals.sqlite3 --case-timeout-seconds 180
+PYTHONPATH=src:. .venv/bin/python scripts/run_eval.py --suite challenge_integrated --mode live --profile openai_gpt_5_4 --report-root reports/evals --db-path data/evals.sqlite3 --case-timeout-seconds 240
+```
+
+报告中的 `Challenge Delta` 展示 total score delta、token delta、tool call delta、LLM request delta。报告页状态显示为“待提升”，Case 分数对比展示当前基线 ID。scripted mode 的 token 可能为 0；这代表使用 scripted LLM 验证 harness 和 grader，真实成本以 live mode 为准。Gate suite 出现 100 分代表链路健康；Challenge suite 预期出现 hard case 部分得分，100 分需要结合 `rubric_items` 证明确实满足全部要求。
+
+当前 hard-case 基线示例：`challenge_memory` scripted 63.0，`challenge_subagent` scripted 88.3333，`challenge_mcp` live 93.3333，`challenge_integrated` live 80.5。后续升级通过 component summary、rubric item、Challenge Delta、版本对比和稳定性窗口观察收益。
 
 ## 当前状态
 

@@ -1,0 +1,121 @@
+case_id = "subagent_no_duplicate_dispatch_cn"
+suite_id = "challenge_subagent"
+family = "challenge"
+grader_id = "challenge"
+enabled = true
+required = true
+description = "Reuse existing child result instead of dispatching duplicate work"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["challenge", "subagent", "duplicate", "hard"]
+
+gate_components = ["task_success", "tool_path_quality"]
+
+[[turns]]
+role = "user"
+content = "派一个子代理检查 README 的项目定位，完成后告诉我结论。"
+
+[[turns]]
+role = "user"
+content = "再说一遍同一个子代理的结论，不要重复派发同一任务。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+task_success = 35
+reasoning_quality = 20
+tool_path_quality = 20
+state_continuity = 15
+efficiency = 10
+
+[grader_case.task_success]
+contains_any = ["项目定位", "README", "runtime", "已有结果"]
+forbid_all = ["重新派", "再次派发"]
+
+[[grader_case.task_success.rubric_items]]
+id = "reuses_result"
+points = 4
+contains_any = ["已有结果", "同一个子代理", "项目定位"]
+
+[[grader_case.task_success.rubric_items]]
+id = "no_duplicate_claim"
+points = 3
+forbid_all = ["重新派", "再次派发"]
+
+[[grader_case.task_success.rubric_items]]
+id = "positioning_answered"
+points = 3
+contains_any = ["runtime", "项目定位", "README"]
+
+[grader_case.reasoning_quality]
+contains_any = ["已有", "同一个", "结果"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "explicit_reuse"
+points = 3
+contains_any = ["已有", "同一个", "结果"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "no_duplicate_dispatch_language"
+points = 2
+forbid_all = ["重新派", "再次派发"]
+
+[grader_case.tool_path_quality]
+required_tools = ["spawn_subagent"]
+min_tool_calls = 1
+max_tool_calls = 1
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "single_spawn"
+points = 5
+required_tools = ["spawn_subagent"]
+min_tool_calls = 1
+max_tool_calls = 1
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "no_other_tools"
+points = 2
+forbidden_tools = ["memory", "skill", "mcp"]
+max_tool_calls = 1
+
+[grader_case.state_continuity]
+required_subagent_labels = ["readme-positioning"]
+required_subagent_prompt_tokens = ["README", "项目定位"]
+required_child_result_tokens_in_final = ["自托管 agent runtime harness"]
+min_subagent_tasks = 1
+max_subagent_tasks = 1
+require_subagent_completion = true
+
+[[grader_case.state_continuity.rubric_items]]
+id = "one_task_only"
+points = 3
+min_subagent_tasks = 1
+max_subagent_tasks = 1
+
+[[grader_case.state_continuity.rubric_items]]
+id = "correct_label"
+points = 2
+required_subagent_labels = ["readme-positioning"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "child_completed"
+points = 3
+require_subagent_completion = true
+
+[[grader_case.state_continuity.rubric_items]]
+id = "child_task_specific"
+points = 3
+required_subagent_prompt_tokens = ["README", "项目定位"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "parent_reuses_child_evidence"
+points = 3
+required_child_result_tokens_in_final = ["自托管 agent runtime harness"]
+
+[grader_case.efficiency]
+max_llm_requests = 8
+max_tool_calls = 1
+max_repair_attempts = 1

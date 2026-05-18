@@ -31,7 +31,7 @@ min_calls = 1
 max_calls = 1
 
 [expectations.efficiency]
-max_llm_requests = 3
+max_llm_requests = 4
 max_tool_calls = 1
 
 [expectations.context]

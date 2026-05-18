@@ -79,6 +79,11 @@ def finalize_component_case_result(
         diagnostics_json=dict(observation.diagnostics_json),
         score_breakdown_json={
             "grader_id": grader_id,
+            "case_meta": {
+                "description": case.description,
+                "tags": list(case.tags),
+                "source_path": case.source_path,
+            },
             "components": [item.model_dump(mode="json") for item in component_items],
             "gate": {"passed": gate_passed, "gate_components": list(case.gate_components)},
         },

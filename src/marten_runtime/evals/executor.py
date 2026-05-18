@@ -388,8 +388,7 @@ def _retry_live_subagent_case_after_timeout(
 
 
 def _is_retryable_live_subagent_timeout(case, observation: EvalCaseObservation) -> bool:  # noqa: ANN001
-    grader_id = str(getattr(case, "grader_id", None) or getattr(case, "family", None) or "").strip()
-    if grader_id != "subagent_task_progress":
+    if not _case_requires_subagent_diagnostics(case):
         return False
     subagent = (observation.diagnostics_json or {}).get("subagent") or {}
     if not isinstance(subagent, dict):
@@ -447,8 +446,7 @@ def _override_eval_subagent_timeout(
     case,
     mode: str,
 ) -> None:  # noqa: ANN001
-    grader_id = str(getattr(case, "grader_id", None) or "").strip()
-    if grader_id != "subagent_task_progress":
+    if str(getattr(case, "grader_id", None) or "").strip() != "subagent_task_progress":
         return
     timeout_ms = int((getattr(case, "grader_case", {}) or {}).get("timeout_ms") or 0)
     if timeout_ms <= 0:
@@ -483,7 +481,7 @@ def _run_case_via_http(app, case, *, deadline_monotonic: float | None = None) ->
             response = client.post(
                 "/messages",
                 json={
-                    "channel_id": "http",
+                    "channel_id": case.channel_id,
                     "user_id": user_id,
                     "conversation_id": conversation_id,
                     "message_id": f"{case.case_id}-{index}",
@@ -608,11 +606,29 @@ def _raise_if_case_deadline_expired(deadline_monotonic: float | None, case_id: s
 
 
 def _should_collect_subagent_diagnostics(case, turn_index: int) -> bool:  # noqa: ANN001
-    if str(case.grader_id or "").strip() != "subagent_task_progress":
+    if not _case_requires_subagent_diagnostics(case):
         return False
     if bool(case.grader_case.get("await_child_completion")):
         return turn_index < len(case.turns)
     return turn_index == len(case.turns)
+
+
+def _case_requires_subagent_diagnostics(case) -> bool:  # noqa: ANN001
+    grader_id = str(getattr(case, "grader_id", None) or getattr(case, "family", None) or "").strip()
+    if grader_id == "subagent_task_progress":
+        return True
+    grader_case = getattr(case, "grader_case", {}) or {}
+    if not isinstance(grader_case, dict):
+        return False
+    if grader_case.get("timeout_ms") is not None:
+        return True
+    state_rules = grader_case.get("state_continuity")
+    if not isinstance(state_rules, dict):
+        return False
+    return bool(
+        state_rules.get("required_subagent_labels")
+        or state_rules.get("require_subagent_completion")
+    )
 
 
 def _parent_run_ids(turn_payloads: list[dict[str, object]]) -> list[str]:
@@ -639,7 +655,7 @@ def _finalize_case_diagnostics(
     diagnostics: dict[str, object],
     parent_run_ids: list[str],
 ) -> dict[str, object]:  # noqa: ANN001
-    if str(case.grader_id or "").strip() != "subagent_task_progress":
+    if not _case_requires_subagent_diagnostics(case):
         return diagnostics
     active_session_id = str(diagnostics.get("active_session_id") or "").strip()
     diagnostics["subagent"] = collect_subagent_diagnostics(

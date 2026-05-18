@@ -34,7 +34,7 @@ max_llm_requests = 5
 max_tool_calls = 2
 
 [expectations.context]
-expect_compaction = false
+expect_compaction = true
 
 [expectations.diagnostics]
 expect_provider_ref = "openai"

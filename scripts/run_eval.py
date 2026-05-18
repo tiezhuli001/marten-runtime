@@ -8,6 +8,8 @@ from pathlib import Path
 from marten_runtime.config.env_loader import load_repo_env
 
 from marten_runtime.evals.run_metadata import REPO_ROOT
+from marten_runtime.evals.report_index import write_eval_index
+from marten_runtime.evals.store import SQLiteEvalStore
 from marten_runtime.evals.service import (
     EvalRunRequest,
     list_suite_paths,
@@ -28,6 +30,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report-root", default="reports/evals")
     parser.add_argument("--list-suites", action="store_true")
     parser.add_argument("--case-timeout-seconds", type=float, default=120.0, help="live eval per-case timeout; default 120 seconds, <=0 disables")
+    parser.add_argument("--write-index", action="store_true", help="regenerate reports/evals/index.html and exit")
+    parser.add_argument("--promote-baseline-run", help="mark an existing eval run as a named baseline and exit")
+    parser.add_argument("--baseline-name", help="baseline name for --promote-baseline-run; defaults by suite type")
     return parser
 
 
@@ -39,6 +44,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.list_suites:
         for path in list_suite_paths(repo_root):
             print(path.stem)
+        return 0
+    if args.write_index:
+        output = write_eval_index(repo_root / args.report_root)
+        print(f"index={output}")
+        return 0
+    if args.promote_baseline_run:
+        db_path = Path(args.db_path)
+        if not db_path.is_absolute():
+            db_path = repo_root / db_path
+        store = SQLiteEvalStore(db_path)
+        summary = store.get_run(args.promote_baseline_run)
+        baseline_name = args.baseline_name or _default_baseline_name_for_suite(summary.suite_id)
+        store.write_baseline(summary.suite_id, baseline_name, summary.eval_run_id)
+        output = write_eval_index(repo_root / args.report_root)
+        print(f"baseline={summary.suite_id}:{baseline_name}={summary.eval_run_id}")
+        print(f"index={output}")
         return 0
     if not args.suite or not args.mode or not args.profile:
         parser.print_usage(sys.stderr)
@@ -75,6 +96,10 @@ def main(argv: list[str] | None = None) -> int:
     if result.blocked_reason is not None:
         return 2
     return 0 if result.summary.status == "passed" else 1
+
+
+def _default_baseline_name_for_suite(suite_id: str) -> str:
+    return "challenge_current" if str(suite_id or "").startswith("challenge_") else "latest_passed"
 
 
 if __name__ == "__main__":

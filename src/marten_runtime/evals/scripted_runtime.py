@@ -10,10 +10,11 @@ from marten_runtime.runtime.llm_client import LLMReply, _normalize_reply_contrac
 from marten_runtime.tools.builtins.time_tool import render_time_tool_text
 
 
-def _contracted_final_reply(final_text: str) -> LLMReply:
+def _contracted_final_reply(final_text: str, *, finalization_contract_draft: FinalizationContractDraft | None = None) -> LLMReply:
     visible_text = str(final_text or "").strip()
+    draft = finalization_contract_draft or FinalizationContractDraft()
     return LLMReply(
-        final_text=f"{visible_text}\n{render_finalization_contract_block()}".strip()
+        final_text=f"{visible_text}\n{render_finalization_contract_block(draft)}".strip()
     )
 
 
@@ -206,13 +207,25 @@ def _scripted_tool_followup_reply(llm: ScriptedEvalLLMClient, request) -> LLMRep
             if llm.case_id == "memory_capture_preference_cn":
                 return _contracted_final_reply("我记住了：以后所有答复都用中文，并保持简洁。")
             return _contracted_final_reply("已记住。")
-    if llm.case_id == "subagent_multi_child_progress_cn" and llm._subagent_spawn_count == 1:
+    if llm.case_id in {"memory_interference_recall_cn", "memory_scope_isolation_cn", "memory_overwrite_conflict_cn"}:
+        requested_tool_name = str(request.requested_tool_name or "").strip()
+        if requested_tool_name == "memory":
+            if llm.case_id == "memory_interference_recall_cn" and llm._conversation_turns >= 3:
+                return _contracted_final_reply("现在评审摘要默认先写风险，再写结论。")
+            if llm.case_id == "memory_scope_isolation_cn":
+                return _contracted_final_reply("当前可见记忆显示：输出格式偏好是三段式：摘要、风险、下一步；当前 agent 约束是回答标注 main agent。")
+            if llm.case_id == "memory_overwrite_conflict_cn" and llm._conversation_turns >= 3:
+                return _contracted_final_reply("现在日报应该先写风险，再写结论。")
+            return _contracted_final_reply("已记住。")
+    if llm.case_id in {"subagent_multi_child_progress_cn", "subagent_multi_child_synthesis_cn"} and llm._subagent_spawn_count == 1:
         llm._subagent_spawn_count += 1
+        label = "eval-entry" if llm.case_id == "subagent_multi_child_synthesis_cn" else "readme-check"
+        task = "inspect eval entry points" if llm.case_id == "subagent_multi_child_synthesis_cn" else "inspect README structure"
         return LLMReply(
             tool_name="spawn_subagent",
             tool_payload={
-                "task": "inspect README structure",
-                "label": "readme-check",
+                "task": task,
+                "label": label,
                 "finalize_response": True,
             },
         )
@@ -339,6 +352,57 @@ def _scripted_memory_suite_reply(llm: ScriptedEvalLLMClient, message: str) -> LL
         return _contracted_final_reply("现在周报顺序是：先结论，后细节。")
     if llm.case_id == "memory_preference_applied_to_output_cn":
         return _contracted_final_reply("结论：本周接口联调已完成；细节：剩余文档整理中。")
+    if llm.case_id == "memory_interference_recall_cn":
+        if llm._conversation_turns == 1:
+            return LLMReply(
+                tool_name="memory",
+                tool_payload={
+                    "action": "replace",
+                    "intent": "durable_write",
+                    "source_excerpt": message,
+                    "scope": "global",
+                    "section": "preferences",
+                    "type": "preference",
+                    "content": "评审摘要默认先写风险，再写结论。",
+                },
+            )
+        if llm._conversation_turns == 2:
+            return LLMReply(tool_name="time", tool_payload={"timezone": "Asia/Shanghai", "finalize_response": True})
+        return LLMReply(tool_name="memory", tool_payload={"action": "get", "scope": "global", "section": "preferences", "finalize_response": True})
+    if llm.case_id == "memory_scope_isolation_cn":
+        return LLMReply(tool_name="memory", tool_payload={"action": "get", "scope": "global", "section": "preferences", "finalize_response": True})
+    if llm.case_id == "memory_overwrite_conflict_cn":
+        if llm._conversation_turns == 1:
+            return LLMReply(
+                tool_name="memory",
+                tool_payload={
+                    "action": "append",
+                    "intent": "durable_write",
+                    "source_excerpt": message,
+                    "scope": "global",
+                    "section": "preferences",
+                    "type": "preference",
+                    "content": "日报只写结论。",
+                },
+            )
+        if llm._conversation_turns == 2:
+            return LLMReply(
+                tool_name="memory",
+                tool_payload={
+                    "action": "replace",
+                    "intent": "durable_write",
+                    "source_excerpt": message,
+                    "scope": "global",
+                    "section": "preferences",
+                    "type": "preference",
+                    "content": "日报先写风险，再写结论。",
+                },
+            )
+        return LLMReply(tool_name="memory", tool_payload={"action": "get", "scope": "global", "section": "preferences", "finalize_response": True})
+    if llm.case_id == "memory_should_not_write_cn":
+        if llm._conversation_turns == 1:
+            return _contracted_final_reply("SQLite 是一种嵌入式关系型数据库。")
+        return _contracted_final_reply("SQLite 是一种嵌入式关系型数据库；刚才的一句话格式是临时要求，不属于长期偏好。")
     return None
 
 
@@ -353,6 +417,40 @@ def _scripted_main_chain_subagent_reply(llm: ScriptedEvalLLMClient) -> LLMReply 
 
 
 def _scripted_subagent_suite_reply(llm: ScriptedEvalLLMClient) -> LLMReply | None:
+    if llm.case_id == "subagent_delegation_boundary_cn":
+        if llm._conversation_turns == 1:
+            llm._subagent_spawn_count += 1
+            return LLMReply(
+                tool_name="spawn_subagent",
+                tool_payload={
+                    "task": "inspect README main chain and eval entry",
+                    "label": "readme-investigation",
+                    "finalize_response": True,
+                },
+            )
+        return _contracted_final_reply("整合子代理结果：主链路是 channel -> binding -> runtime loop -> tool -> delivery；评测入口是 eval suites 和 scripts/run_eval.py。")
+    if llm.case_id == "subagent_no_duplicate_dispatch_cn":
+        if llm._conversation_turns == 1:
+            llm._subagent_spawn_count += 1
+            return LLMReply(
+                tool_name="spawn_subagent",
+                tool_payload={
+                    "task": "inspect README project positioning",
+                    "label": "readme-positioning",
+                    "finalize_response": True,
+                },
+            )
+        return _contracted_final_reply("已有结果：README 项目定位是自托管 agent runtime harness。")
+    if llm.case_id == "subagent_incomplete_child_handling_cn":
+        llm._subagent_spawn_count += 1
+        return LLMReply(
+            tool_name="spawn_subagent",
+            tool_payload={
+                "task": "inspect README eval entry",
+                "label": "eval-entry",
+                "finalize_response": True,
+            },
+        )
     if llm.case_id == "subagent_background_task_acceptance_cn":
         llm._subagent_spawn_count += 1
         return LLMReply(
@@ -417,9 +515,13 @@ def _scripted_subagent_suite_reply(llm: ScriptedEvalLLMClient) -> LLMReply | Non
 
 def _scripted_subagent_child_reply(llm: ScriptedEvalLLMClient, request) -> LLMReply:  # noqa: ANN001
     llm._subagent_child_calls += 1
-    if llm.case_id == "subagent_followup_uses_child_result_cn":
+    if llm.case_id in {"subagent_followup_uses_child_result_cn", "subagent_delegation_boundary_cn"}:
         return _contracted_final_reply("README 主要描述 runtime 主链、eval 评测和 provider 基线。")
-    if llm.case_id == "subagent_multi_child_progress_cn":
+    if llm.case_id == "subagent_no_duplicate_dispatch_cn":
+        return _contracted_final_reply("项目定位是自托管 agent runtime harness。")
+    if llm.case_id == "subagent_incomplete_child_handling_cn":
+        return _contracted_final_reply("评测入口包括 scripts/run_eval.py。")
+    if llm.case_id in {"subagent_multi_child_progress_cn", "subagent_multi_child_synthesis_cn"}:
         if llm._subagent_child_calls == 1:
             return _contracted_final_reply("项目定位是自托管 agent runtime harness，核心能力围绕主链。")
         return _contracted_final_reply("运行与评测入口包括快速开始、运行命令和离线评测。")
@@ -430,9 +532,7 @@ def _scripted_subagent_child_reply(llm: ScriptedEvalLLMClient, request) -> LLMRe
 
 def _scripted_main_chain_reply(llm: ScriptedEvalLLMClient, request, message: str) -> LLMReply:
     if llm.case_id == "direct_answer_cn":
-        if request.request_kind in {"contract_repair", "finalization_retry"}:
-            return _contracted_final_reply("你好，我在。")
-        return _plain_final_reply("你好，我在。")
+        return _contracted_final_reply("你好，我在。")
     if llm.case_id == "context_compaction_continuity_cn":
         return _contracted_final_reply("压缩后继续完成当前任务。")
     if llm.case_id == "time_single_tool_cn":
@@ -461,7 +561,9 @@ def _scripted_main_chain_reply(llm: ScriptedEvalLLMClient, request, message: str
             )
         return _contracted_final_reply(_memory_reply_from_request(request))
     if llm.case_id == "memory_replace_then_read_cn":
-        if not llm._memory_written:
+        if llm._conversation_turns == 1:
+            if request.request_kind in {"finalization_retry", "contract_repair"}:
+                return _contracted_final_reply("当前记忆状态：preferences: 以后回答尽量简洁。")
             return LLMReply(
                 tool_name="memory",
                 tool_payload={

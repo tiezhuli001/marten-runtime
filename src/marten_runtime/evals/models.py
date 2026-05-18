@@ -165,6 +165,7 @@ class EvalCaseSpec(BaseModel):
     description: str
     agent_id: str
     profile_name: str
+    channel_id: str = "http"
     tags: list[str] = Field(default_factory=list)
     turns: list[EvalTurnSpec]
     setup: EvalSetupSpec = Field(default_factory=EvalSetupSpec)
@@ -269,6 +270,9 @@ class EvalRunComparison(BaseModel):
     baseline_source: str
     total_score_delta: float = 0.0
     pass_rate_delta: float = 0.0
+    token_total_delta: float | None = None
+    tool_calls_delta: float | None = None
+    llm_requests_delta: float | None = None
     regressions: list[EvalCaseComparison] = Field(default_factory=list)
     improvements: list[EvalCaseComparison] = Field(default_factory=list)
     cases: list[EvalCaseComparison] = Field(default_factory=list)

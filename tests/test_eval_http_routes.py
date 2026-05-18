@@ -227,6 +227,107 @@ class EvalHTTPRoutesTests(unittest.TestCase):
             self._cleanup_app(app, temp_dir)
 
 
+
+    def test_eval_ops_promotes_baseline_and_creates_incrementing_version(self) -> None:
+        app, temp_dir = self._build_eval_app()
+        try:
+            with TestClient(app) as client:
+                create_response = client.post(
+                    "/evals/runs",
+                    json={
+                        "suite_id": "ops_smoke",
+                        "mode": "scripted",
+                        "profile": "openai_gpt_5_4",
+                    },
+                )
+                self.assertEqual(create_response.status_code, 200, create_response.text)
+                job_payload = self._wait_for_job(client, create_response.json()["job_id"])
+                eval_run_id = job_payload["eval_run_id"]
+
+                baseline_response = client.post(
+                    "/evals/baselines/promote",
+                    json={"eval_run_id": eval_run_id, "baseline_name": "gate_current"},
+                )
+                version_response = client.post(
+                    "/evals/versions",
+                    json={"eval_run_ids": [eval_run_id]},
+                )
+                latest_response = client.get("/evals/versions/latest")
+                home_response = client.get("/evals")
+
+            self.assertEqual(baseline_response.status_code, 200, baseline_response.text)
+            self.assertEqual(baseline_response.json()["baseline_name"], "gate_current")
+            self.assertEqual(version_response.status_code, 200, version_response.text)
+            self.assertRegex(version_response.json()["version"]["version_id"], r"^v\d{4}\.\d{2}\.\d{2}-1$")
+            self.assertEqual(latest_response.status_code, 200)
+            self.assertEqual(latest_response.json()["runs"][0]["eval_run_id"], eval_run_id)
+            self.assertIn("当前评测版本", home_response.text)
+            self.assertIn("采纳当前主卡片为新版本", home_response.text)
+            self.assertIn("当前基线", home_response.text)
+        finally:
+            self._cleanup_app(app, temp_dir)
+
+    def test_eval_report_uses_current_promoted_baseline_for_compare(self) -> None:
+        app, temp_dir = self._build_eval_app()
+        try:
+            with TestClient(app) as client:
+                first = client.post(
+                    "/evals/runs",
+                    json={"suite_id": "ops_smoke", "mode": "scripted", "profile": "openai_gpt_5_4"},
+                )
+                self.assertEqual(first.status_code, 200, first.text)
+                first_payload = self._wait_for_job(client, first.json()["job_id"])
+                first_run_id = first_payload["eval_run_id"]
+
+                second = client.post(
+                    "/evals/runs",
+                    json={"suite_id": "ops_smoke", "mode": "scripted", "profile": "openai_gpt_5_4"},
+                )
+                self.assertEqual(second.status_code, 200, second.text)
+                second_payload = self._wait_for_job(client, second.json()["job_id"])
+                second_run_id = second_payload["eval_run_id"]
+
+                promote_response = client.post(
+                    "/evals/baselines/promote",
+                    json={"eval_run_id": first_run_id, "baseline_name": "latest_passed"},
+                )
+                report_response = client.get(f"/evals/reports/{second_run_id}")
+
+            self.assertEqual(promote_response.status_code, 200, promote_response.text)
+            self.assertEqual(report_response.status_code, 200, report_response.text)
+            self.assertIn("当前基线动态对比", report_response.text)
+            self.assertIn(first_run_id, report_response.text)
+            self.assertIn("本页按当前已采纳基线动态计算对比", report_response.text)
+            self.assertIn("基线 ID", report_response.text)
+            self.assertNotIn(">failed<", report_response.text)
+        finally:
+            self._cleanup_app(app, temp_dir)
+
+    def test_eval_runs_page_marks_current_baseline(self) -> None:
+        app, temp_dir = self._build_eval_app()
+        try:
+            with TestClient(app) as client:
+                create_response = client.post(
+                    "/evals/runs",
+                    json={"suite_id": "ops_smoke", "mode": "scripted", "profile": "openai_gpt_5_4"},
+                )
+                self.assertEqual(create_response.status_code, 200, create_response.text)
+                job_payload = self._wait_for_job(client, create_response.json()["job_id"])
+                eval_run_id = job_payload["eval_run_id"]
+                promote_response = client.post(
+                    "/evals/baselines/promote",
+                    json={"eval_run_id": eval_run_id, "baseline_name": "latest_passed"},
+                )
+                runs_html_response = client.get("/evals/runs")
+
+            self.assertEqual(promote_response.status_code, 200, promote_response.text)
+            self.assertEqual(runs_html_response.status_code, 200)
+            self.assertIn("当前基线", runs_html_response.text)
+            self.assertNotIn(f'promoteBaseline(&quot;{eval_run_id}&quot;', runs_html_response.text)
+        finally:
+            self._cleanup_app(app, temp_dir)
+
+
     def test_eval_ops_passes_case_timeout_seconds_to_runner(self) -> None:
 
         app, temp_dir = self._build_eval_app()

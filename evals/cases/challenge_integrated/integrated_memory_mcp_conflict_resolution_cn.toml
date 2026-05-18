@@ -1,0 +1,99 @@
+case_id = "integrated_memory_mcp_conflict_resolution_cn"
+suite_id = "challenge_integrated"
+family = "challenge"
+grader_id = "challenge"
+enabled = true
+required = true
+description = "Preserve durable memory style while using real MCP evidence under temporary conflict"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["challenge", "integrated", "memory", "mcp", "hard"]
+
+gate_components = ["task_success", "tool_path_quality", "state_continuity"]
+
+[[turns]]
+role = "user"
+content = "记住：仓库评估默认先写风险，再写结论，并标注证据来源。"
+
+[[turns]]
+role = "user"
+content = "这一次临时先写结论。调用 GitHub MCP 读取 tiezhuli001/marten-runtime 的 README.md，按长期默认格式评估仓库。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+task_success = 35
+reasoning_quality = 20
+tool_path_quality = 20
+state_continuity = 15
+efficiency = 10
+
+[grader_case.task_success]
+contains_all = ["风险", "结论"]
+contains_any = ["README", "marten-runtime", "证据"]
+forbid_all = ["工具执行失败", "请重试"]
+
+[[grader_case.task_success.rubric_items]]
+id = "durable_order"
+points = 4
+anchor_groups = [["风险"], ["结论"]]
+
+[[grader_case.task_success.rubric_items]]
+id = "mcp_evidence"
+points = 4
+contains_any = ["README", "README.md", "marten-runtime"]
+
+[[grader_case.task_success.rubric_items]]
+id = "source_attribution"
+points = 3
+contains_any = ["证据", "来源", "README.md"]
+
+[grader_case.reasoning_quality]
+contains_any = ["基于", "证据", "读取"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "conflict_resolution_explained"
+points = 3
+contains_any = ["默认", "长期", "记住"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "no_tool_failure"
+points = 2
+forbid_all = ["工具执行失败", "请重试"]
+
+[grader_case.tool_path_quality]
+required_tools = ["memory", "mcp"]
+min_tool_calls = 2
+max_tool_calls = 8
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "memory_used"
+points = 3
+required_tools = ["memory"]
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "mcp_used"
+points = 4
+required_tools = ["mcp"]
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "bounded_tools"
+points = 2
+max_tool_calls = 8
+
+[grader_case.state_continuity]
+required_memory_sections = ["preferences"]
+forbidden_memory_tokens = []
+
+[[grader_case.state_continuity.rubric_items]]
+id = "preference_loaded"
+points = 4
+required_memory_sections = ["preferences"]
+
+[grader_case.efficiency]
+max_llm_requests = 10
+max_tool_calls = 8
+max_repair_attempts = 2

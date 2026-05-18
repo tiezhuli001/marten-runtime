@@ -632,10 +632,11 @@ flowchart LR
 这一阶段新增的不是另一条产品主链，而是一条围绕主链的运维证明面：
 
 - `scripts/run_eval.py` 作为 CLI 运行入口
-- 同服务 `/evals` HTML 运维面
-- `main_chain_core`、`memory_long_horizon`、`subagent_task_progress` 三类核心套件
-- baseline compare、稳定性窗口、波动 case / 组件统计
-- Markdown / JSON / HTML 三种报告产物
+- 同服务 `/evals` HTML 运维面，包含总览、历史运行、版本对比、基线采纳和动态报告
+- Gate eval：`main_chain_core`、`memory_long_horizon`、`subagent_task_progress`、`main_chain_mcp`、`main_chain_subagent`、`subagent_external_mcp_completion`
+- Challenge eval：`challenge_memory`、`challenge_subagent`、`challenge_mcp`、`challenge_integrated` hard cases
+- baseline compare、版本 compare、稳定性窗口、波动 case / 组件统计
+- Markdown / JSON / HTML 三种报告产物；报告查看页按当前已采纳基线动态重算对比
 - shared grader helpers、suite manifest、family-scored compare 面
 
 ### 为什么重要
@@ -644,7 +645,7 @@ flowchart LR
 
 - 测试继续证明链路是通的
 - tracing 继续证明真实运行发生了什么
-- eval 开始证明 prompt、capability 描述、记忆治理、子代理推进这些迭代是否真的带来收益
+- eval 开始证明 prompt、capability 描述、记忆治理、MCP 证据链、skill 触发、子代理推进这些迭代是否真的带来收益
 
 更关键的是，这套能力仍然留在 eval harness 与运维面，没有把 runtime 主链改造成在线评测服务。
 
@@ -654,7 +655,7 @@ flowchart LR
 
 产品主链保持不变，新增的是围绕它的离线证明面：
 
-`operator CLI -> eval runner -> HTTP app -> runtime -> builtin / MCP / skill / subagent -> diagnostics -> compare / report`
+`operator CLI -> eval runner -> HTTP app -> runtime -> builtin / MCP / skill / subagent -> diagnostics -> compare / version / report`
 
 ```mermaid
 flowchart LR
@@ -665,10 +666,10 @@ flowchart LR
     E --> F["Builtin / MCP / Skill / Subagent"]
     F --> E
     E --> G["Diagnostics"]
-    G --> H["Compare / Stability / Report"]
+    G --> H["Compare / Stability / Version / Report"]
 
     I["Golden / Memory / Subagent Suites"] -.-> B
-    J["SQLite Eval History"] -.-> H
+    J["SQLite Eval History + Baselines + Versions"] -.-> H
     K["HTML / Markdown / JSON Reports"] -.-> H
 
     style B fill:#fff1f0,stroke:#ff4d4f,stroke-width:2px,color:#a8071a

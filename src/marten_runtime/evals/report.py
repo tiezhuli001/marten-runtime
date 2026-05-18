@@ -6,6 +6,7 @@ from pathlib import Path
 from marten_runtime.evals.compare import _extract_total_tokens_from_result, _result_used_failover
 from marten_runtime.evals.models import EvalCaseResult, EvalRunComparison, EvalRunSummary
 from marten_runtime.evals.report_html import render_summary_html
+from marten_runtime.evals.report_index import write_eval_index
 from marten_runtime.evals.report_markdown import build_summary_markdown
 from marten_runtime.runtime.provider_reliability import build_provider_health_summary
 
@@ -89,7 +90,10 @@ def write_eval_report(
         encoding='utf-8',
     )
     compare_index = {
-        str(item.get('case_id')): item
+        str(item.get('case_id')): {
+            **item,
+            "baseline_eval_run_id": (resolved_compare or {}).get("baseline_eval_run_id"),
+        }
         for item in list((resolved_compare or {}).get('cases') or [])
         if isinstance(item, dict) and item.get('case_id') is not None
     }
@@ -101,4 +105,5 @@ def write_eval_report(
         ),
         encoding='utf-8',
     )
+    write_eval_index(root.parent)
     return root

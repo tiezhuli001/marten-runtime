@@ -1,0 +1,119 @@
+case_id = "memory_interference_recall_cn"
+suite_id = "challenge_memory"
+family = "challenge"
+grader_id = "challenge"
+enabled = true
+required = true
+description = "Durable preference survives temporary conflicting instruction"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["challenge", "memory", "interference", "hard"]
+
+gate_components = ["task_success", "tool_path_quality"]
+
+[[turns]]
+role = "user"
+content = "记住：评审摘要默认先写风险，再写结论。"
+
+[[turns]]
+role = "user"
+content = "只在这一次临时改成先写结论，再写风险，并说明北京时间。"
+
+[[turns]]
+role = "user"
+content = "临时要求结束。现在评审摘要应该怎么组织？"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+task_success = 35
+reasoning_quality = 20
+tool_path_quality = 20
+state_continuity = 15
+efficiency = 10
+
+[grader_case.task_success]
+evidence_source = "final"
+contains_all = ["风险", "结论"]
+forbid_all = ["临时改成先写结论", "这一次临时改成", "只写结论"]
+
+[[grader_case.task_success.rubric_items]]
+id = "recalls_durable_order"
+points = 4
+anchor_groups = [["先写风险", "先给风险"], ["再写结论", "后写结论"]]
+
+[[grader_case.task_success.rubric_items]]
+id = "rejects_temporary_order"
+points = 3
+evidence_source = "final"
+forbid_all = ["临时改成先写结论", "这一次临时改成"]
+
+[[grader_case.task_success.rubric_items]]
+id = "answers_current_question"
+points = 2
+contains_any = ["现在", "应该", "默认"]
+
+[[grader_case.task_success.rubric_items]]
+id = "no_uncertainty"
+points = 1
+forbid_all = ["无法确认", "不确定"]
+
+[grader_case.reasoning_quality]
+evidence_source = "final"
+contains_any = ["记住", "临时", "当前"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "mentions_temporary_expired"
+points = 3
+evidence_source = "final"
+contains_any = ["临时", "这一次", "结束"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "no_time_distraction"
+points = 2
+evidence_source = "final"
+forbid_all = ["北京时间"]
+
+[grader_case.tool_path_quality]
+required_tools = ["memory"]
+min_tool_calls = 2
+max_tool_calls = 4
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "writes_durable_memory"
+points = 3
+required_tools = ["memory"]
+min_tool_calls = 1
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "reads_memory_on_recall"
+points = 3
+required_tools = ["memory"]
+min_tool_calls = 2
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "bounded_tool_count"
+points = 2
+max_tool_calls = 4
+
+[grader_case.state_continuity]
+required_memory_sections = ["preferences"]
+forbidden_memory_tokens = ["临时改成先写结论", "这一次临时改成", "只在这一次"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "preference_section_used"
+points = 3
+required_memory_sections = ["preferences"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "temporary_not_persisted"
+points = 3
+forbidden_memory_tokens = ["临时改成先写结论", "这一次临时改成", "只在这一次"]
+
+[grader_case.efficiency]
+max_llm_requests = 8
+max_tool_calls = 4
+max_repair_attempts = 1

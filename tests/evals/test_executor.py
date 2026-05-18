@@ -14,6 +14,7 @@ from marten_runtime.evals.executor import (
     _execute_case_live_child,
     _execute_case_live_with_timeout,
     _is_retryable_live_subagent_timeout,
+    _case_requires_subagent_diagnostics,
     _seed_case_state,
     _should_collect_subagent_diagnostics,
     _should_include_live_mcp_scaffold,
@@ -64,7 +65,7 @@ class EvalExecutorTests(unittest.TestCase):
         self.assertIsNone(reply.finalization_contract_draft)
         self.assertIn("```finalization_contract", reply.final_text or "")
 
-    def test_scripted_eval_direct_answer_initial_reply_does_not_preseed_structured_contract(self) -> None:
+    def test_scripted_eval_direct_answer_initial_reply_satisfies_structured_contract(self) -> None:
         llm = ScriptedEvalLLMClient(
             case_id="direct_answer_cn",
             provider_name="openai",
@@ -80,9 +81,9 @@ class EvalExecutorTests(unittest.TestCase):
             enforce_structured_contract=True,
         )
 
-        self.assertEqual(reply.final_text, "你好，我在。")
-        self.assertIsNone(reply.finalization_contract_draft)
-        self.assertEqual(details.assessment, "unrecoverable")
+        self.assertIn("你好，我在。", reply.final_text or "")
+        self.assertIsNotNone(reply.finalization_contract_draft)
+        self.assertEqual(details.assessment, "accepted")
 
     def test_scripted_eval_clients_do_not_synthesize_session_summary_metadata(self) -> None:
         request = self._request(request_kind="session_summary", message="用户消息")
@@ -144,6 +145,57 @@ class EvalExecutorTests(unittest.TestCase):
         self.assertIn("你好", observations[0].final_text)
         self.assertTrue(observations[0].run_id)
         self.assertTrue(observations[0].trace_id)
+
+
+    def test_execute_suite_scripted_direct_answer_full_score_uses_one_llm_request(self) -> None:
+        case = load_case_spec(Path("evals/cases/main_chain_core/direct_answer_cn.toml"))
+        suite = EvalSuiteSpec(
+            suite_id="main_chain_core",
+            description="demo",
+            default_mode="scripted",
+            scripted_supported=True,
+            required_dependencies=["provider"],
+            baseline_policy="latest_passed_auto",
+            case_files=[],
+            cases=[case],
+            suite_fingerprint="suite123",
+        )
+
+        summary, observations = execute_suite(suite, mode="scripted", profile_name="openai_gpt_5_4")
+        result = grade_case_result(case, observations[0], eval_run_id=summary.eval_run_id)
+
+        self.assertEqual(observations[0].llm_request_count, 1)
+        self.assertEqual(result.total_score, 100.0)
+
+    def test_memory_replace_then_read_case_budget_allows_one_contract_repair(self) -> None:
+        case = load_case_spec(Path("evals/cases/main_chain_core/memory_replace_then_read_cn.toml"))
+
+        self.assertEqual(case.expectations.efficiency.max_llm_requests, 4)
+
+    def test_execute_suite_scripted_memory_replace_full_score_uses_expected_llm_requests(self) -> None:
+        case = load_case_spec(Path("evals/cases/main_chain_core/memory_replace_then_read_cn.toml"))
+        suite = EvalSuiteSpec(
+            suite_id="main_chain_core",
+            description="demo",
+            default_mode="scripted",
+            scripted_supported=True,
+            required_dependencies=["provider"],
+            baseline_policy="latest_passed_auto",
+            case_files=[],
+            cases=[case],
+            suite_fingerprint="suite123",
+        )
+
+        summary, observations = execute_suite(suite, mode="scripted", profile_name="openai_gpt_5_4")
+        result = grade_case_result(case, observations[0], eval_run_id=summary.eval_run_id)
+
+        self.assertEqual(observations[0].llm_request_count, 4)
+        self.assertEqual(result.total_score, 100.0)
+
+    def test_session_new_continuity_case_expects_carried_compacted_context(self) -> None:
+        case = load_case_spec(Path("evals/cases/main_chain_core/session_new_continuity_cn.toml"))
+
+        self.assertIs(case.expectations.context.expect_compaction, True)
 
     def test_execute_suite_single_turn_observation_keeps_run_diagnostics_for_token_extraction(self) -> None:
         case = EvalCaseSpec(
@@ -1240,6 +1292,86 @@ class EvalExecutorTests(unittest.TestCase):
             (repo_root / "mcps.json").write_text("{}", encoding="utf-8")
             self.assertFalse(_should_include_live_mcp_scaffold(repo_root, include_mcp=False))
             self.assertTrue(_should_include_live_mcp_scaffold(repo_root, include_mcp=True))
+
+    def test_execute_suite_scripted_challenge_memory_collects_component_summary(self) -> None:
+        suite = load_suite_spec(Path("evals/suites/challenge_memory.toml"))
+
+        summary, observations = execute_suite(
+            suite,
+            mode="scripted",
+            profile_name="openai_gpt_5_4",
+            repo_root=Path.cwd(),
+        )
+        results = [grade_case_result(case, observation, eval_run_id=summary.eval_run_id) for case, observation in zip(suite.cases, observations, strict=False)]
+
+        self.assertEqual(len(results), 4)
+        self.assertTrue(all(result.score_breakdown_json.get("components") for result in results))
+        suite_score = round(sum(result.total_score for result in results) / len(results), 4)
+        self.assertGreater(suite_score, 0.0)
+        self.assertLess(suite_score, 100.0)
+        rubric_items = [
+            item
+            for result in results
+            for component in result.score_breakdown_json.get("components", [])
+            for item in ((component.get("details") or {}).get("rubric_items") or [])
+        ]
+        self.assertTrue(any(not item.get("passed") for item in rubric_items))
+
+    def test_execute_suite_scripted_challenge_subagent_collects_component_summary(self) -> None:
+        suite = load_suite_spec(Path("evals/suites/challenge_subagent.toml"))
+
+        summary, observations = execute_suite(
+            suite,
+            mode="scripted",
+            profile_name="openai_gpt_5_4",
+            repo_root=Path.cwd(),
+        )
+        results = [grade_case_result(case, observation, eval_run_id=summary.eval_run_id) for case, observation in zip(suite.cases, observations, strict=False)]
+
+        self.assertEqual(len(results), 3)
+        self.assertTrue(all(result.score_breakdown_json.get("components") for result in results))
+        suite_score = round(sum(result.total_score for result in results) / len(results), 4)
+        self.assertGreater(suite_score, 0.0)
+        self.assertLess(suite_score, 100.0)
+        self.assertTrue(any(call["tool_name"] == "spawn_subagent" for observation in observations for call in observation.tool_calls))
+        subagent_observations = [item for item in observations if item.diagnostics_json.get("subagent")]
+        self.assertTrue(subagent_observations)
+        rubric_items = [
+            item
+            for result in results
+            for component in result.score_breakdown_json.get("components", [])
+            for item in ((component.get("details") or {}).get("rubric_items") or [])
+        ]
+        self.assertTrue(any(not item.get("passed") for item in rubric_items))
+
+
+    def test_challenge_integrated_cases_keep_real_mcp_and_subagent_gates(self) -> None:
+        memory_case = load_case_spec(
+            Path("evals/cases/challenge_integrated/integrated_memory_mcp_conflict_resolution_cn.toml")
+        )
+        subagent_case = load_case_spec(
+            Path("evals/cases/challenge_integrated/integrated_subagent_mcp_evidence_boundary_cn.toml")
+        )
+
+        self.assertIn("mcp", memory_case.grader_case["tool_path_quality"]["required_tools"])
+        self.assertIn("memory", memory_case.grader_case["tool_path_quality"]["required_tools"])
+        self.assertIn("tool_path_quality", memory_case.gate_components)
+        self.assertIn("state_continuity", memory_case.gate_components)
+        self.assertIn("工具执行失败", memory_case.grader_case["task_success"]["forbid_all"])
+        self.assertIn("spawn_subagent", subagent_case.grader_case["tool_path_quality"]["required_tools"])
+        self.assertNotIn("memory", subagent_case.grader_case["tool_path_quality"].get("required_tools") or [])
+        self.assertIn("tool_path_quality", subagent_case.gate_components)
+        self.assertIn("state_continuity", subagent_case.gate_components)
+        self.assertFalse(subagent_case.grader_case["state_continuity"]["require_subagent_completion"])
+        self.assertIn("mcp", subagent_case.grader_case["state_continuity"]["required_child_tools"])
+
+    def test_challenge_subagent_diagnostics_are_enabled_by_grader_case_metadata(self) -> None:
+        case = load_case_spec(
+            Path("evals/cases/challenge_subagent/subagent_delegation_boundary_cn.toml")
+        )
+
+        self.assertTrue(_case_requires_subagent_diagnostics(case))
+        self.assertTrue(_should_collect_subagent_diagnostics(case, len(case.turns)))
 
 
 if __name__ == "__main__":

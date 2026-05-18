@@ -1,0 +1,111 @@
+case_id = "memory_overwrite_conflict_cn"
+suite_id = "challenge_memory"
+family = "challenge"
+grader_id = "challenge"
+enabled = true
+required = true
+description = "Replace stale preference and avoid old-value leakage"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["challenge", "memory", "overwrite", "hard"]
+
+gate_components = ["task_success", "tool_path_quality"]
+
+[[turns]]
+role = "user"
+content = "记住：日报只写结论。"
+
+[[turns]]
+role = "user"
+content = "更新一下：日报先写风险，再写结论。"
+
+[[turns]]
+role = "user"
+content = "有人提到旧规则。现在日报应该怎么写？"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+task_success = 35
+reasoning_quality = 20
+tool_path_quality = 20
+state_continuity = 15
+efficiency = 10
+
+[grader_case.task_success]
+contains_all = ["风险", "结论"]
+forbid_all = ["只写结论"]
+
+[[grader_case.task_success.rubric_items]]
+id = "new_order"
+points = 4
+anchor_groups = [["先写风险", "先给风险"], ["再写结论", "后写结论"]]
+
+[[grader_case.task_success.rubric_items]]
+id = "old_rule_absent"
+points = 4
+forbid_all = ["只写结论", "旧规则仍然"]
+
+[[grader_case.task_success.rubric_items]]
+id = "conflict_resolved"
+points = 2
+contains_any = ["现在", "更新", "最新"]
+
+[grader_case.reasoning_quality]
+contains_any = ["更新", "现在", "最新"]
+forbid_all = ["旧规则"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "recognizes_update"
+points = 3
+contains_any = ["更新", "最新"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "no_stale_explanation"
+points = 2
+forbid_all = ["只写结论"]
+
+[grader_case.tool_path_quality]
+required_tools = ["memory"]
+min_tool_calls = 3
+max_tool_calls = 5
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "initial_write"
+points = 2
+required_tools = ["memory"]
+min_tool_calls = 1
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "replace_write"
+points = 3
+required_tools = ["memory"]
+min_tool_calls = 2
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "recall_read"
+points = 3
+required_tools = ["memory"]
+min_tool_calls = 3
+
+[grader_case.state_continuity]
+required_memory_sections = ["preferences"]
+forbidden_memory_tokens = []
+
+[[grader_case.state_continuity.rubric_items]]
+id = "preference_section_used"
+points = 2
+required_memory_sections = ["preferences"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "bounded_memory_activity"
+points = 2
+max_subagent_tasks = 0
+
+[grader_case.efficiency]
+max_llm_requests = 9
+max_tool_calls = 5
+max_repair_attempts = 1

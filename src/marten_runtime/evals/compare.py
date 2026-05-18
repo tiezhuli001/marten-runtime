@@ -60,6 +60,9 @@ def compare_eval_runs(
         baseline_source=baseline_source,
         total_score_delta=round(current_summary.total_score - baseline_summary.total_score, 4),
         pass_rate_delta=round(current_summary.pass_rate - baseline_summary.pass_rate, 4),
+        token_total_delta=_delta_or_none(_sum_case_tokens(current_cases), _sum_case_tokens(baseline_cases)),
+        tool_calls_delta=round(_sum_tool_calls(current_cases) - _sum_tool_calls(baseline_cases), 4),
+        llm_requests_delta=round(_sum_llm_requests(current_cases) - _sum_llm_requests(baseline_cases), 4),
         regressions=regressions,
         improvements=improvements,
         cases=comparisons,
@@ -170,6 +173,28 @@ def build_eval_run_stability_summary(
         cases=case_summaries,
         components=component_summaries,
     )
+
+
+def _sum_case_tokens(cases: list[EvalCaseResult]) -> float | None:
+    values = [_extract_total_tokens_from_result(item) for item in cases]
+    numeric = [float(item) for item in values if item is not None]
+    if not numeric:
+        return None
+    return round(sum(numeric), 4)
+
+
+def _sum_tool_calls(cases: list[EvalCaseResult]) -> float:
+    return float(sum(int(item.tool_calls_count or 0) for item in cases))
+
+
+def _sum_llm_requests(cases: list[EvalCaseResult]) -> float:
+    return float(sum(int(item.llm_request_count or 0) for item in cases))
+
+
+def _delta_or_none(current: float | None, baseline: float | None) -> float | None:
+    if current is None or baseline is None:
+        return None
+    return round(float(current) - float(baseline), 4)
 
 
 def _change_kind(

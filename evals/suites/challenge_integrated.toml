@@ -1,0 +1,13 @@
+suite_id = "challenge_integrated"
+grader_id = "challenge"
+description = "Challenge eval for integrated memory, MCP, subagent, and skill behavior"
+default_mode = "live"
+scripted_supported = false
+required_dependencies = ["provider", "mcp", "subagent"]
+baseline_policy = "latest_passed_auto"
+case_files = [
+  "evals/cases/challenge_integrated/integrated_memory_mcp_conflict_resolution_cn.toml",
+  "evals/cases/challenge_integrated/integrated_subagent_mcp_evidence_boundary_cn.toml",
+  "evals/cases/challenge_integrated/skill_required_multistep_apply_cn.toml",
+  "evals/cases/challenge_integrated/skill_unneeded_complex_direct_cn.toml",
+]

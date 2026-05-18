@@ -41,19 +41,20 @@ flowchart LR
 
 ## 评测运维面
 
-主 HTTP 服务启动后，访问 `/evals` 可以查看评测链路状态、套件清单、历史运行、基线对比、分数变化和 HTML 报告入口。
+主 HTTP 服务启动后，访问 `/evals` 查看 Gate / Challenge 当前主评测、历史运行、基线采纳、版本采纳和动态报告。
 
 ![Eval 运维总览](./docs/assets/eval-ops-home.png)
 
 | 页面 | 用途 |
 | --- | --- |
-| `/evals` | 总览、套件、最近运行、分数变化 |
+| `/evals` 或 `/index.html` | 评测总览、当前主评测、采纳当前主卡片为新版本、采纳单个 run 为基线 |
 | `/evals/suites` | 套件清单、默认模式、依赖、用例数 |
-| `/evals/runs` | 历史运行记录、状态、基线、变化趋势 |
+| `/evals/runs` | 历史运行记录、状态、基线、变化趋势、报告入口 |
+| `/evals/versions/compare` | 已采纳版本之间的 suite 分数、状态和报告对比 |
 | `/evals/runs/{eval_run_id}/view` | 单次运行详情、对比结果、用例明细 |
-| `/evals/reports/{eval_run_id}` | 评测报告 HTML |
+| `/evals/reports/{eval_run_id}` | 动态 HTML 报告；对比部分按当前已采纳基线重新计算 |
 
-JSON API 通过 `Accept: application/json` 保持可用。
+JSON API 通过 `Accept: application/json` 保持可用。基线采纳更新后，报告查看页会用新基线重算对比；原始评测分数、case 输出、工具链路和 provider 结果保持该次运行记录。
 
 ## 当前基线
 
@@ -194,7 +195,7 @@ Langfuse 可观测性现在已经是可选的 tracing 面：
 
 ## 评测
 
-评测同时支持 CLI 和同服务 HTML 运维面。CLI 负责运行，`/evals` 负责查看状态、历史、基线对比和报告。
+评测分为 Gate eval 和 Challenge eval。Gate eval 用于链路健康检查，目标是稳定通过；Challenge eval 用于衡量迭代收益，使用 hard cases 与分项评分展示质量变化。
 
 ```bash
 PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
@@ -206,20 +207,31 @@ PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
 
 ![Eval 历史运行记录](./docs/assets/eval-runs-history.png)
 
-| 套件 | 覆盖范围 |
-| --- | --- |
-| `main_chain_core` | direct answer、builtin tool、多轮 continuity、上下文压缩 |
-| `main_chain_mcp` | GitHub MCP 主链回放 |
-| `main_chain_subagent` | 主线程委派、子任务完成通知、父线程总结回放 |
-| `memory_long_horizon` | 记住、隔轮召回、跨会话召回、覆盖更新、抗干扰召回 |
-| `subagent_task_progress` | 子代理受理、调度、非 MCP 子任务进度与父线程吸收 |
-| `subagent_external_mcp_completion` | 子代理调用外部 MCP 后完成通知与父线程吸收 |
+| 套件 | 分层 | 覆盖范围 |
+| --- | --- | --- |
+| `main_chain_core` | Gate | direct answer、builtin tool、多轮 continuity、上下文压缩 |
+| `main_chain_mcp` | Gate | 真实 GitHub MCP 主链链路，正式效果使用 `live` mode |
+| `main_chain_subagent` | Gate | 主线程委派、子任务完成通知、父线程总结回放 |
+| `memory_long_horizon` | Gate | 记住、隔轮召回、跨会话召回、覆盖更新、抗干扰召回 |
+| `subagent_task_progress` | Gate | 子代理受理、调度、非 MCP 子任务进度与父线程吸收 |
+| `subagent_external_mcp_completion` | Gate | 子代理调用外部 MCP 后完成通知与父线程吸收，正式效果使用 `live` mode |
+| `challenge_memory` | Challenge | 干扰召回、scope 隔离、覆盖冲突、临时指令不写入 |
+| `challenge_subagent` | Challenge | 委派边界、重复派发控制、未完成子任务状态连续性 |
+| `challenge_mcp` | Challenge | 真实 MCP 多来源证据、空结果恢复、工具结果归因 |
+| `challenge_integrated` | Challenge | memory + MCP 冲突、subagent + MCP 边界、skill 使用质量 |
+
+常用运维动作：
+
+- 在 `/evals` 点击“采纳当前主卡片为新版本”，生成自动递增版本号，例如 `v2026.05.18-1`。
+- 在当前主评测或历史运行中点击“采纳为当前 Challenge 基线”或“采纳为最近通过基线”。
+- 在 `/evals/versions/compare` 查看两个已采纳版本的 suite 级变化。
+- 在 `/evals/reports/{eval_run_id}` 查看动态报告；报告标题使用中文 suite 名，状态用“待提升”，对比区展示当前基线 ID。
 
 产物位置：
 
-- SQLite 历史：`data/evals.sqlite3`
+- SQLite 历史和基线/版本记录：`data/evals.sqlite3`
 - 报告目录：`reports/evals/<eval_run_id>/`
-- 汇总报告：`summary.md`、`summary.json`、`summary.html`
+- 汇总产物：`summary.md`、`summary.json`、`summary.html`
 - 单 case 详情：`cases/<case_id>.json`
 
 ## 测试

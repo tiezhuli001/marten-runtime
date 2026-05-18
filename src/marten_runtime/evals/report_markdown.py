@@ -87,6 +87,8 @@ def build_summary_markdown(
         else:
             md_lines.append('- none')
         md_lines.append('')
+    _append_challenge_delta_section(md_lines, summary, compare_result)
+    _append_history_section(md_lines, compare_result, stability_result)
     _append_stability_section(md_lines, stability_result)
     md_lines.extend(
         [
@@ -102,6 +104,28 @@ def build_summary_markdown(
             f"| {result.case_id} | {result.status} | {result.total_score} | {result.run_id or '-'} | {result.trace_id or '-'} |"
         )
     return '\n'.join(md_lines)
+
+
+def _append_history_section(
+    md_lines: list[str],
+    compare_result: dict[str, object] | None,
+    stability_result: dict[str, object] | None,
+) -> None:
+    run_ids: list[str] = []
+    if stability_result:
+        run_ids.extend(str(item) for item in list(stability_result.get("history_eval_run_ids") or []) if str(item).strip())
+    if compare_result:
+        baseline = str(compare_result.get("baseline_eval_run_id") or "").strip()
+        if baseline and baseline not in run_ids:
+            run_ids.append(baseline)
+    md_lines.extend(["## History Reports", ""])
+    if not run_ids:
+        md_lines.append("- none")
+        md_lines.append("")
+        return
+    for run_id in run_ids:
+        md_lines.append(f"- [{run_id}](/evals/reports/{run_id})")
+    md_lines.append("")
 
 
 def _append_stability_section(md_lines: list[str], stability_result: dict[str, object] | None) -> None:
@@ -142,3 +166,24 @@ def _append_stability_section(md_lines: list[str], stability_result: dict[str, o
             )
         return
     md_lines.append('- none')
+
+
+def _append_challenge_delta_section(
+    md_lines: list[str],
+    summary: EvalRunSummary,
+    compare_result: dict[str, object] | None,
+) -> None:
+    if not str(summary.suite_id or "").startswith("challenge_") or compare_result is None:
+        return
+    md_lines.extend(
+        [
+            "## Challenge Delta",
+            "",
+            f"- total_score_delta: `{compare_result.get('total_score_delta')}`",
+            f"- pass_rate_delta: `{compare_result.get('pass_rate_delta')}`",
+            f"- token_total_delta: `{compare_result.get('token_total_delta')}`",
+            f"- tool_calls_delta: `{compare_result.get('tool_calls_delta')}`",
+            f"- llm_requests_delta: `{compare_result.get('llm_requests_delta')}`",
+            "",
+        ]
+    )

@@ -39,6 +39,9 @@ def render_summary_html(
         for result in case_results
     )
     compare_block = _render_compare_block(compare_result)
+    challenge_delta_block = _render_challenge_delta_block(summary, compare_result)
+    challenge_focus_block = _render_challenge_focus_block(summary, case_results, compare_index, compare_result, stability_result)
+    history_block = _render_history_block(stability_result, compare_result)
     stability_block = _render_stability_block(stability_result)
     provider_reliability_block = _render_provider_reliability_block(provider_reliability)
     blocked_block = (
@@ -213,15 +216,50 @@ def render_summary_html(
     .change-new_case td:first-child,
     .change-removed_case td:first-child {{ border-left: 3px solid #175cd3; }}
     .change-unchanged {{ opacity: .82; }}
+
+    .case-title {{ font-weight: 700; color: var(--text); }}
+    .case-id {{ display: block; margin-top: 3px; font-size: 12px; color: var(--muted); font-weight: 400; }}
+    summary .case-id {{ display: inline-block; margin-left: 10px; }}
+    .challenge-focus {{ border-color: #b2ccff; box-shadow: 0 12px 28px rgba(16,24,40,.06); }}
+    .score-chart {{ display: grid; gap: 14px; margin-top: 10px; }}
+    .score-card {{ border: 1px solid var(--border); border-radius: 14px; padding: 14px; background: #fbfcff; }}
+    .score-head {{ display: grid; grid-template-columns: minmax(220px, 1fr) auto auto auto; gap: 14px; align-items: center; margin-bottom: 12px; }}
+    .score-name {{ font-weight: 700; }}
+    .score-chip {{ min-width: 96px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }}
+    .score-change {{ min-width: 82px; text-align: right; }}
+    .score-bars {{ display: grid; gap: 8px; }}
+    .score-bar-row {{ display: grid; grid-template-columns: 42px minmax(240px, 1fr) 70px; gap: 12px; align-items: center; font-size: 12px; color: var(--muted); }}
+    .score-track {{ height: 16px; border-radius: 999px; background: #eef2f6; overflow: hidden; }}
+    .score-fill-current {{ height: 100%; border-radius: 999px; background: linear-gradient(90deg, #175cd3, #84caff); }}
+    .score-fill-baseline {{ height: 100%; border-radius: 999px; background: #98a2b3; }}
+    .legend {{ display: flex; gap: 14px; align-items: center; margin: 4px 0 12px; color: var(--muted); font-size: 13px; }}
+    .legend span {{ display: inline-flex; gap: 6px; align-items: center; }}
+    .legend-dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 999px; }}
+    .case-compact-table table {{ min-width: 760px; }}
+    @media (max-width: 760px) {{
+      .page {{ padding: 14px; }}
+      .score-head {{ grid-template-columns: 1fr; gap: 6px; }}
+      .score-chip, .score-change {{ text-align: left; min-width: 0; }}
+      .score-bar-row {{ grid-template-columns: 42px minmax(120px, 1fr) 58px; }}
+    }}
   </style>
 </head>
 <body>
   <div class="page">
-    <h1>评测报告：{_text(_run_label(summary.eval_run_id))}</h1>
-    <div class="muted">套件={html.escape(summary.suite_id)} · 模式={html.escape(summary.eval_mode)} · 分支={html.escape(summary.git_branch)} · 提交={html.escape(summary.git_sha)}</div>
-    <div class="muted">原始运行 ID：{html.escape(summary.eval_run_id)}</div>
+    <h1>{_text(_suite_label(summary.suite_id))}</h1>
+    <div class="muted">{_text(_run_label(summary.eval_run_id))}</div>
+    <details style="margin-top:10px;">
+      <summary>运行元信息</summary>
+      <div class="kv" style="margin-top:12px;">
+        <div>套件</div><div>{html.escape(summary.suite_id)}</div>
+        <div>模式</div><div>{html.escape(summary.eval_mode)}</div>
+        <div>分支</div><div>{html.escape(summary.git_branch)}</div>
+        <div>提交</div><div>{html.escape(summary.git_sha)}</div>
+        <div>原始运行 ID</div><div>{html.escape(summary.eval_run_id)}</div>
+      </div>
+    </details>
     <div class="grid">
-      <div class="card"><div class="metric">运行状态</div><div class="metric-value"><span class="status status-{html.escape(summary.status)}">{html.escape(summary.status)}</span></div></div>
+      <div class="card"><div class="metric">运行状态</div><div class="metric-value">{_status_badge(summary.status, challenge=str(summary.suite_id or "").startswith("challenge_"))}</div></div>
       <div class="card"><div class="metric">总分</div><div class="metric-value">{summary.total_score}</div></div>
       <div class="card"><div class="metric">通过率</div><div class="metric-value">{summary.pass_rate}</div></div>
       <div class="card"><div class="metric">模型配置</div><div class="metric-value" style="font-size:18px;">{html.escape(summary.profile_name)}</div></div>
@@ -230,6 +268,9 @@ def render_summary_html(
     </div>
     {blocked_block}
     {compare_block}
+    {challenge_delta_block}
+    {challenge_focus_block}
+    {history_block}
     {stability_block}
     {provider_reliability_block}
     <div class="section">
@@ -245,7 +286,7 @@ def render_summary_html(
         <table>
           <thead>
             <tr>
-              <th>case_id</th>
+              <th>用例</th>
               <th>状态</th>
               <th>当前分数</th>
               <th>基线分数</th>
@@ -295,12 +336,148 @@ def render_summary_html(
 </html>
 """
 
+def _render_challenge_focus_block(
+    summary: EvalRunSummary,
+    case_results: list[EvalCaseResult],
+    compare_index: dict[str, dict[str, object]],
+    compare_result: object,
+    stability_result: object,
+) -> str:
+    if not str(summary.suite_id or "").startswith("challenge_"):
+        return ""
+    failed_cases = [item for item in case_results if item.status != "passed"]
+    changed_cases = [item for item in case_results if str((compare_index.get(item.case_id) or {}).get("change_kind") or "unchanged") != "unchanged"]
+    focus_cases = failed_cases or changed_cases or case_results
+    component_summary = []
+    if isinstance(compare_result, dict):
+        component_summary = [item for item in list(compare_result.get("component_summary") or []) if isinstance(item, dict)]
+    stability_cases = []
+    if isinstance(stability_result, dict):
+        stability_cases = [item for item in list(stability_result.get("cases") or []) if isinstance(item, dict) and item.get("unstable")]
+    return f"""
+    <div class="panel challenge-focus">
+      <h2>Challenge 重点视图</h2>
+      <div class="muted">优先展示待提升用例、变化用例、组件变化和 rubric 未通过项。</div>
+      <div class="grid" style="margin-bottom:16px;">
+        <div class="card"><div class="metric">待提升用例</div><div class="metric-value">{len(failed_cases)}</div></div>
+        <div class="card"><div class="metric">变化用例</div><div class="metric-value">{len(changed_cases)}</div></div>
+        <div class="card"><div class="metric">波动用例</div><div class="metric-value">{len(stability_cases)}</div></div>
+        <div class="card"><div class="metric">当前通过率</div><div class="metric-value">{summary.pass_rate}</div></div>
+      </div>
+      <h3>待提升组件与 rubric</h3>
+      {_render_challenge_focus_cases(focus_cases, compare_index)}
+      <h3 style="margin-top:16px;">组件变化</h3>
+      {_render_component_summary(component_summary)}
+      <h3 style="margin-top:16px;">Case 分数对比</h3>
+      {_render_case_score_chart(case_results, compare_index)}
+      <h3 style="margin-top:16px;">组件分数对比</h3>
+      {_render_component_score_chart(component_summary)}
+    </div>
+    """
+
+
+def _render_challenge_focus_cases(
+    case_results: list[EvalCaseResult],
+    compare_index: dict[str, dict[str, object]],
+) -> str:
+    if not case_results:
+        return '<div class="muted">none</div>'
+    rows = [
+        '<div class="table-wrap"><table><thead><tr>'
+        '<th>用例</th><th>状态</th><th>分数</th><th>变化</th><th>待提升组件</th><th>未通过 rubric</th>'
+        '</tr></thead><tbody>'
+    ]
+    for result in case_results:
+        comparison = compare_index.get(result.case_id) or {}
+        failed_components = _failed_component_labels(result)
+        failed_rubrics = _failed_rubric_labels(result)
+        rows.append(
+            '<tr>'
+            f'<td>{_case_link(result)}</td>'
+            f'<td>{_status_badge(result.status, challenge=True)}</td>'
+            f'<td>{_text(result.total_score)}</td>'
+            f'<td>{_delta(comparison.get("total_score_delta"))}</td>'
+            f'<td>{_text(", ".join(failed_components) or "-")}</td>'
+            f'<td>{_text(", ".join(failed_rubrics[:8]) or "-")}</td>'
+            '</tr>'
+        )
+    rows.append('</tbody></table></div>')
+    return ''.join(rows)
+
+
+def _failed_component_labels(result: EvalCaseResult) -> list[str]:
+    labels: list[str] = []
+    for item in list((result.score_breakdown_json or {}).get("components") or []):
+        if not isinstance(item, dict) or item.get("passed") is True:
+            continue
+        label = str(item.get("label") or item.get("key") or "").strip()
+        if label:
+            labels.append(label)
+    return labels
+
+
+def _failed_rubric_labels(result: EvalCaseResult) -> list[str]:
+    labels: list[str] = []
+    for component in list((result.score_breakdown_json or {}).get("components") or []):
+        if not isinstance(component, dict):
+            continue
+        details = component.get("details") if isinstance(component.get("details"), dict) else {}
+        for rubric in list((details or {}).get("rubric_items") or []):
+            if not isinstance(rubric, dict) or rubric.get("passed") is True:
+                continue
+            component_key = str(component.get("key") or "").strip()
+            rubric_id = str(rubric.get("id") or "").strip()
+            label = f"{component_key}.{rubric_id}" if component_key and rubric_id else rubric_id or component_key
+            if label:
+                labels.append(label)
+    return labels
+
+
+def _render_history_block(stability_result: object, compare_result: object) -> str:
+    run_ids: list[str] = []
+    if isinstance(stability_result, dict):
+        run_ids.extend(str(item) for item in list(stability_result.get("history_eval_run_ids") or []) if str(item).strip())
+    if isinstance(compare_result, dict):
+        baseline = str(compare_result.get("baseline_eval_run_id") or "").strip()
+        if baseline and baseline not in run_ids:
+            run_ids.append(baseline)
+    if not run_ids:
+        return '<div class="panel"><h2>历史报告</h2><div class="muted">暂无历史评估报告。</div></div>'
+    links = ''.join(
+        f'<li><a href="/evals/reports/{html.escape(run_id)}">{_text(_run_label(run_id))}</a> <span class="muted">{_text(run_id)}</span></li>'
+        for run_id in run_ids
+    )
+    return f"""
+    <div class="panel">
+      <h2>历史报告</h2>
+      <div class="muted">同套件历史运行和当前基线，可用于查看分数、组件和 case 明细变化。</div>
+      <ul class="compare-list">{links}</ul>
+    </div>
+    """
+
+
+def _render_challenge_delta_block(summary: EvalRunSummary, compare_result: object) -> str:
+    if not str(summary.suite_id or "").startswith("challenge_") or not isinstance(compare_result, dict):
+        return ""
+    return f"""
+    <div class="panel">
+      <h2>Challenge Delta</h2>
+      <div class="kv">
+        <div>total_score_delta</div><div>{_delta(compare_result.get('total_score_delta'))}</div>
+        <div>pass_rate_delta</div><div>{_delta(compare_result.get('pass_rate_delta'))}</div>
+        <div>token_total_delta</div><div>{_delta(compare_result.get('token_total_delta'))}</div>
+        <div>tool_calls_delta</div><div>{_delta(compare_result.get('tool_calls_delta'))}</div>
+        <div>llm_requests_delta</div><div>{_delta(compare_result.get('llm_requests_delta'))}</div>
+      </div>
+    </div>
+    """
+
 
 def _render_compare_block(compare_result: object) -> str:
     if not isinstance(compare_result, dict):
-        return '<div class="panel"><h2>基线对比</h2><div class="muted">baseline=none</div></div>'
-    regressions = list(compare_result.get('regressions') or [])
-    improvements = list(compare_result.get('improvements') or [])
+        return '<div class="panel"><h2>基线对比</h2><div class="muted">暂无基线。</div></div>'
+    regressions = [item for item in list(compare_result.get('regressions') or []) if isinstance(item, dict)]
+    improvements = [item for item in list(compare_result.get('improvements') or []) if isinstance(item, dict)]
     component_summary = [
         item for item in list(compare_result.get('component_summary') or []) if isinstance(item, dict)
     ]
@@ -311,28 +488,79 @@ def _render_compare_block(compare_result: object) -> str:
             if isinstance(item, dict) and item.get('change_kind') == 'unchanged'
         ]
     )
+    same_case_regressions = [item for item in regressions if item.get('change_kind') != 'removed_case']
+    same_case_improvements = [item for item in improvements if item.get('change_kind') != 'new_case']
+    removed_cases = [item for item in regressions if item.get('change_kind') == 'removed_case']
+    new_cases = [item for item in improvements if item.get('change_kind') == 'new_case']
+    structure_changed = bool(new_cases or removed_cases)
+    headline_metric = (
+        f'<div class="card"><div class="metric">对比状态</div><div class="metric-value" style="font-size:18px;">套件结构变化</div></div>'
+        if structure_changed
+        else f'<div class="card"><div class="metric">总分变化</div><div class="metric-value">{_delta(compare_result.get('total_score_delta'))}</div></div>'
+    )
+    pass_rate_metric = (
+        f'<div class="card"><div class="metric">分数对比</div><div class="metric-value" style="font-size:18px;">看同名 case</div></div>'
+        if structure_changed
+        else f'<div class="card"><div class="metric">通过率变化</div><div class="metric-value">{_delta(compare_result.get('pass_rate_delta'))}</div></div>'
+    )
+    dynamic_badge = '<span class="status status-passed">当前基线动态对比</span>' if compare_result.get("compare_mode") == "current_baseline" else ""
+    dynamic_note = str(compare_result.get("compare_note") or "")
     return f"""
     <div class="panel">
-      <h2>基线对比</h2>
-      <div class="kv">
-        <div>基线运行</div><div>{_text(_run_label(str(compare_result.get('baseline_eval_run_id') or '')))}</div>
-        <div>基线原始 ID</div><div>{_text(compare_result.get('baseline_eval_run_id'))}</div>
-        <div>基线来源</div><div>{_text(compare_result.get('baseline_source'))}</div>
-        <div>总分变化</div><div>{_delta(compare_result.get('total_score_delta'))}</div>
-        <div>通过率变化</div><div>{_delta(compare_result.get('pass_rate_delta'))}</div>
-        <div>回归用例数</div><div>{len(regressions)}</div>
-        <div>改进用例数</div><div>{len(improvements)}</div>
-        <div>无变化用例数</div><div>{unchanged}</div>
+      <h2>本次结果与基线</h2>
+      {dynamic_badge}
+      {f'<div class="muted">{_text(dynamic_note)}</div>' if dynamic_note else ''}
+      <div class="muted">基线来源：{_text(_baseline_source_label(compare_result.get('baseline_source')))}。新增和移除 case 按套件变化展示；同名 case 用于判断分数升降。</div>
+      <div class="muted">当前基线 ID：<code>{_text(compare_result.get('baseline_eval_run_id'))}</code></div>
+      <div class="grid" style="margin-bottom:12px;">
+        {headline_metric}
+        {pass_rate_metric}
+        <div class="card"><div class="metric">同名下降</div><div class="metric-value">{len(same_case_regressions)}</div></div>
+        <div class="card"><div class="metric">同名提升</div><div class="metric-value">{len(same_case_improvements)}</div></div>
+        <div class="card"><div class="metric">新增 / 移除</div><div class="metric-value">{len(new_cases)} / {len(removed_cases)}</div></div>
       </div>
-      <h3 style="margin-top:16px;">回归项</h3>
-      {_render_compare_list(regressions)}
-      <h3 style="margin-top:16px;">改进项</h3>
-      {_render_compare_list(improvements)}
+      <details>
+        <summary>基线运行信息</summary>
+        <div class="kv" style="margin-top:12px;">
+          <div>基线运行</div><div>{_text(_run_label(str(compare_result.get('baseline_eval_run_id') or '')))}</div>
+          <div>基线原始 ID</div><div>{_text(compare_result.get('baseline_eval_run_id'))}</div>
+          <div>基线来源</div><div>{_text(_baseline_source_label(compare_result.get('baseline_source')))}</div>
+          <div>无变化用例数</div><div>{unchanged}</div>
+          <div>原始总分变化</div><div>{_delta(compare_result.get('total_score_delta'))}</div>
+          <div>原始通过率变化</div><div>{_delta(compare_result.get('pass_rate_delta'))}</div>
+        </div>
+      </details>
+      <h3 style="margin-top:16px;">同名下降</h3>
+      {_render_compare_list(same_case_regressions)}
+      <h3 style="margin-top:16px;">同名提升</h3>
+      {_render_compare_list(same_case_improvements)}
+      <h3 style="margin-top:16px;">新增用例</h3>
+      {_render_case_set_change_list(new_cases, kind='new')}
+      <h3 style="margin-top:16px;">移除用例</h3>
+      {_render_case_set_change_list(removed_cases, kind='removed')}
       <h3 style="margin-top:16px;">组件汇总</h3>
       {_render_component_summary(component_summary)}
     </div>
     """
 
+
+def _render_case_set_change_list(items: list[dict[str, object]], *, kind: str) -> str:
+    if not items:
+        return '<div class="muted">none</div>'
+    label = '新增' if kind == 'new' else '移除'
+    rows = ['<div class="table-wrap case-compact-table"><table><thead><tr><th>用例</th><th>类型</th><th>分数</th></tr></thead><tbody>']
+    for item in items:
+        case_id = str(item.get('case_id') or '')
+        score = item.get('current_total_score') if kind == 'new' else item.get('baseline_total_score')
+        rows.append(
+            '<tr>'
+            f'<td><div class="case-title">{_text(_case_display_name_from_id(case_id))}</div><div class="case-id">{_text(case_id)}</div></td>'
+            f'<td>{label}</td>'
+            f'<td>{_text(score)}</td>'
+            '</tr>'
+        )
+    rows.append('</tbody></table></div>')
+    return ''.join(rows)
 
 def _render_stability_block(stability_result: object) -> str:
     if not isinstance(stability_result, dict):
@@ -436,8 +664,9 @@ def _render_compare_list(items: list[object]) -> str:
     for item in items:
         if not isinstance(item, dict):
             continue
+        case_id = str(item.get('case_id') or '')
         rows.append(
-            f"<li><strong>{_text(item.get('case_id'))}</strong> · {_text(item.get('change_kind'))} · {_delta(item.get('total_score_delta'))}</li>"
+            f"<li><strong>{_text(_case_display_name_from_id(case_id))}</strong> <span class=\"case-id\">{_text(case_id)}</span> · {_text(_change_kind_label(str(item.get('change_kind') or '')))} · {_delta(item.get('total_score_delta'))}</li>"
         )
     return f"<ul class=\"compare-list\">{''.join(rows) or '<li>none</li>'}</ul>"
 
@@ -453,12 +682,12 @@ def _render_case_row(
     delta = comparison.get('total_score_delta') if isinstance(comparison, dict) else None
     return (
         f"<tr data-change-kind=\"{html.escape(change_kind)}\" class=\"change-{html.escape(change_kind)}\">"
-        f"<td><a href=\"#case-{html.escape(result.case_id)}\">{html.escape(result.case_id)}</a></td>"
-        f"<td><span class=\"status status-{html.escape(result.status)}\">{html.escape(result.status)}</span></td>"
+        f"<td>{_case_link(result)}</td>"
+        f"<td>{_status_badge(result.status, challenge=_is_challenge_result(result))}</td>"
         f"<td>{_text(current_score)}</td>"
         f"<td>{_text(baseline_score)}</td>"
         f"<td>{_delta(delta)}</td>"
-        f"<td>{html.escape(change_kind)}</td>"
+        f"<td>{_text(_change_kind_label(change_kind))}</td>"
         f"<td>{_text(result.run_id)}</td>"
         f"<td>{_text(result.trace_id)}</td>"
         f"<td><a href=\"cases/{html.escape(result.case_id)}.json\">cases/{html.escape(result.case_id)}.json</a></td>"
@@ -475,7 +704,7 @@ def _render_case_detail(
     baseline_score = comparison.get('baseline_total_score') if isinstance(comparison, dict) else None
     current_score = comparison.get('current_total_score') if isinstance(comparison, dict) else result.total_score
     compare_meta = (
-        f"<div class=\"muted\" style=\"margin-top:8px;\">变化类型={_text(comparison.get('change_kind'))} · 分数变化={_delta(delta)}</div>"
+        f"<div class=\"muted\" style=\"margin-top:8px;\">变化类型={_text(_change_kind_label(str(comparison.get('change_kind') or '')))} · 分数变化={_delta(delta)}</div>"
         if isinstance(comparison, dict)
         else ""
     )
@@ -484,26 +713,30 @@ def _render_case_detail(
     )
     return f"""
     <details id="case-{html.escape(result.case_id)}">
-      <summary>{html.escape(result.case_id)} · {html.escape(result.status)} · score={result.total_score}</summary>
+      <summary>{_text(_case_display_name(result))} · {_status_label(result.status, challenge=_is_challenge_result(result))} · 分数={result.total_score}<span class="case-id">{html.escape(result.case_id)}</span></summary>
       {compare_meta}
       <div class="kv" style="margin-top:12px;">
         <div>当前分数</div><div>{_text(current_score)}</div>
         <div>基线分数</div><div>{_text(baseline_score)}</div>
         <div>run_id</div><div>{_text(result.run_id)}</div>
         <div>trace_id</div><div>{_text(result.trace_id)}</div>
-        <div>llm_request_count</div><div>{result.llm_request_count}</div>
-        <div>tool_calls_count</div><div>{result.tool_calls_count}</div>
-        <div>duration_ms</div><div>{result.duration_ms}</div>
-        <div>artifact</div><div><a href="cases/{html.escape(result.case_id)}.json">cases/{html.escape(result.case_id)}.json</a></div>
+        <div>LLM 请求数</div><div>{result.llm_request_count}</div>
+        <div>工具调用数</div><div>{result.tool_calls_count}</div>
+        <div>耗时 ms</div><div>{result.duration_ms}</div>
+        <div>工件</div><div><a href="cases/{html.escape(result.case_id)}.json">cases/{html.escape(result.case_id)}.json</a></div>
       </div>
       <h3 style="margin-top:16px;">组件对比</h3>
       {component_rows}
       <h3 style="margin-top:16px;">最终输出</h3>
       <pre>{html.escape(result.final_text or '')}</pre>
-      <h3 style="margin-top:16px;">评分明细</h3>
-      <pre>{html.escape(json.dumps(result.score_breakdown_json, ensure_ascii=False, indent=2))}</pre>
-      <h3 style="margin-top:16px;">诊断信息</h3>
-      <pre>{html.escape(json.dumps(result.diagnostics_json, ensure_ascii=False, indent=2))}</pre>
+      <details style="margin-top:16px;">
+        <summary>评分原始 JSON</summary>
+        <pre>{html.escape(json.dumps(result.score_breakdown_json, ensure_ascii=False, indent=2))}</pre>
+      </details>
+      <details>
+        <summary>诊断原始 JSON</summary>
+        <pre>{html.escape(json.dumps(result.diagnostics_json, ensure_ascii=False, indent=2))}</pre>
+      </details>
     </details>
     """
 
@@ -584,14 +817,14 @@ def _render_stability_cases(items: list[dict[str, object]]) -> str:
         return '<div class="muted">none</div>'
     rows = [
         "<div class=\"table-wrap\"><table><thead><tr>"
-        "<th>case_id</th><th>分数波动</th><th>回退占比</th><th>锚点强度</th><th>原因</th>"
+        "<th>用例</th><th>分数波动</th><th>回退占比</th><th>锚点强度</th><th>原因</th>"
         "</tr></thead><tbody>"
     ]
     for item in items:
         score = item.get("score") if isinstance(item.get("score"), dict) else {}
         rows.append(
             "<tr>"
-            f"<td>{_text(item.get('case_id'))}</td>"
+            f"<td><div class=\"case-title\">{_text(_case_display_name_from_id(str(item.get('case_id') or '')))}</div><div class=\"case-id\">{_text(item.get('case_id'))}</div></td>"
             f"<td>{_stats_inline(score)}</td>"
             f"<td>{_text(item.get('failover_rate'))}</td>"
             f"<td>{_text(item.get('anchor_strength'))}</td>"
@@ -620,6 +853,194 @@ def _render_stability_components(items: list[dict[str, object]]) -> str:
         )
     rows.append("</tbody></table></div>")
     return "".join(rows)
+
+
+def _case_meta(result: EvalCaseResult) -> dict[str, object]:
+    raw = (result.score_breakdown_json or {}).get("case_meta")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _case_display_name(result: EvalCaseResult) -> str:
+    meta = _case_meta(result)
+    display = str(meta.get("display_name") or "").strip()
+    if display:
+        return display
+    mapped = _case_display_name_from_id(result.case_id)
+    if mapped != result.case_id:
+        return mapped
+    description = str(meta.get("description") or "").strip()
+    if description:
+        return description
+    return result.case_id
+
+
+def _case_display_name_from_id(case_id: str) -> str:
+    return _CASE_DISPLAY_NAMES.get(case_id, case_id)
+
+
+def _case_link(result: EvalCaseResult) -> str:
+    title = _text(_case_display_name(result))
+    case_id = html.escape(result.case_id)
+    return f'<a href="#case-{case_id}"><div class="case-title">{title}</div><div class="case-id">{case_id}</div></a>'
+
+
+def _is_challenge_result(result: EvalCaseResult) -> bool:
+    return str(result.family or "") == "challenge" or str(result.eval_run_id or "").startswith("eval_challenge_")
+
+
+def _baseline_source_label(value: object) -> str:
+    raw = str(value or "").strip()
+    if raw == "latest_passed":
+        return "最近一次通过的同套件运行"
+    if raw.startswith("named:"):
+        return f"命名基线 {raw.removeprefix('named:')}"
+    if raw == "explicit_run":
+        return "手动指定运行"
+    return raw or "-"
+
+
+def _change_kind_label(change_kind: str) -> str:
+    return {
+        "improvement": "提升",
+        "regression": "下降",
+        "unchanged": "持平",
+        "new_case": "新增用例",
+        "removed_case": "移除用例",
+    }.get(str(change_kind), str(change_kind))
+
+
+def _status_label(status: str, *, challenge: bool = False) -> str:
+    if challenge:
+        return {"passed": "达标", "failed": "待提升", "blocked": "阻塞"}.get(str(status), str(status))
+    return {"passed": "通过", "failed": "待提升", "blocked": "阻塞"}.get(str(status), str(status))
+
+
+def _status_badge(status: str, *, challenge: bool = False) -> str:
+    raw = html.escape(str(status))
+    return f'<span class="status status-{raw}">{_text(_status_label(str(status), challenge=challenge))}</span>'
+
+
+def _render_case_score_chart(
+    case_results: list[EvalCaseResult],
+    compare_index: dict[str, dict[str, object]],
+) -> str:
+    comparable: list[tuple[EvalCaseResult, dict[str, object]]] = []
+    new_cases: list[EvalCaseResult] = []
+    for result in case_results:
+        comparison = compare_index.get(result.case_id) or {}
+        if comparison and comparison.get("baseline_total_score") is not None:
+            comparable.append((result, comparison))
+            continue
+        new_cases.append(result)
+    if not comparable and not new_cases:
+        return '<div class="muted">none</div>'
+    baseline_id = _baseline_id_from_compare_index(compare_index)
+    rows = [
+        f'<div class="muted">基线 ID：<code>{_text(baseline_id)}</code></div>',
+        _score_chart_legend(),
+        '<div class="score-chart">',
+    ]
+    if comparable:
+        for result, comparison in comparable:
+            current = _safe_score(comparison.get("current_total_score"), result.total_score)
+            baseline = _safe_score(comparison.get("baseline_total_score"), 0.0)
+            rows.append(_render_score_card(_case_display_name(result), current, baseline))
+    else:
+        rows.append('<div class="muted">本次 case 都是新增，暂无同名基线分数。</div>')
+    rows.append('</div>')
+    if new_cases:
+        rows.append('<div class="muted" style="margin-top:10px;">新增 case：')
+        rows.append('、'.join(_text(_case_display_name(item)) for item in new_cases))
+        rows.append('</div>')
+    return ''.join(rows)
+
+
+def _render_component_score_chart(items: list[dict[str, object]]) -> str:
+    comparable = [item for item in items if item.get("current_score") is not None and item.get("baseline_score") is not None]
+    if not comparable:
+        return '<div class="muted">暂无同名 case 的组件基线，组件对比会在 case 集合稳定后显示。</div>'
+    rows = [_score_chart_legend(), '<div class="score-chart">']
+    for item in comparable:
+        label = str(item.get("label") or item.get("key") or "-")
+        rows.append(_render_score_card(label, _safe_score(item.get("current_score"), 0.0), _safe_score(item.get("baseline_score"), 0.0)))
+    rows.append('</div>')
+    return ''.join(rows)
+
+
+def _score_chart_legend() -> str:
+    return '<div class="legend"><span><i class="legend-dot" style="background:#175cd3"></i>当前</span><span><i class="legend-dot" style="background:#98a2b3"></i>基线</span></div>'
+
+
+def _baseline_id_from_compare_index(compare_index: dict[str, dict[str, object]]) -> str:
+    for item in compare_index.values():
+        value = item.get("baseline_eval_run_id")
+        if value:
+            return str(value)
+    return "-"
+
+
+def _render_score_card(label: str, current: float, baseline: float) -> str:
+    delta = round(current - baseline, 4)
+    return (
+        '<div class="score-card">'
+        '<div class="score-head">'
+        f'<div class="score-name">{_text(label)}</div>'
+        f'<div class="score-chip">当前 {_text(_format_score(current))}</div>'
+        f'<div class="score-chip">基线 {_text(_format_score(baseline))}</div>'
+        f'<div class="score-change">{_delta(delta)}</div>'
+        '</div>'
+        '<div class="score-bars">'
+        f'{_render_score_bar("当前", current, "score-fill-current")}'
+        f'{_render_score_bar("基线", baseline, "score-fill-baseline")}'
+        '</div>'
+        '</div>'
+    )
+
+
+def _render_score_bar(label: str, score: float, fill_class: str) -> str:
+    width = max(0.0, min(100.0, score))
+    return (
+        '<div class="score-bar-row">'
+        f'<div>{_text(label)}</div>'
+        f'<div class="score-track"><div class="{html.escape(fill_class)}" style="width:{width}%"></div></div>'
+        f'<div>{_text(_format_score(score))}</div>'
+        '</div>'
+    )
+
+
+def _format_score(value: float) -> str:
+    rounded = round(value, 4)
+    if rounded.is_integer():
+        return str(int(rounded))
+    return str(rounded)
+
+
+def _safe_score(value: object, fallback: float) -> float:
+    try:
+        return round(float(value), 4)
+    except (TypeError, ValueError):
+        return round(float(fallback), 4)
+
+
+_CASE_DISPLAY_NAMES = {
+    "memory_interference_recall_cn": "记忆抗临时干扰",
+    "memory_scope_isolation_cn": "记忆 scope 隔离",
+    "memory_overwrite_conflict_cn": "记忆覆盖冲突处理",
+    "memory_should_not_write_cn": "临时指令避免写入记忆",
+    "subagent_delegation_boundary_cn": "子代理边界委派",
+    "subagent_no_duplicate_dispatch_cn": "子代理避免重复派发",
+    "subagent_incomplete_child_handling_cn": "子代理未完成时避免编造",
+    "subagent_multi_child_synthesis_cn": "旧版：多子代理综合",
+    "subagent_should_delegate_complex_task_cn": "旧版：复杂任务委派",
+    "subagent_should_stay_main_thread_cn": "旧版：主线程直答",
+    "mcp_multi_source_repo_evidence_cn": "MCP 多来源仓库证据",
+    "mcp_empty_result_recovery_cn": "MCP 空结果恢复",
+    "mcp_tool_result_attribution_cn": "MCP 工具结果归因",
+    "integrated_memory_mcp_conflict_resolution_cn": "记忆与 MCP 冲突处理",
+    "integrated_subagent_mcp_evidence_boundary_cn": "子代理与 MCP 证据边界",
+    "skill_required_multistep_apply_cn": "需要 skill 的多步骤执行",
+    "skill_unneeded_complex_direct_cn": "复杂直答避免误用 skill",
+}
 
 
 def _stats_inline(value: object) -> str:
@@ -675,6 +1096,10 @@ def _suite_label(value: str) -> str:
         'subagent_task_progress': '子代理进度链路',
         'subagent_external_mcp_completion': '子代理外部 MCP 完成链路',
         'ops_smoke': '运维冒烟链路',
+        'challenge_memory': 'Challenge：记忆',
+        'challenge_subagent': 'Challenge：子代理',
+        'challenge_mcp': 'Challenge：MCP',
+        'challenge_integrated': 'Challenge：集成链路',
     }.get(value, value)
 
 

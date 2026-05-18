@@ -1,0 +1,84 @@
+case_id = "skill_unneeded_complex_direct_cn"
+suite_id = "challenge_integrated"
+family = "challenge"
+grader_id = "challenge"
+enabled = true
+required = true
+description = "Answer a direct conceptual task without loading skill or subagent"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["challenge", "integrated", "skill", "negative", "hard"]
+
+gate_components = ["task_success", "tool_path_quality"]
+
+[[turns]]
+role = "user"
+content = "用三句话解释 SQLite structured memory、FTS 检索、MEMORY.md 导出各自解决什么问题。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+task_success = 35
+reasoning_quality = 20
+tool_path_quality = 20
+state_continuity = 15
+efficiency = 10
+
+[grader_case.task_success]
+contains_all = ["SQLite", "FTS", "MEMORY.md"]
+contains_any = ["structured memory", "检索", "导出"]
+
+[[grader_case.task_success.rubric_items]]
+id = "sqlite_role"
+points = 3
+contains_any = ["SQLite", "结构化", "structured memory"]
+
+[[grader_case.task_success.rubric_items]]
+id = "fts_role"
+points = 3
+contains_any = ["FTS", "检索", "搜索"]
+
+[[grader_case.task_success.rubric_items]]
+id = "memory_md_role"
+points = 3
+contains_any = ["MEMORY.md", "导出", "可编辑"]
+
+[grader_case.reasoning_quality]
+contains_any = ["分别", "解决", "问题"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "separates_three_roles"
+points = 4
+contains_all = ["SQLite", "FTS", "MEMORY.md"]
+
+[grader_case.tool_path_quality]
+forbidden_tools = ["skill", "spawn_subagent", "mcp", "memory"]
+max_tool_calls = 0
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "no_skill"
+points = 4
+forbidden_tools = ["skill"]
+max_tool_calls = 0
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "no_subagent_or_mcp"
+points = 4
+forbidden_tools = ["spawn_subagent", "mcp", "memory"]
+max_tool_calls = 0
+
+[grader_case.state_continuity]
+forbidden_memory_tokens = ["SQLite structured memory"]
+
+[[grader_case.state_continuity.rubric_items]]
+id = "no_memory_write"
+points = 3
+forbidden_memory_tokens = ["SQLite structured memory"]
+
+[grader_case.efficiency]
+max_llm_requests = 3
+max_tool_calls = 0
+max_repair_attempts = 1

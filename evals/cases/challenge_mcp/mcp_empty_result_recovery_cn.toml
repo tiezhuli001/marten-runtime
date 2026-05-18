@@ -1,0 +1,94 @@
+case_id = "mcp_empty_result_recovery_cn"
+suite_id = "challenge_mcp"
+family = "challenge"
+grader_id = "challenge"
+enabled = true
+required = true
+description = "Recover from sparse MCP result by following up with README evidence"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["challenge", "mcp", "github", "recovery", "hard"]
+
+gate_components = ["task_success", "tool_path_quality"]
+
+[[turns]]
+role = "user"
+content = "调用 GitHub MCP 在 tiezhuli001/marten-runtime 仓库搜索 unlikely-empty-eval-marker-xyz。若结果为空或信息不足，继续调用 GitHub MCP 读取 README.md，并说明你基于哪个后续来源恢复回答。"
+
+[setup]
+session_history_fixture = "none"
+memory_fixture = "none"
+automation_fixture = "none"
+
+[component_weights]
+task_success = 35
+reasoning_quality = 20
+tool_path_quality = 20
+state_continuity = 15
+efficiency = 10
+
+[grader_case.task_success]
+contains_any = ["README", "后续", "恢复", "信息不足", "marten-runtime", "runtime"]
+forbid_all = ["编造", "工具执行失败", "请重试"]
+
+[[grader_case.task_success.rubric_items]]
+id = "acknowledges_sparse_result"
+points = 3
+contains_any = ["为空", "信息不足", "没有结果", "搜索结果"]
+
+[[grader_case.task_success.rubric_items]]
+id = "uses_readme_recovery"
+points = 4
+contains_any = ["README", "README.md"]
+
+[[grader_case.task_success.rubric_items]]
+id = "states_recovery_basis"
+points = 3
+contains_any = ["基于", "后续来源", "恢复", "读取"]
+
+[[grader_case.task_success.rubric_items]]
+id = "no_invention"
+points = 2
+forbid_all = ["编造", "工具执行失败", "请重试"]
+
+[grader_case.reasoning_quality]
+contains_any = ["信息不足", "继续", "README", "基于"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "explains_recovery_path"
+points = 4
+contains_any = ["继续", "后续", "恢复"]
+
+[[grader_case.reasoning_quality.rubric_items]]
+id = "attributes_readme"
+points = 3
+contains_any = ["README", "README.md"]
+
+[grader_case.tool_path_quality]
+required_tools = ["mcp"]
+min_tool_calls = 2
+max_tool_calls = 8
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "initial_sparse_mcp"
+points = 3
+required_tools = ["mcp"]
+min_tool_calls = 1
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "followup_mcp"
+points = 5
+required_tools = ["mcp"]
+min_tool_calls = 2
+
+[[grader_case.tool_path_quality.rubric_items]]
+id = "bounded_calls"
+points = 2
+max_tool_calls = 8
+
+[grader_case.state_continuity]
+
+[grader_case.efficiency]
+max_llm_requests = 10
+max_tool_calls = 8
+max_repair_attempts = 2

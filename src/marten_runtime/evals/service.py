@@ -86,10 +86,11 @@ def run_eval_suite(
     resolved_report_root = _resolve_repo_relative_path(resolved_repo_root, request.report_root)
     suite = load_suite_spec(resolve_suite_path(resolved_repo_root, request.suite_id))
     store = SQLiteEvalStore(_resolve_repo_relative_path(resolved_repo_root, request.db_path))
+    baseline_name = request.baseline or _default_baseline_name_for_suite(suite.suite_id)
     baseline_eval_run_id, baseline_source = resolve_compare_baseline(
         store,
         suite_id=suite.suite_id,
-        baseline_name=request.baseline,
+        baseline_name=baseline_name,
         baseline_run_id=request.baseline_run_id,
     )
     blocked_reason = resolve_suite_dependency_block(
@@ -222,7 +223,7 @@ def run_eval_suite(
             case_specs=suite.cases,
             window_size=STABILITY_WINDOW,
         )
-    if finished.status == "passed":
+    if finished.status == "passed" and not suite.suite_id.startswith("challenge_"):
         store.write_baseline(suite.suite_id, "latest_passed", finished.eval_run_id)
     if request.write_baseline and finished.status == "passed":
         store.write_baseline(suite.suite_id, request.write_baseline, finished.eval_run_id)
@@ -244,6 +245,10 @@ def run_eval_suite(
         case_count=len(case_results),
     )
 
+
+
+def _default_baseline_name_for_suite(suite_id: str) -> str:
+    return "challenge_current" if str(suite_id or "").startswith("challenge_") else "latest_passed"
 
 def _format_case_blocked_reason(case_results) -> str | None:  # noqa: ANN001
     blocked = [item for item in case_results if item.blocked_reason]

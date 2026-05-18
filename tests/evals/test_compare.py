@@ -327,6 +327,48 @@ class EvalCompareTests(unittest.TestCase):
 
         self.assertEqual(_extract_total_tokens_from_result(result), 4653.0)
 
+    def test_compare_eval_runs_reports_token_tool_and_llm_request_deltas(self) -> None:
+        baseline_summary = self._summary("eval_base", total_score=90.0, pass_rate=1.0)
+        current_summary = self._summary("eval_now", total_score=95.0, pass_rate=1.0)
+        baseline_cases = [
+            self._case("eval_base", "challenge_case", total_score=90.0, status="passed").model_copy(
+                update={
+                    "llm_request_count": 4,
+                    "tool_calls_count": 5,
+                    "diagnostics_json": {
+                        "turns": [
+                            {"run": {"latest_actual_usage": {"total_tokens": 2000}}}
+                        ]
+                    },
+                }
+            )
+        ]
+        current_cases = [
+            self._case("eval_now", "challenge_case", total_score=95.0, status="passed").model_copy(
+                update={
+                    "llm_request_count": 3,
+                    "tool_calls_count": 4,
+                    "diagnostics_json": {
+                        "turns": [
+                            {"run": {"latest_actual_usage": {"total_tokens": 1500}}}
+                        ]
+                    },
+                }
+            )
+        ]
+
+        compare = compare_eval_runs(
+            current_summary,
+            current_cases,
+            baseline_summary,
+            baseline_cases,
+            baseline_source="latest_passed",
+        )
+
+        self.assertEqual(compare.token_total_delta, -500.0)
+        self.assertEqual(compare.tool_calls_delta, -1.0)
+        self.assertEqual(compare.llm_requests_delta, -1.0)
+
 
 if __name__ == "__main__":
     unittest.main()
