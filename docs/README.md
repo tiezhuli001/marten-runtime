@@ -92,6 +92,7 @@ PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
 - `main_chain_mcp`：真实 MCP 工具链路，只用于 `live` mode
 - `main_chain_subagent`：主线程与子代理链路
 - `memory_long_horizon`：长期记忆收益
+- `knowledge_retrieval`：RAG 检索、重排、namespace 隔离和知识库操作回归
 - `subagent_task_progress`：子代理调度与非 MCP 任务推进
 - `subagent_external_mcp_completion`：子代理外部 MCP 完成链路，只用于 `live` mode
 

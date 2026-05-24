@@ -14,6 +14,7 @@ class EvalSetupSpec(BaseModel):
     session_history_fixture: str = "none"
     memory_fixture: str = "none"
     automation_fixture: str = "none"
+    knowledge_fixture: str = "none"
 
 
 class EvalFinalTextExpectations(BaseModel):

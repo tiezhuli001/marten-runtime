@@ -18,9 +18,10 @@ def _close_policy_loop() -> None:
     loop = getattr(local, "_loop", None)
     if not isinstance(loop, asyncio.AbstractEventLoop):
         return
-    if loop.is_running() or loop.is_closed():
+    if loop.is_running():
         return
-    loop.close()
+    if not loop.is_closed():
+        loop.close()
     try:
         asyncio.set_event_loop(None)
     except RuntimeError:
@@ -35,12 +36,13 @@ def _close_known_global_loops() -> None:
         loop = getattr(module, attribute_name, None)
         if not isinstance(loop, asyncio.AbstractEventLoop):
             continue
-        if loop.is_running() or loop.is_closed():
+        if loop.is_running():
             continue
-        try:
-            loop.close()
-        except Exception:
-            pass
+        if not loop.is_closed():
+            try:
+                loop.close()
+            except Exception:
+                pass
         try:
             setattr(module, attribute_name, None)
         except Exception:

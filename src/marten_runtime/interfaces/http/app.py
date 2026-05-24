@@ -53,6 +53,8 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.runtime = runtime
+        if getattr(runtime, "compaction_worker", None) is not None:
+            runtime.compaction_worker.start()
         if (
             runtime.channels_config.feishu.enabled
             and runtime.channels_config.feishu.connection_mode == "websocket"
@@ -73,7 +75,10 @@ def create_app(
                 logger.warning("subagent_service.shutdown failed: %s", exc, exc_info=True)
             finally:
                 try:
-                    runtime.mcp_client.shutdown()
+                    mcp_client = getattr(runtime, "mcp_client", None)
+                    shutdown = getattr(mcp_client, "shutdown", None)
+                    if callable(shutdown):
+                        shutdown()
                 except Exception as exc:
                     logger.warning("mcp_client.shutdown failed: %s", exc, exc_info=True)
                 try:

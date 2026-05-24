@@ -1,0 +1,15 @@
+{
+  "namespace": "fanqie",
+  "sources": [
+    {
+      "title": "Mismatch Fixture",
+      "kind": "text",
+      "uri": "eval://fanqie/mismatch",
+      "metadata": {"novel_id": "fixture_mismatch"},
+      "text": "config mismatch 场景仍可通过 FTS 查询。mismatch_chunk"
+    }
+  ],
+  "actions": [
+    {"action": "clear_embeddings"}
+  ]
+}

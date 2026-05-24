@@ -1,0 +1,22 @@
+{
+  "namespace": "fanqie",
+  "sources": [
+    {
+      "title": "Delete Me",
+      "kind": "text",
+      "uri": "eval://fanqie/delete",
+      "metadata": {"novel_id": "fixture_delete"},
+      "text": "这一段删除后不能召回。deleted_chunk"
+    },
+    {
+      "title": "Remain",
+      "kind": "text",
+      "uri": "eval://fanqie/remain",
+      "metadata": {"novel_id": "fixture_remain"},
+      "text": "这一段删除后仍应召回。remaining_chunk"
+    }
+  ],
+  "actions": [
+    {"action": "delete_source_by_title", "title": "Delete Me"}
+  ]
+}

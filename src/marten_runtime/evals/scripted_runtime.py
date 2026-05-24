@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from marten_runtime.evals.models import EvalCaseSpec
 from marten_runtime.runtime.finalization_contract_prompt import (
     FinalizationContractDraft,
@@ -45,6 +47,7 @@ class ScriptedEvalLLMClient:
         self._memory_written = False
         self._memory_replaced = False
         self._subagent_spawn_count = 0
+        self._knowledge_large_progress_polls = 0
 
     def complete(self, request):  # noqa: ANN001
         self.requests.append(request)
@@ -101,6 +104,9 @@ class ScriptedEvalLLMClient:
         scripted_subagent = _scripted_subagent_suite_reply(self)
         if scripted_subagent is not None:
             return _normalize_reply_contract_metadata(request, scripted_subagent)
+        scripted_knowledge = _scripted_knowledge_suite_reply(self)
+        if scripted_knowledge is not None:
+            return _normalize_reply_contract_metadata(request, scripted_knowledge)
         return _normalize_reply_contract_metadata(
             request,
             _scripted_main_chain_reply(self, request, message),
@@ -226,6 +232,29 @@ def _scripted_tool_followup_reply(llm: ScriptedEvalLLMClient, request) -> LLMRep
                 )
             ),
         )
+    if llm.case_id == "knowledge_large_file_progress_cn":
+        requested_tool_name = str(request.requested_tool_name or "").strip()
+        tool_result = request.tool_result if isinstance(request.tool_result, dict) else {}
+        if requested_tool_name == "knowledge" and str(tool_result.get("action") or "") == "ingest_file":
+            job_id = str(tool_result.get("job_id") or "").strip()
+            if job_id:
+                llm.context["knowledge_large_job_id"] = job_id
+                llm._knowledge_large_progress_polls += 1
+                return LLMReply(
+                    tool_name="knowledge",
+                    tool_payload={"action": "ingest_status", "namespace": "fanqie", "job_id": job_id},
+                )
+        if requested_tool_name == "knowledge" and str(request.requested_tool_payload.get("action") or "") == "ingest_status":
+            status = str(tool_result.get("status") or "")
+            job_id = str(tool_result.get("job_id") or llm.context.get("knowledge_large_job_id") or "").strip()
+            if status not in {"completed", "failed", "cancelled"} and llm._knowledge_large_progress_polls < 8 and job_id:
+                llm._knowledge_large_progress_polls += 1
+                time.sleep(0.2)
+                return LLMReply(
+                    tool_name="knowledge",
+                    tool_payload={"action": "ingest_status", "namespace": "fanqie", "job_id": job_id},
+                )
+            return _contracted_final_reply(str(tool_result))
     return None
 
 
@@ -413,6 +442,28 @@ def _scripted_subagent_suite_reply(llm: ScriptedEvalLLMClient) -> LLMReply | Non
     if llm.case_id == "subagent_simple_request_stays_main_thread_cn":
         return _contracted_final_reply("这个项目的主链路是 channel -> binding -> runtime loop -> tool -> delivery。")
     return None
+
+
+def _scripted_knowledge_suite_reply(llm: ScriptedEvalLLMClient) -> LLMReply | None:
+    if not llm.case_id.startswith("knowledge_"):
+        return None
+    if llm.case_id == "knowledge_large_file_progress_cn":
+        return LLMReply(
+            tool_name="knowledge",
+            tool_payload={"action": "ingest_file", "namespace": "fanqie", "file_path": "evals/fixtures/knowledge/fanqie_large.txt", "source": {"title": "Fanqie Large", "kind": "txt", "uri": "eval://fanqie/large"}},
+        )
+    query_by_case = {
+        "knowledge_keyword_recall_cn": "fanqie_chapter_1",
+        "knowledge_semantic_recall_cn": "fanqie_master_scene",
+        "knowledge_rerank_improvement_cn": "fanqie_best_chunk",
+        "knowledge_namespace_isolation_cn": "fanqie_only",
+        "knowledge_config_mismatch_cn": "mismatch_chunk",
+        "knowledge_delete_recall_cn": "remaining_chunk",
+    }
+    return LLMReply(
+        tool_name="knowledge",
+        tool_payload={"action": "search", "namespace": "fanqie", "query": query_by_case.get(llm.case_id, llm.case_id), "top_k": 5},
+    )
 
 
 def _scripted_subagent_child_reply(llm: ScriptedEvalLLMClient, request) -> LLMReply:  # noqa: ANN001

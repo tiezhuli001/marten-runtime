@@ -1,0 +1,27 @@
+case_id = "knowledge_config_mismatch_cn"
+suite_id = "knowledge_retrieval"
+family = "knowledge_retrieval"
+grader_id = "knowledge_retrieval"
+enabled = true
+required = true
+description = "config mismatch 提示"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["knowledge", "rag"]
+
+gate_components = ["config_mismatch"]
+
+[[turns]]
+role = "user"
+content = "执行 config mismatch 提示 测试"
+
+[component_weights]
+config_mismatch = 100
+
+
+[grader_case]
+expected_vector_status = "config_mismatch"
+required_diagnostic_contains = ["knowledge.reindex --namespace fanqie"]
+
+[setup]
+knowledge_fixture = "fanqie_config_mismatch.json"

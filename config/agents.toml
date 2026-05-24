@@ -2,7 +2,7 @@
 enabled = true
 role = "general_assistant"
 asset_root = "agents/main"
-allowed_tools = ["automation", "mcp", "runtime", "self_improve", "session", "memory", "skill", "time", "spawn_subagent", "cancel_subagent"]
+allowed_tools = ["automation", "mcp", "runtime", "self_improve", "session", "memory", "knowledge", "skill", "time", "spawn_subagent", "cancel_subagent"]
 prompt_mode = "full"
 model_profile = "openai_gpt_5_4"
 

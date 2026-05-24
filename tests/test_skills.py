@@ -677,6 +677,7 @@ class SkillTests(unittest.TestCase):
             [item.skill_id for item in http_runtime.snapshot.heads],
             [
                 "automation_management",
+                "knowledge_management",
                 "self_improve",
                 "self_improve_management",
                 "self_improve_review",
@@ -686,6 +687,7 @@ class SkillTests(unittest.TestCase):
             [item.skill_id for item in feishu_runtime.snapshot.heads],
             [
                 "automation_management",
+                "knowledge_management",
                 "self_improve",
                 "self_improve_management",
                 "self_improve_review",

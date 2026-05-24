@@ -1390,3 +1390,25 @@
   - timeline truth absorbed into ADR 0003 + this changelog; the original self-improve design doc was removed during repo slimming
 - Verification:
   - self-improve tests and live runtime summary paths remain green
+
+### 2026-05-19: Knowledge/RAG Runtime Capability added as a namespace-scoped builtin
+
+- Change:
+  - Added `src/marten_runtime/knowledge/` for namespace-scoped source, chunk, embedding, retrieval, reindex, ingest job, and stats operations.
+  - Added builtin `knowledge` tool actions: `ingest_text`, `ingest_file`, `ingest_status`, `cancel_ingest`, `search`, `get_chunk`, `delete_source`, `reindex`, `stats`.
+  - Added `skills/knowledge_management/SKILL.md` as a lightweight workflow guide; state changes still execute through the builtin tool.
+  - Added `config/knowledge.example.toml` with configurable chunking, embedding, reranker, vector store, and search settings.
+  - Added sqlite-vec as the lightweight embedded vector backend; missing extension degrades search to FTS with diagnostics.
+  - Added `knowledge_retrieval` eval suite and family grader for recall, rerank, namespace isolation, config mismatch, progress, and delete behavior.
+- Why:
+  - Personal assistant and future domain agents need one reusable RAG capability keyed by namespace.
+  - LLM-first boundary stays intact: host exposes and executes capability actions; the model chooses when to use them.
+- Source of truth:
+  - `src/marten_runtime/knowledge/`
+  - `src/marten_runtime/tools/builtins/knowledge_tool.py`
+  - `skills/knowledge_management/SKILL.md`
+  - `config/knowledge.example.toml`
+  - `evals/suites/knowledge_retrieval.toml`
+- Verification:
+  - `PYTHONPATH=src .venv/bin/python -m unittest tests.test_knowledge_config tests.test_knowledge_store tests.test_knowledge_chunking tests.test_knowledge_embeddings tests.test_knowledge_rerankers tests.test_knowledge_vector_store tests.test_knowledge_retrieval tests.test_knowledge_service tests.test_knowledge_tool tests.test_knowledge_runtime_capabilities tests.test_knowledge_management_skill tests.test_runtime_capabilities -v`
+  - `PYTHONPATH=src .venv/bin/python -m unittest tests.evals.test_knowledge_family_grader tests.evals.test_grader_registry tests.evals.test_suite_manifests -v`

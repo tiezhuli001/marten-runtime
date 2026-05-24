@@ -36,6 +36,33 @@ class EventLoopCleanupTests(unittest.TestCase):
 
         self.assertIsNone(fake_module.loop)
 
+    def test_close_idle_event_loops_clears_closed_policy_loop(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.close()
+
+        close_idle_event_loops()
+
+        with self.assertRaises(RuntimeError):
+            asyncio.get_event_loop()
+
+    def test_close_idle_event_loops_clears_closed_known_global_loop(self) -> None:
+        module_name = "lark_oapi.ws.client"
+        old_module = sys.modules.get(module_name)
+        loop = asyncio.new_event_loop()
+        loop.close()
+        fake_module = types.SimpleNamespace(loop=loop)
+        sys.modules[module_name] = fake_module
+        try:
+            close_idle_event_loops()
+        finally:
+            if old_module is None:
+                sys.modules.pop(module_name, None)
+            else:
+                sys.modules[module_name] = old_module
+
+        self.assertIsNone(fake_module.loop)
+
 
 if __name__ == "__main__":
     unittest.main()
