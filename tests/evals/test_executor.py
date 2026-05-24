@@ -19,7 +19,9 @@ from marten_runtime.evals.executor import (
     _should_include_live_mcp_scaffold,
     execute_suite,
 )
+from marten_runtime.evals.case_state import _seed_knowledge_fixture
 from marten_runtime.evals.graders import grade_case_result
+from marten_runtime.knowledge.config import load_knowledge_config
 from marten_runtime.evals.loader import load_case_spec, load_suite_spec
 from marten_runtime.evals.scripted_runtime import (
     FixedReplyLLMClient,
@@ -36,7 +38,9 @@ from marten_runtime.evals.models import (
     EvalToolCallExpectations,
     EvalTurnSpec,
     EvalWeights,
+    EvalSetupSpec,
 )
+from fastapi.testclient import TestClient
 from marten_runtime.interfaces.http.app import create_app
 from marten_runtime.runtime.llm_client import LLMRequest
 from marten_runtime.runtime.recovery_flow import assess_finalization_text_with_details
@@ -290,6 +294,43 @@ class EvalExecutorTests(unittest.TestCase):
         self.assertIn("## global / preference / preferences", exported)
         self.assertNotIn("## global / fact / preferences", exported)
 
+    def test_seed_knowledge_fixture_raises_when_knowledge_ingest_fails(self) -> None:
+        class _KnowledgeServiceStub:
+            def ingest_text(self, *, namespace: str, source: dict[str, object]) -> dict[str, object]:
+                return {"ok": True}
+
+        class _Runtime:
+            def __init__(self) -> None:
+                self.knowledge_service = _KnowledgeServiceStub()
+
+        runtime = _Runtime()
+        case = EvalCaseSpec(
+            case_id="knowledge_fixture_failure_cn",
+            suite_id="knowledge_retrieval",
+            family="knowledge_retrieval",
+            grader_id="knowledge_retrieval",
+            description="knowledge fixture failure",
+            agent_id="main",
+            profile_name="openai_gpt_5_4",
+            turns=[EvalTurnSpec(role="user", content="测试知识播种失败")],
+            component_weights={"keyword_recall": 100},
+            gate_components=["keyword_recall"],
+            setup=EvalSetupSpec(knowledge_fixture="fanqie_basic.json"),
+            resolved_fixtures={
+                "knowledge_fixture": Path(
+                    "evals/fixtures/knowledge/fanqie_basic.json"
+                ).as_posix()
+            },
+        )
+
+        with patch.object(
+            runtime.knowledge_service,
+            "ingest_text",
+            return_value={"ok": False, "error_code": "SEED_FAILED"},
+        ):
+            with self.assertRaises(RuntimeError):
+                _seed_knowledge_fixture(runtime, case)
+
     def test_copy_repo_scaffold_keeps_live_eval_memory_isolated_per_workspace(self) -> None:
         env = {"OPENAI_API_KEY": "test-key", "MINIMAX_API_KEY": "test-key"}
         with TemporaryDirectory() as left_dir, TemporaryDirectory() as right_dir:
@@ -301,26 +342,79 @@ class EvalExecutorTests(unittest.TestCase):
             left_app = create_app(repo_root=left_root, env=env, load_env_file=False)
             right_app = create_app(repo_root=right_root, env=env, load_env_file=False)
 
-            left_runtime = left_app.state.runtime
-            right_runtime = right_app.state.runtime
-            left_runtime.memory_service.replace(
-                "eval-user",
-                section="preferences",
-                content="以后回答尽量简洁。",
-                type="preference",
-            )
-            left_export = left_runtime.memory_service.memory_path("eval-user").read_text(encoding="utf-8")
+            with TestClient(left_app), TestClient(right_app):
+                left_runtime = left_app.state.runtime
+                right_runtime = right_app.state.runtime
+                left_runtime.memory_service.replace(
+                    "eval-user",
+                    section="preferences",
+                    content="以后回答尽量简洁。",
+                    type="preference",
+                )
+                left_export = left_runtime.memory_service.memory_path("eval-user").read_text(encoding="utf-8")
 
-            self.assertEqual(
-                left_runtime.memory_service.load("eval-user").sections,
-                {"preferences": ["以后回答尽量简洁。"]},
-            )
-            self.assertIn("## global / preference / preferences", left_export)
-            self.assertNotIn("## global / fact / preferences", left_export)
-            self.assertEqual(
-                right_runtime.memory_service.load("eval-user").sections,
-                {},
-            )
+                self.assertEqual(
+                    left_runtime.memory_service.load("eval-user").sections,
+                    {"preferences": ["以后回答尽量简洁。"]},
+                )
+                self.assertIn("## global / preference / preferences", left_export)
+                self.assertNotIn("## global / fact / preferences", left_export)
+                self.assertEqual(
+                    right_runtime.memory_service.load("eval-user").sections,
+                    {},
+                )
+                self.assertEqual(
+                    Path(left_runtime.knowledge_service.config.db_path),
+                    left_root / "data" / "knowledge" / "knowledge.sqlite3",
+                )
+                self.assertEqual(
+                    Path(right_runtime.knowledge_service.config.db_path),
+                    right_root / "data" / "knowledge" / "knowledge.sqlite3",
+                )
+                self.assertEqual(
+                    Path(left_runtime.knowledge_service.config.embedding.local_path),
+                    left_root / "data" / "models" / "fake" / "embedding",
+                )
+                self.assertEqual(
+                    Path(right_runtime.knowledge_service.config.reranker.local_path),
+                    right_root / "data" / "models" / "fake" / "reranker",
+                )
+                self.assertEqual(left_runtime.knowledge_service.config.embedding.provider, "fake")
+                self.assertEqual(right_runtime.knowledge_service.config.reranker.provider, "fake")
+
+    def test_copy_repo_scaffold_links_model_directory_instead_of_copying_it(self) -> None:
+        with TemporaryDirectory() as source_dir, TemporaryDirectory() as workspace_dir:
+            source_root = Path(source_dir)
+            workspace_root = Path(workspace_dir)
+            for name in ("config", "agents", "skills"):
+                (source_root / name).mkdir()
+            model_file = source_root / "data" / "models" / "embeddings" / "fake" / "model.bin"
+            model_file.parent.mkdir(parents=True)
+            model_file.write_text("fake-model", encoding="utf-8")
+
+            _copy_repo_scaffold(source_root, workspace_root, include_mcp=False)
+
+            linked_models = workspace_root / "data" / "models"
+            self.assertTrue(linked_models.is_symlink())
+            self.assertEqual(linked_models.resolve(), (source_root / "data" / "models").resolve())
+            self.assertEqual((linked_models / "embeddings" / "fake" / "model.bin").read_text(encoding="utf-8"), "fake-model")
+
+    def test_copy_repo_scaffold_uses_fake_knowledge_config_without_model_directory(self) -> None:
+        with TemporaryDirectory() as source_dir, TemporaryDirectory() as workspace_dir:
+            source_root = Path(source_dir)
+            workspace_root = Path(workspace_dir)
+            for name in ("config", "agents", "skills"):
+                (source_root / name).mkdir()
+            (source_root / "evals" / "fixtures" / "knowledge").mkdir(parents=True)
+            (source_root / "evals" / "fixtures" / "knowledge" / "sample.txt").write_text("fixture", encoding="utf-8")
+
+            _copy_repo_scaffold(source_root, workspace_root, include_mcp=False)
+
+            knowledge_config = load_knowledge_config(str(workspace_root / "config" / "knowledge.toml")).knowledge
+            self.assertEqual(knowledge_config.embedding.provider, "fake")
+            self.assertEqual(knowledge_config.reranker.provider, "fake")
+            self.assertFalse((workspace_root / "data" / "models").exists())
+            self.assertEqual((workspace_root / "evals" / "fixtures" / "knowledge" / "sample.txt").read_text(encoding="utf-8"), "fixture")
 
     def test_execute_suite_scripted_subagent_case_collects_child_and_parent_diagnostics(self) -> None:
         case = load_case_spec(

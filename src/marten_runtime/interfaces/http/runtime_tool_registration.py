@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from marten_runtime.runtime.capabilities import get_parameters_schema, render_tool_description
 from marten_runtime.session.transition import SessionTransitionResult
 from marten_runtime.tools.builtins.automation_tool import run_automation_tool
+from marten_runtime.tools.builtins.knowledge_tool import run_knowledge_tool
 from marten_runtime.tools.builtins.memory_tool import run_memory_tool
 from marten_runtime.tools.builtins.mcp_tool import run_mcp_tool
 from marten_runtime.tools.builtins.runtime_tool import run_runtime_tool
@@ -111,6 +112,15 @@ def register_family_tools(
         ),
         description=render_tool_description(capability_declarations["memory"]),
         parameters_schema=get_parameters_schema(capability_declarations["memory"]),
+    )
+    state.tool_registry.register(
+        "knowledge",
+        lambda payload, runtime_state=state, *, tool_context=None: run_knowledge_tool(
+            payload,
+            knowledge_service=runtime_state.knowledge_service,
+        ),
+        description=render_tool_description(capability_declarations["knowledge"]),
+        parameters_schema=get_parameters_schema(capability_declarations["knowledge"]),
     )
     state.tool_registry.register(
         "spawn_subagent",

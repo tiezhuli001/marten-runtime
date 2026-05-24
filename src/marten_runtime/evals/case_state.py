@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 from marten_runtime.evals.models import EvalCaseSpec
 from marten_runtime.config.models_loader import resolve_model_profile
@@ -92,6 +93,7 @@ def seed_case_state(  # noqa: ANN001
             effective_profile_name=effective_profile_name,
         )
     _seed_memory_fixture(runtime, case, user_id)
+    _seed_knowledge_fixture(runtime, case)
     return case_context
 
 
@@ -229,3 +231,32 @@ def load_history_fixture(case: EvalCaseSpec) -> list[SessionMessage]:
         elif normalized_role == "system":
             items.append(SessionMessage.system(text))
     return items
+
+
+def _seed_knowledge_fixture(runtime, case: EvalCaseSpec) -> None:  # noqa: ANN001
+    fixture_path = case.resolved_fixtures.get("knowledge_fixture")
+    if not fixture_path:
+        return
+    data = json.loads(Path(fixture_path).read_text(encoding="utf-8"))
+    namespace = str(data.get("namespace") or "fanqie")
+    for source in data.get("sources") or []:
+        result = runtime.knowledge_service.ingest_text(namespace=namespace, source=dict(source))
+        if not bool(result.get("ok")):
+            error_code = str(result.get("error_code") or "KNOWLEDGE_FIXTURE_SEED_FAILED")
+            raise RuntimeError(
+                f"knowledge fixture ingest failed for namespace={namespace}: {error_code}"
+            )
+    for action in data.get("actions") or []:
+        action_payload = dict(action)
+        action_payload.setdefault("namespace", namespace)
+        tool_action = str(action_payload.pop("action") or "")
+        if tool_action == "delete_source_by_title":
+            title = str(action_payload.get("title") or "")
+            source_id = runtime.knowledge_service.store.find_source_id_by_title(namespace, title)
+            if source_id:
+                runtime.knowledge_service.delete_source(namespace=namespace, source_id=source_id)
+        elif tool_action == "set_namespace_config_hash":
+            runtime.knowledge_service.store.set_namespace_config_hash(namespace, str(action_payload.get("embedding_config_hash") or ""))
+        elif tool_action == "clear_embeddings":
+            runtime.knowledge_service.store.clear_embeddings(namespace)
+            runtime.knowledge_service.store.set_namespace_config_hash(namespace, str(action_payload.get("embedding_config_hash") or "stale_fixture_hash"))

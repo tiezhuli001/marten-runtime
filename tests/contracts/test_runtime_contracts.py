@@ -84,7 +84,7 @@ class RuntimeContractTests(unittest.TestCase):
 
         self.assertEqual(
             assistant.allowed_tools,
-            ["automation", "mcp", "runtime", "self_improve", "session", "memory", "skill", "time", "spawn_subagent", "cancel_subagent"],
+            ["automation", "mcp", "runtime", "self_improve", "session", "memory", "knowledge", "skill", "time", "spawn_subagent", "cancel_subagent"],
         )
 
     def test_runtime_bootstrap_uses_capability_catalog_and_descriptions(self) -> None:

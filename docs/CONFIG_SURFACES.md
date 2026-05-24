@@ -35,6 +35,8 @@ This page answers one question: which value belongs in which file.
 | MCP stdio/http/docker connection | `mcps.json` | `servers.<id>.transport`, `command`, `args`, `env`, `cwd`, `url`, `headers` |
 | MCP optional tool hints | `mcps.json` | `servers.<id>.tools[]` |
 | Agent bootstrap instructions | `agents/<agent_id>/*.md` | `AGENTS.md`, `TOOLS.md`, `SOUL.md`, `BOOTSTRAP.md`, `SYSTEM_LESSONS.md` |
+| Knowledge/RAG runtime config | `config/knowledge.example.toml` or local `config/knowledge.toml` | `[knowledge]`, `[knowledge.chunking]`, `[knowledge.embedding]`, `[knowledge.reranker]`, `[knowledge.vector_store]`, `[knowledge.search]` |
+| Local embedding/reranker model files | `data/models/` | referenced by `[knowledge.embedding].local_path` and `[knowledge.reranker].local_path` |
 
 ## Provider Selection And Failover
 
@@ -56,6 +58,26 @@ Agent ownership is split cleanly:
 - the selected agent determines which agent-owned bootstrap assets are loaded for the live request
 
 When you want to route one agent to another asset root, tool surface, or model profile, change `config/agents.toml`.
+
+## Knowledge/RAG Runtime
+
+Knowledge is a reusable runtime capability exposed through the builtin `knowledge` tool. It uses `namespace` as the logical knowledge base key, for example `fanqie`, `bazi`, or `personal`.
+
+Local config lives in `config/knowledge.toml`; the committed template is `config/knowledge.example.toml`. Model files stay outside git under `data/models/` and are loaded lazily from `local_path`. The runtime does not download embedding or reranker models by default.
+
+Key operator fields:
+
+- `[knowledge.chunking] target_chars`, `overlap_chars`, `max_chars`, `batch_size` tune chunking.
+- `[knowledge.embedding] model`, `local_path`, `dimension`, `allow_remote_download` define the vector space.
+- `[knowledge.reranker] model`, `local_path`, `top_n` define query-time reranking.
+- `[knowledge.vector_store] backend = "sqlite_vec"` uses sqlite-vec when the Python extension is installed; missing extension produces `vector_status=disabled` and search continues through FTS.
+- `[knowledge.search] default_top_k`, `candidate_pool`, and weights define retrieval ranking behavior.
+
+Switching embedding config requires manual reindex with the current config:
+
+```text
+knowledge.reindex --namespace fanqie
+```
 
 ## Runtime-Owned Persistence Paths
 

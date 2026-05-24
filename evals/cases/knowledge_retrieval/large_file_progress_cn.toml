@@ -1,0 +1,25 @@
+case_id = "knowledge_large_file_progress_cn"
+suite_id = "knowledge_retrieval"
+family = "knowledge_retrieval"
+grader_id = "knowledge_retrieval"
+enabled = true
+required = true
+description = "大文件入库进度"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["knowledge", "rag"]
+
+gate_components = ["large_file_progress"]
+
+[[turns]]
+role = "user"
+content = "执行 大文件入库进度 测试"
+
+[component_weights]
+large_file_progress = 100
+
+
+[grader_case]
+
+[setup]
+knowledge_fixture = "fanqie_basic.json"

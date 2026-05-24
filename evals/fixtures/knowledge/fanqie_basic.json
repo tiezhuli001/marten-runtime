@@ -1,0 +1,19 @@
+{
+  "namespace": "fanqie",
+  "sources": [
+    {
+      "title": "Fanqie Fixture Novel",
+      "kind": "text",
+      "uri": "eval://fanqie/novel",
+      "metadata": {"novel_id": "fixture_novel"},
+      "text": "# 第一章 契机\n\n师父在山门出现，交给主角十天干修真密码。fanqie_chapter_1 fanqie_only\n\n# 真传\n\n两个小师妹每日劳作，也想一边干活一边学习十天干。fanqie_master_scene\n\n# 甲木\n\n甲木的人有什么特点：甲木的人性格直接，仁慈正义，做事专注。fanqie_best_chunk\n"
+    },
+    {
+      "title": "Bazi Fixture",
+      "kind": "text",
+      "uri": "eval://bazi/other",
+      "metadata": {"novel_id": "bazi"},
+      "text": "这是另一个 namespace 不应被 fanqie 搜索召回。bazi_only"
+    }
+  ]
+}

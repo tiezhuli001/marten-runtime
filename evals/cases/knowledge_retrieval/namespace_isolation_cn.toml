@@ -1,0 +1,26 @@
+case_id = "knowledge_namespace_isolation_cn"
+suite_id = "knowledge_retrieval"
+family = "knowledge_retrieval"
+grader_id = "knowledge_retrieval"
+enabled = true
+required = true
+description = "namespace 隔离"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["knowledge", "rag"]
+
+gate_components = ["namespace_isolation"]
+
+[[turns]]
+role = "user"
+content = "执行 namespace 隔离 测试"
+
+[component_weights]
+namespace_isolation = 100
+
+
+[grader_case]
+namespace = "fanqie"
+
+[setup]
+knowledge_fixture = "fanqie_basic.json"

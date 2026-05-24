@@ -10,6 +10,7 @@ _FIXTURE_DIRS = {
     "session_history_fixture": "session_histories",
     "memory_fixture": "memory",
     "automation_fixture": "automation",
+    "knowledge_fixture": "knowledge",
 }
 
 

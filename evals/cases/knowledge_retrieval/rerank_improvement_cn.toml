@@ -1,0 +1,26 @@
+case_id = "knowledge_rerank_improvement_cn"
+suite_id = "knowledge_retrieval"
+family = "knowledge_retrieval"
+grader_id = "knowledge_retrieval"
+enabled = true
+required = true
+description = "rerank 排序提升"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["knowledge", "rag"]
+
+gate_components = ["rerank_improvement"]
+
+[[turns]]
+role = "user"
+content = "执行 rerank 排序提升 测试"
+
+[component_weights]
+rerank_improvement = 100
+
+
+[grader_case]
+expected_first_chunk = "fanqie_best_chunk"
+
+[setup]
+knowledge_fixture = "fanqie_basic.json"

@@ -23,7 +23,7 @@
 - 多入口：HTTP `/messages` 与 Feishu websocket 共享同一 runtime 主链
 - 多 agent：支持 channel / user / conversation 绑定与 selected-agent profile 切换
 - 上下文治理：支持会话恢复、working context 压缩、thin memory continuity slice
-- 工具能力：支持 builtin tools、MCP tools、文件型 skills
+- 工具能力：支持 builtin tools、MCP tools、文件型 skills、namespace-scoped Knowledge/RAG
 - Provider 韧性：支持 OpenAI-compatible provider、retry/backoff 与 profile failover
 - 运维面：提供 diagnostics、automation、eval 等轻量 HTTP 页面和 API
 
@@ -146,6 +146,15 @@ cp mcps.example.json mcps.json
 - 只有需要外部工具时才在 `mcps.json` 配置 MCP
 - 只有准备好了 Feishu bot 时才通过本地 `config/channels.toml` 打开 Feishu
 
+Knowledge/RAG：
+
+- 模板配置：`config/knowledge.example.toml`
+- 本地覆盖：`config/knowledge.toml`
+- 模型文件：`data/models/`，不提交到仓库
+- 默认向量后端：SQLite + sqlite-vec；缺扩展时返回诊断并走 FTS 检索
+- 默认模型 adapter：本地加载 `BAAI/bge-small-zh-v1.5` / `BAAI/bge-reranker-base`；缺依赖或缺模型目录时返回诊断；模型懒加载并支持 `model_status` / `unload_models` 释放内存
+- 手动重建向量：`knowledge.reindex --namespace <name>`
+
 当前公开仓库的配置形态：
 
 - 提交：`config/agents.toml`、`config/bindings.toml`、`config/*.example.toml`
@@ -214,6 +223,7 @@ PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
 | `memory_long_horizon` | 记住、隔轮召回、跨会话召回、覆盖更新、抗干扰召回 |
 | `subagent_task_progress` | 子代理受理、调度、非 MCP 子任务进度与父线程吸收 |
 | `subagent_external_mcp_completion` | 子代理调用外部 MCP 后完成通知与父线程吸收 |
+| `knowledge_retrieval` | Knowledge/RAG 召回、重排、namespace 隔离、config mismatch 与入库进度 |
 
 产物位置：
 

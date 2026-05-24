@@ -1,0 +1,43 @@
+[knowledge]
+db_path = "data/knowledge/knowledge.sqlite3"
+default_namespace = "personal"
+model_idle_ttl_seconds = 300
+file_encoding = "auto"
+
+[knowledge.chunking]
+target_chars = 1000
+overlap_chars = 150
+max_chars = 1600
+batch_size = 64
+
+# chunking 参数是 RAG 效果调参入口。修改后需重新 ingest 或 reindex 对应 namespace。
+
+[knowledge.embedding]
+enabled = true
+provider = "flag_embedding"
+model = "BAAI/bge-small-zh-v1.5"
+local_path = "data/models/embeddings/BAAI/bge-small-zh-v1.5"
+dimension = 512
+allow_remote_download = false
+use_fp16 = false
+
+[knowledge.reranker]
+enabled = true
+provider = "flag_embedding"
+model = "BAAI/bge-reranker-base"
+local_path = "data/models/rerankers/BAAI/bge-reranker-base"
+allow_remote_download = false
+use_fp16 = false
+top_n = 10
+
+[knowledge.vector_store]
+backend = "sqlite_vec"
+enabled = true
+
+[knowledge.search]
+default_top_k = 5
+candidate_pool = 30
+fts_weight = 0.35
+vector_weight = 0.55
+metadata_weight = 0.10
+reranker_weight = 0.70

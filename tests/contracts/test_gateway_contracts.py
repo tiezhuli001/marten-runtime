@@ -33,6 +33,7 @@ class GatewayContractTests(unittest.TestCase):
         "cancel_subagent",
         "mcp",
         "memory",
+        "knowledge",
         "runtime",
         "self_improve",
         "session",

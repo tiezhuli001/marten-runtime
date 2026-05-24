@@ -1,0 +1,16 @@
+suite_id = "knowledge_retrieval"
+grader_id = "knowledge_retrieval"
+description = "Knowledge/RAG retrieval regression suite"
+default_mode = "scripted"
+scripted_supported = true
+required_dependencies = []
+baseline_policy = "latest_passed_auto"
+case_files = [
+  "evals/cases/knowledge_retrieval/keyword_recall_cn.toml",
+  "evals/cases/knowledge_retrieval/semantic_recall_cn.toml",
+  "evals/cases/knowledge_retrieval/rerank_improvement_cn.toml",
+  "evals/cases/knowledge_retrieval/namespace_isolation_cn.toml",
+  "evals/cases/knowledge_retrieval/config_mismatch_cn.toml",
+  "evals/cases/knowledge_retrieval/large_file_progress_cn.toml",
+  "evals/cases/knowledge_retrieval/delete_recall_cn.toml",
+]

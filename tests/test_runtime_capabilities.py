@@ -19,6 +19,7 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
             {
                 "automation",
                 "cancel_subagent",
+                "knowledge",
                 "memory",
                 "mcp",
                 "runtime",

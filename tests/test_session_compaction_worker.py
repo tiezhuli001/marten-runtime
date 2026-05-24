@@ -379,7 +379,7 @@ class SessionCompactionWorkerTests(unittest.TestCase):
         self.assertIs(created, isolated)
         mocked.assert_called_once_with("openai_gpt_5_4")
 
-    def test_build_http_runtime_attaches_and_starts_compaction_worker(self) -> None:
+    def test_build_http_runtime_attaches_compaction_worker_without_starting_background_thread(self) -> None:
         with patch(
             "marten_runtime.interfaces.http.bootstrap_runtime.SessionCompactionWorker",
             _CountingWorker,
@@ -390,9 +390,9 @@ class SessionCompactionWorkerTests(unittest.TestCase):
             )
 
         self.assertTrue(hasattr(runtime, "compaction_worker"))
-        self.assertEqual(runtime.compaction_worker.start_count, 1)
+        self.assertEqual(runtime.compaction_worker.start_count, 0)
 
-    def test_create_app_lifespan_stops_compaction_worker_once(self) -> None:
+    def test_create_app_lifespan_starts_and_stops_compaction_worker_once(self) -> None:
         fake_runtime = SimpleNamespace(
             channels_config=SimpleNamespace(
                 feishu=SimpleNamespace(enabled=False, connection_mode="websocket", auto_start=False)
@@ -407,6 +407,7 @@ class SessionCompactionWorkerTests(unittest.TestCase):
             with TestClient(app):
                 pass
 
+        self.assertEqual(fake_runtime.compaction_worker.start_count, 1)
         self.assertEqual(fake_runtime.compaction_worker.stop_count, 1)
 
 

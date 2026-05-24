@@ -1,0 +1,26 @@
+case_id = "knowledge_keyword_recall_cn"
+suite_id = "knowledge_retrieval"
+family = "knowledge_retrieval"
+grader_id = "knowledge_retrieval"
+enabled = true
+required = true
+description = "关键词召回"
+agent_id = "main"
+profile_name = "openai_gpt_5_4"
+tags = ["knowledge", "rag"]
+
+gate_components = ["keyword_recall"]
+
+[[turns]]
+role = "user"
+content = "执行 关键词召回 测试"
+
+[component_weights]
+keyword_recall = 100
+
+
+[grader_case]
+required_chunks = ["fanqie_chapter_1"]
+
+[setup]
+knowledge_fixture = "fanqie_basic.json"
