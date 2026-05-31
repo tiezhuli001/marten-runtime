@@ -25,6 +25,63 @@ from marten_runtime.tools.registry import ToolRegistry
 from tests.support.finalization_contracts import contracted_final_reply
 from tests.support.mcp_fixtures import build_server_map, find_free_port, wait_for_port
 
+GITHUB_TRANSPORT_EOF = 'failed to list commits: Get "https://api.github.com/repos/llt22/talkio/commits?page=1&per_page=1": EOF'
+GITHUB_LIST_COMMITS_RESULT = '[{"sha":"abc","commit":{"message":"release: v2.7.2"}}]'
+GITHUB_SHA_RESULT = '[{"sha":"abc"}]'
+
+
+def build_github_server() -> MCPServerSpec:
+    return MCPServerSpec(
+        server_id="github",
+        transport="mock",
+        backend_id="github",
+        tools=[MCPToolSpec(name="list_commits", description="List GitHub commits.")],
+    )
+
+
+def call_list_commits_payload() -> dict:
+    return {
+        "action": "call",
+        "server_id": "github",
+        "tool_name": "list_commits",
+        "arguments": {"owner": "llt22", "repo": "talkio", "perPage": 1},
+    }
+
+
+def configured_github_discovery() -> dict[str, dict[str, object]]:
+    return {"github": {"state": "configured", "tool_count": 1, "error": None}}
+
+
+def mcp_result(
+    *,
+    ok: bool,
+    result_text: str,
+    server_id: str = "github",
+    tool_name: str = "list_commits",
+    payload: dict | None = None,
+) -> dict:
+    return {
+        "server_id": server_id,
+        "tool_name": tool_name,
+        "payload": payload or {"owner": "llt22", "repo": "talkio", "perPage": 1},
+        "result_text": result_text,
+        "ok": ok,
+        "is_error": not ok,
+    }
+
+
+class SimpleSequenceClient:
+    def __init__(self, outcomes: list[dict | BaseException]) -> None:
+        self.outcomes = outcomes
+        self.calls: list[tuple[str, str, dict]] = []
+
+    def call_tool(self, server_id: str, tool_name: str, payload: dict) -> dict:
+        self.calls.append((server_id, tool_name, payload))
+        outcome = self.outcomes[min(len(self.calls) - 1, len(self.outcomes) - 1)]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
 
 class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
 
@@ -296,39 +353,14 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         self.assertEqual(llm.requests[0].available_tools, ["mcp"])
 
     def test_runtime_mcp_transient_transport_retry_succeeds_without_extra_llm_round(self) -> None:
-        server = MCPServerSpec(
-            server_id="github",
-            transport="mock",
-            backend_id="github",
-            tools=[MCPToolSpec(name="list_commits", description="List GitHub commits.")],
-        )
+        server = build_github_server()
 
-        class FlakyClient:
-            def __init__(self) -> None:
-                self.calls: list[tuple[str, str, dict]] = []
-
-            def call_tool(self, server_id: str, tool_name: str, payload: dict) -> dict:
-                self.calls.append((server_id, tool_name, payload))
-                if len(self.calls) < 3:
-                    return {
-                        "server_id": server_id,
-                        "tool_name": tool_name,
-                        "payload": payload,
-                        "result_text": 'failed to list commits: Get "https://api.github.com/repos/llt22/talkio/commits?page=1&per_page=1": EOF',
-                        "ok": False,
-                        "is_error": True,
-                    }
-                return {
-                    "server_id": server_id,
-                    "tool_name": tool_name,
-                    "payload": payload,
-                    "result_text": '[{"sha":"abc","commit":{"message":"release: v2.7.2"}}]',
-                    "ok": True,
-                    "is_error": False,
-                }
-
-        client = FlakyClient()
-        discovery = {"github": {"state": "configured", "tool_count": 1, "error": None}}
+        client = SimpleSequenceClient([
+            mcp_result(ok=False, result_text=GITHUB_TRANSPORT_EOF),
+            mcp_result(ok=False, result_text=GITHUB_TRANSPORT_EOF),
+            mcp_result(ok=True, result_text=GITHUB_LIST_COMMITS_RESULT),
+        ])
+        discovery = configured_github_discovery()
         tools = ToolRegistry()
         tools.register(
             "mcp",
@@ -346,7 +378,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
                     },
                 ),
                 contracted_final_reply(
-                    '[{"sha":"abc","commit":{"message":"release: v2.7.2"}}]'
+                    GITHUB_LIST_COMMITS_RESULT
                 ),
             ]
         )
@@ -368,7 +400,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         self.assertEqual([event.event_type for event in events], ["progress", "final"])
         self.assertEqual(
             events[-1].payload["text"],
-            '[{"sha":"abc","commit":{"message":"release: v2.7.2"}}]',
+            GITHUB_LIST_COMMITS_RESULT,
         )
         self.assertEqual(len(llm.requests), 2)
         self.assertEqual(len(client.calls), 3)
@@ -379,30 +411,10 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         self.assertTrue(llm.requests[1].tool_history[0].tool_result["ok"])
 
     def test_runtime_mcp_transient_transport_retry_still_returns_failure_to_followup_llm(self) -> None:
-        server = MCPServerSpec(
-            server_id="github",
-            transport="mock",
-            backend_id="github",
-            tools=[MCPToolSpec(name="list_commits", description="List GitHub commits.")],
-        )
+        server = build_github_server()
 
-        class AlwaysTransientFailureClient:
-            def __init__(self) -> None:
-                self.calls: list[tuple[str, str, dict]] = []
-
-            def call_tool(self, server_id: str, tool_name: str, payload: dict) -> dict:
-                self.calls.append((server_id, tool_name, payload))
-                return {
-                    "server_id": server_id,
-                    "tool_name": tool_name,
-                    "payload": payload,
-                    "result_text": 'failed to list commits: Get "https://api.github.com/repos/llt22/talkio/commits?page=1&per_page=1": EOF',
-                    "ok": False,
-                    "is_error": True,
-                }
-
-        client = AlwaysTransientFailureClient()
-        discovery = {"github": {"state": "configured", "tool_count": 1, "error": None}}
+        client = SimpleSequenceClient([mcp_result(ok=False, result_text=GITHUB_TRANSPORT_EOF)])
+        discovery = configured_github_discovery()
         tools = ToolRegistry()
         tools.register(
             "mcp",
@@ -470,7 +482,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
                     "server_id": server_id,
                     "tool_name": tool_name,
                     "payload": payload,
-                    "result_text": '[{"sha":"abc","commit":{"message":"release: v2.7.2"}}]',
+                    "result_text": GITHUB_LIST_COMMITS_RESULT,
                     "ok": True,
                     "is_error": False,
                 }
@@ -479,12 +491,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         discovery = {"github": {"state": "unavailable", "tool_count": 0, "error": "startup EOF"}}
 
         result = run_mcp_tool(
-            {
-                "action": "call",
-                "server_id": "github",
-                "tool_name": "list_commits",
-                "arguments": {"owner": "llt22", "repo": "talkio", "perPage": 1},
-            },
+            call_list_commits_payload(),
             [server],
             client,  # type: ignore[arg-type]
             discovery,
@@ -499,12 +506,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         self.assertEqual([tool.name for tool in server.tools], ["list_commits"])
 
     def test_mcp_family_tool_stops_retry_sleep_when_stop_event_is_set(self) -> None:
-        server = MCPServerSpec(
-            server_id="github",
-            transport="mock",
-            backend_id="github",
-            tools=[MCPToolSpec(name="list_commits", description="List GitHub commits.")],
-        )
+        server = build_github_server()
 
         class StopDuringRetryEvent:
             def __init__(self) -> None:
@@ -521,49 +523,28 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
 
         stop_event = StopDuringRetryEvent()
 
-        class AlwaysTransientFailureClient:
-            def __init__(self) -> None:
-                self.calls = 0
-
+        class StopAwareFailureClient(SimpleSequenceClient):
             def call_tool(self, server_id: str, tool_name: str, payload: dict, **kwargs) -> dict:
-                del server_id, tool_name, payload, kwargs
-                self.calls += 1
-                return {
-                    "server_id": "github",
-                    "tool_name": "list_commits",
-                    "payload": {"owner": "llt22", "repo": "talkio", "perPage": 1},
-                    "result_text": 'failed to list commits: Get "https://api.github.com/repos/llt22/talkio/commits?page=1&per_page=1": EOF',
-                    "ok": False,
-                    "is_error": True,
-                }
+                del kwargs
+                return super().call_tool(server_id, tool_name, payload)
 
-        client = AlwaysTransientFailureClient()
+        client = StopAwareFailureClient([mcp_result(ok=False, result_text=GITHUB_TRANSPORT_EOF)])
 
         with self.assertRaises(RuntimeError) as ctx:
             run_mcp_tool(
-                {
-                    "action": "call",
-                    "server_id": "github",
-                    "tool_name": "list_commits",
-                    "arguments": {"owner": "llt22", "repo": "talkio", "perPage": 1},
-                },
+                call_list_commits_payload(),
                 [server],
                 client,  # type: ignore[arg-type]
-                {"github": {"state": "configured", "tool_count": 1, "error": None}},
+                configured_github_discovery(),
                 tool_context={"stop_event": stop_event},
             )
 
         self.assertIn("MCP_CALL_CANCELLED", str(ctx.exception))
-        self.assertEqual(client.calls, 1)
+        self.assertEqual(len(client.calls), 1)
         self.assertEqual(stop_event.wait_calls, [3.0])
 
     def test_mcp_family_tool_passes_timeout_override_to_client(self) -> None:
-        server = MCPServerSpec(
-            server_id="github",
-            transport="mock",
-            backend_id="github",
-            tools=[MCPToolSpec(name="list_commits", description="List GitHub commits.")],
-        )
+        server = build_github_server()
 
         class CapturingClient:
             def __init__(self) -> None:
@@ -575,7 +556,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
                     "server_id": server_id,
                     "tool_name": tool_name,
                     "payload": payload,
-                    "result_text": '[{"sha":"abc"}]',
+                    "result_text": GITHUB_SHA_RESULT,
                     "ok": True,
                     "is_error": False,
                 }
@@ -586,15 +567,10 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         client = CapturingClient()
         deadline = time.monotonic() + 1.25
         result = run_mcp_tool(
-            {
-                "action": "call",
-                "server_id": "github",
-                "tool_name": "list_commits",
-                "arguments": {"owner": "llt22", "repo": "talkio", "perPage": 1},
-            },
+            call_list_commits_payload(),
             [server],
             client,  # type: ignore[arg-type]
-            {"github": {"state": "configured", "tool_count": 1, "error": None}},
+            configured_github_discovery(),
             tool_context={"deadline_monotonic": deadline, "timeout_seconds_override": 1.25},
         )
 
@@ -605,55 +581,25 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         self.assertAlmostEqual(client.kwargs["timeout_seconds_override"], 1.25, places=2)
 
     def test_mcp_family_tool_retries_twice_on_transient_transport_error_result(self) -> None:
-        server = MCPServerSpec(
-            server_id="github",
-            transport="mock",
-            backend_id="github",
-            tools=[MCPToolSpec(name="list_commits", description="List GitHub commits.")],
-        )
+        server = build_github_server()
 
-        class FlakyClient:
-            def __init__(self) -> None:
-                self.calls: list[tuple[str, str, dict]] = []
-
-            def call_tool(self, server_id: str, tool_name: str, payload: dict) -> dict:
-                self.calls.append((server_id, tool_name, payload))
-                if len(self.calls) < 3:
-                    return {
-                        "server_id": server_id,
-                        "tool_name": tool_name,
-                        "payload": payload,
-                        "result_text": 'failed to list commits: Get "https://api.github.com/repos/llt22/talkio/commits?page=1&per_page=1": EOF',
-                        "ok": False,
-                        "is_error": True,
-                    }
-                return {
-                    "server_id": server_id,
-                    "tool_name": tool_name,
-                    "payload": payload,
-                    "result_text": '[{"sha":"abc"}]',
-                    "ok": True,
-                    "is_error": False,
-                }
-
-        client = FlakyClient()
+        client = SimpleSequenceClient([
+            mcp_result(ok=False, result_text=GITHUB_TRANSPORT_EOF),
+            mcp_result(ok=False, result_text=GITHUB_TRANSPORT_EOF),
+            mcp_result(ok=True, result_text=GITHUB_SHA_RESULT),
+        ])
 
         with patch("marten_runtime.tools.builtins.mcp_tool.time.sleep") as sleep_mock:
             result = run_mcp_tool(
-                {
-                    "action": "call",
-                    "server_id": "github",
-                    "tool_name": "list_commits",
-                    "arguments": {"owner": "llt22", "repo": "talkio", "perPage": 1},
-                },
+                call_list_commits_payload(),
                 [server],
                 client,  # type: ignore[arg-type]
-                {"github": {"state": "configured", "tool_count": 1, "error": None}},
+                configured_github_discovery(),
             )
 
         self.assertTrue(result["ok"])
         self.assertFalse(result["is_error"])
-        self.assertEqual(result["result_text"], '[{"sha":"abc"}]')
+        self.assertEqual(result["result_text"], GITHUB_SHA_RESULT)
         self.assertEqual(len(client.calls), 3)
         self.assertEqual(
             [call.args[0] for call in sleep_mock.call_args_list],
@@ -661,41 +607,16 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         )
 
     def test_mcp_family_tool_returns_failure_after_two_transient_retries(self) -> None:
-        server = MCPServerSpec(
-            server_id="github",
-            transport="mock",
-            backend_id="github",
-            tools=[MCPToolSpec(name="list_commits", description="List GitHub commits.")],
-        )
+        server = build_github_server()
 
-        class AlwaysTransientFailureClient:
-            def __init__(self) -> None:
-                self.calls: list[tuple[str, str, dict]] = []
-
-            def call_tool(self, server_id: str, tool_name: str, payload: dict) -> dict:
-                self.calls.append((server_id, tool_name, payload))
-                return {
-                    "server_id": server_id,
-                    "tool_name": tool_name,
-                    "payload": payload,
-                    "result_text": 'failed to list commits: Get "https://api.github.com/repos/llt22/talkio/commits?page=1&per_page=1": EOF',
-                    "ok": False,
-                    "is_error": True,
-                }
-
-        client = AlwaysTransientFailureClient()
+        client = SimpleSequenceClient([mcp_result(ok=False, result_text=GITHUB_TRANSPORT_EOF)])
 
         with patch("marten_runtime.tools.builtins.mcp_tool.time.sleep") as sleep_mock:
             result = run_mcp_tool(
-                {
-                    "action": "call",
-                    "server_id": "github",
-                    "tool_name": "list_commits",
-                    "arguments": {"owner": "llt22", "repo": "talkio", "perPage": 1},
-                },
+                call_list_commits_payload(),
                 [server],
                 client,  # type: ignore[arg-type]
-                {"github": {"state": "configured", "tool_count": 1, "error": None}},
+                configured_github_discovery(),
             )
 
         self.assertFalse(result["ok"])
@@ -708,12 +629,7 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         )
 
     def test_mcp_family_tool_does_not_retry_non_transport_error_result(self) -> None:
-        server = MCPServerSpec(
-            server_id="github",
-            transport="mock",
-            backend_id="github",
-            tools=[MCPToolSpec(name="list_commits", description="List GitHub commits.")],
-        )
+        server = build_github_server()
 
         class SemanticFailureClient:
             def __init__(self) -> None:
@@ -733,15 +649,10 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         client = SemanticFailureClient()
 
         result = run_mcp_tool(
-            {
-                "action": "call",
-                "server_id": "github",
-                "tool_name": "list_commits",
-                "arguments": {"owner": "llt22", "repo": "talkio", "perPage": 1},
-            },
+            call_list_commits_payload(),
             [server],
             client,  # type: ignore[arg-type]
-            {"github": {"state": "configured", "tool_count": 1, "error": None}},
+            configured_github_discovery(),
         )
 
         self.assertFalse(result["ok"])
@@ -749,47 +660,24 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         self.assertEqual(len(client.calls), 1)
 
     def test_mcp_family_tool_retries_twice_on_transient_transport_exception(self) -> None:
-        server = MCPServerSpec(
-            server_id="github",
-            transport="mock",
-            backend_id="github",
-            tools=[MCPToolSpec(name="list_commits", description="List GitHub commits.")],
-        )
+        server = build_github_server()
 
-        class FlakyExceptionClient:
-            def __init__(self) -> None:
-                self.calls: list[tuple[str, str, dict]] = []
-
-            def call_tool(self, server_id: str, tool_name: str, payload: dict) -> dict:
-                self.calls.append((server_id, tool_name, payload))
-                if len(self.calls) < 3:
-                    raise RuntimeError('Get "https://api.github.com/repos/llt22/talkio/commits?page=1&per_page=1": EOF')
-                return {
-                    "server_id": server_id,
-                    "tool_name": tool_name,
-                    "payload": payload,
-                    "result_text": '[{"sha":"abc"}]',
-                    "ok": True,
-                    "is_error": False,
-                }
-
-        client = FlakyExceptionClient()
+        client = SimpleSequenceClient([
+            RuntimeError('Get "https://api.github.com/repos/llt22/talkio/commits?page=1&per_page=1": EOF'),
+            RuntimeError('Get "https://api.github.com/repos/llt22/talkio/commits?page=1&per_page=1": EOF'),
+            mcp_result(ok=True, result_text=GITHUB_SHA_RESULT),
+        ])
 
         with patch("marten_runtime.tools.builtins.mcp_tool.time.sleep") as sleep_mock:
             result = run_mcp_tool(
-                {
-                    "action": "call",
-                    "server_id": "github",
-                    "tool_name": "list_commits",
-                    "arguments": {"owner": "llt22", "repo": "talkio", "perPage": 1},
-                },
+                call_list_commits_payload(),
                 [server],
                 client,  # type: ignore[arg-type]
-                {"github": {"state": "configured", "tool_count": 1, "error": None}},
+                configured_github_discovery(),
             )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["result_text"], '[{"sha":"abc"}]')
+        self.assertEqual(result["result_text"], GITHUB_SHA_RESULT)
         self.assertEqual(len(client.calls), 3)
         self.assertEqual(
             [call.args[0] for call in sleep_mock.call_args_list],
@@ -797,46 +685,26 @@ class RuntimeMCPFollowupRecoveryTests(unittest.TestCase):
         )
 
     def test_mcp_family_tool_retries_on_transient_exception_group(self) -> None:
-        server = MCPServerSpec(
-            server_id="github",
-            transport="mock",
-            backend_id="github",
-            tools=[MCPToolSpec(name="list_commits", description="List GitHub commits.")],
-        )
+        server = build_github_server()
 
-        class FlakyExceptionGroupClient:
-            def __init__(self) -> None:
-                self.calls: list[tuple[str, str, dict]] = []
-
-            def call_tool(self, server_id: str, tool_name: str, payload: dict) -> dict:
-                self.calls.append((server_id, tool_name, payload))
-                if len(self.calls) < 3:
-                    raise BaseExceptionGroup(
-                        "unhandled errors in a TaskGroup",
-                        [RuntimeError('Get "https://api.github.com/repos/llt22/talkio/commits?page=1&per_page=1": EOF')],
-                    )
-                return {
-                    "server_id": server_id,
-                    "tool_name": tool_name,
-                    "payload": payload,
-                    "result_text": '[{"sha":"abc"}]',
-                    "ok": True,
-                    "is_error": False,
-                }
-
-        client = FlakyExceptionGroupClient()
+        client = SimpleSequenceClient([
+            BaseExceptionGroup(
+                "unhandled errors in a TaskGroup",
+                [RuntimeError('Get "https://api.github.com/repos/llt22/talkio/commits?page=1&per_page=1": EOF')],
+            ),
+            BaseExceptionGroup(
+                "unhandled errors in a TaskGroup",
+                [RuntimeError('Get "https://api.github.com/repos/llt22/talkio/commits?page=1&per_page=1": EOF')],
+            ),
+            mcp_result(ok=True, result_text=GITHUB_SHA_RESULT),
+        ])
 
         with patch("marten_runtime.tools.builtins.mcp_tool.time.sleep") as sleep_mock:
             result = run_mcp_tool(
-                {
-                    "action": "call",
-                    "server_id": "github",
-                    "tool_name": "list_commits",
-                    "arguments": {"owner": "llt22", "repo": "talkio", "perPage": 1},
-                },
+                call_list_commits_payload(),
                 [server],
                 client,  # type: ignore[arg-type]
-                {"github": {"state": "configured", "tool_count": 1, "error": None}},
+                configured_github_discovery(),
             )
 
         self.assertTrue(result["ok"])

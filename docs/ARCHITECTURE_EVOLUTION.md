@@ -112,6 +112,11 @@ flowchart LR
   - baseline 对比与稳定性窗口
   - memory / subagent 专项评分套件
   - Markdown / JSON / HTML 报告
+- **持久记忆面**
+  - SQLite structured memory under `data/memory/memory.sqlite3`
+  - `global` / `agent` / `workspace` scope filters
+  - FTS5 recall with prompt budget and priority rules
+  - generated `MEMORY.md` exports and explicit edited-Markdown import
 
 当前部署相关的结论也很直接：
 
@@ -133,7 +138,7 @@ flowchart LR
 
 这也是为什么后续很多演进看起来都“刻意收敛”：即使某个能力有价值，只有在它能增强 runtime spine、而不会把系统中心从主链上挪走时，它才会进入基线。
 
-后续 continuity hardening 也遵守同一条规则：SQLite-backed sessions、`session.new` / `session.resume`、单一 replay-turn budget、switch-triggered compaction、background compaction jobs，以及 thin file-backed memory 都是以 bounded runtime continuity seam 的形态进入，而没有把系统推向 worker platform 或通用 memory system。
+后续 continuity hardening 也遵守同一条规则：SQLite-backed sessions、`session.new` / `session.resume`、单一 replay-turn budget、switch-triggered compaction、background compaction jobs，以及 agent-scoped SQLite memory 都是以 bounded runtime continuity seam 的形态进入，而没有把系统推向 worker platform 或通用 memory system。
 
 ## 第 1 阶段：Baseline Runtime Spine
 

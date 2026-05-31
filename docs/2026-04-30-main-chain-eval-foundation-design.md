@@ -637,7 +637,7 @@ SQLite 作为第一版的唯一持久层。
 - Langfuse external refs
 - 现有 acceptance fixture 和 scripted test pattern
 
-当前仓库里 `scripts/run_acceptance.py` 只有占位性质，它继续保留 smoke 角色；评测能力通过 `scripts/run_eval.py` 单独承载。
+当前仓库的 smoke 角色由 `tests/test_acceptance.py` 和 `init.sh --smoke-only` 承担；评测能力通过 `scripts/run_eval.py` 单独承载。
 
 ## 18. harness 自身验证
 

@@ -13,6 +13,14 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel, Field
 
+from marten_runtime.evals.display import (
+    format_eval_timestamp as _format_eval_timestamp,
+    int_value as _int_value,
+    provider_health_status as _base_provider_health_status,
+    run_label as _run_label,
+    short_id as _short_id,
+    suite_label as _suite_label,
+)
 from marten_runtime.evals.loader import load_suite_spec
 from marten_runtime.evals.store import SQLiteEvalStore
 
@@ -726,57 +734,22 @@ def _dependency_label(value: str) -> str:
     }.get(value, value)
 
 
-def _run_label(value: str) -> str:
-    if not value or value == "—":
-        return "—"
-    if value == "latest_passed":
-        return "最近通过基线"
-    if value.startswith("named:"):
-        return f"命名基线 {value.removeprefix('named:')}"
-    if value == "explicit_run":
-        return "指定基线"
-    if value.startswith("eval_"):
-        parts = value.split("_")
-        if len(parts) >= 5 and parts[-1].isdigit() and parts[-3].isdigit():
-            suite = "_".join(parts[1:-3])
-            timestamp = parts[-3]
-            sha = parts[-2]
-            sequence = parts[-1]
-            return f"{_suite_label(suite)} · {_format_eval_timestamp(timestamp)} · {sha[:7]} · 第{int(sequence) + 1}次"
-    return _short_id(value)
 
-
-def _suite_label(value: str) -> str:
-    return {
-        "main_chain_core": "主链黄金链路",
-        "main_chain_mcp": "MCP 链路",
-        "main_chain_subagent": "子代理链路",
-        "memory_long_horizon": "记忆链路",
-        "subagent_task_progress": "子代理进度链路",
-        "subagent_external_mcp_completion": "子代理外部 MCP 完成链路",
-        "ops_smoke": "运维冒烟链路",
-    }.get(value, value)
-
-
-def _format_eval_timestamp(value: str) -> str:
-    if len(value) < 14 or not value[:14].isdigit():
-        return value
-    return f"{value[:4]}-{value[4:6]}-{value[6:8]} {value[8:10]}:{value[10:12]}:{value[12:14]}"
-
-
-def _short_id(value: str) -> str:
-    if not value or value == "—":
-        return value or "—"
-    if len(value) <= 34:
-        return value
-    return f"{value[:18]}…{value[-10:]}"
-
-
-def _int_value(value: object) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
+def _provider_health_status(
+    *,
+    retry_count: int,
+    fallback_count: int,
+    provider_error_count: int,
+    empty_output_count: int,
+) -> tuple[str, str, str]:
+    status_label, status_note = _base_provider_health_status(
+        retry_count=retry_count,
+        fallback_count=fallback_count,
+        provider_error_count=provider_error_count,
+        empty_output_count=empty_output_count,
+    )
+    css = {"有错误": "bad", "有波动": "warn"}.get(status_label, "ok")
+    return status_label, status_note, css
 
 
 def _latest_provider_ref(runs: list[dict[str, object]]) -> str:

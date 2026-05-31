@@ -35,7 +35,6 @@
   - personal-assistant memory needs local, explainable, editable, migratable storage with scoped retrieval after runtime app removal.
   - first-stage memory stays deterministic with SQLite + FTS5; tags and embedding remain out of the first implementation.
 - Source of truth:
-  - `docs/2026-05-14-agent-scoped-sqlite-memory-design.md`
   - `src/marten_runtime/memory/sqlite_store.py`
   - `src/marten_runtime/memory/loader.py`
   - `src/marten_runtime/memory/service.py`
