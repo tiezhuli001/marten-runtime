@@ -4,51 +4,7 @@ from fastapi.testclient import TestClient
 
 from marten_runtime.observability.langfuse import build_langfuse_observer
 from tests.http_app_support import build_test_app
-
-
-class FakeLangfuseClient:
-    def create_trace(self, payload: dict) -> dict:
-        trace_id = str(payload.get("trace_id") or "lf-generated")
-        return {"trace_id": trace_id, "url": f"https://langfuse.example/trace/{trace_id}"}
-
-    def record_generation(self, payload: dict) -> None:
-        pass
-
-    def record_tool_span(self, payload: dict) -> None:
-        pass
-
-    def finalize_trace(self, payload: dict) -> None:
-        pass
-
-    def flush(self) -> None:
-        pass
-
-    def shutdown(self) -> None:
-        pass
-
-
-class ThrowingLangfuseClient:
-    def create_trace(self, payload: dict) -> dict:
-        del payload
-        raise RuntimeError("langfuse create boom")
-
-    def record_generation(self, payload: dict) -> None:
-        del payload
-        raise RuntimeError("langfuse generation boom")
-
-    def record_tool_span(self, payload: dict) -> None:
-        del payload
-        raise RuntimeError("langfuse tool boom")
-
-    def finalize_trace(self, payload: dict) -> None:
-        del payload
-        raise RuntimeError("langfuse finalize boom")
-
-    def flush(self) -> None:
-        raise RuntimeError("langfuse flush boom")
-
-    def shutdown(self) -> None:
-        raise RuntimeError("langfuse shutdown boom")
+from tests.support.langfuse_fakes import FakeLangfuseClient, ThrowingLangfuseClient
 
 
 class LangfuseDiagnosticsContractTests(unittest.TestCase):
@@ -120,7 +76,7 @@ class LangfuseDiagnosticsContractTests(unittest.TestCase):
                 "LANGFUSE_SECRET_KEY": "sk-test",
                 "LANGFUSE_BASE_URL": "https://langfuse.example",
             },
-            client=ThrowingLangfuseClient(),
+            client=ThrowingLangfuseClient(throw_on_close=True),
         )
         app.state.runtime.langfuse_observer = observer
         app.state.runtime.runtime_loop.langfuse_observer = observer

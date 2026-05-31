@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 
 from marten_runtime.agents.assets import AgentRuntimeAssets, load_agent_runtime_assets
@@ -13,11 +12,6 @@ from marten_runtime.automation.store import AutomationStore
 from marten_runtime.config.automations_loader import load_automations
 from marten_runtime.self_improve.sqlite_store import SQLiteSelfImproveStore
 from marten_runtime.session.sqlite_store import SQLiteSessionStore
-
-
-@dataclass
-class AgentRuntimeAssetsIndex:
-    by_agent_id: dict[str, AgentRuntimeAssets]
 
 
 def load_agent_runtimes(

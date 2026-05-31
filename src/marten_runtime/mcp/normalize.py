@@ -171,7 +171,7 @@ def _normalize_tool_specific_arguments(tool_name: str | None, arguments: dict) -
 
 
 def _require_server(server_map: dict[str, MCPServerSpec], server_id: str) -> MCPServerSpec:
-    for candidate in _server_id_candidates(server_id):
+    for candidate in server_id_candidates(server_id):
         try:
             return server_map[candidate]
         except KeyError:
@@ -222,7 +222,3 @@ def server_id_candidates(server_id: str | None) -> list[str]:
         if item not in deduped:
             deduped.append(item)
     return deduped
-
-
-def _server_id_candidates(server_id: str | None) -> list[str]:
-    return server_id_candidates(server_id)

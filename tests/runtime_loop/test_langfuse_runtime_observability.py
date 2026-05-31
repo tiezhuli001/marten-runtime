@@ -9,60 +9,7 @@ from marten_runtime.runtime.usage_models import NormalizedUsage
 from marten_runtime.tools.registry import ToolRegistry
 from tests.support.finalization_contracts import contracted_final_reply
 from tests.support.scripted_llm import FailingLLMClient
-
-
-class FakeLangfuseClient:
-    def __init__(self) -> None:
-        self.traces: list[dict] = []
-        self.generations: list[dict] = []
-        self.tool_spans: list[dict] = []
-        self.finalizations: list[dict] = []
-
-    def create_trace(self, payload: dict) -> dict:
-        self.traces.append(payload)
-        return {
-            "trace_id": payload.get("trace_id") or "lf-generated",
-            "url": f"https://langfuse.example/trace/{payload.get('trace_id') or 'lf-generated'}",
-        }
-
-    def record_generation(self, payload: dict) -> None:
-        self.generations.append(payload)
-
-    def record_tool_span(self, payload: dict) -> None:
-        self.tool_spans.append(payload)
-
-    def finalize_trace(self, payload: dict) -> None:
-        self.finalizations.append(payload)
-
-    def flush(self) -> None:
-        pass
-
-    def shutdown(self) -> None:
-        pass
-
-
-class ThrowingLangfuseClient:
-    def create_trace(self, payload: dict) -> dict:
-        del payload
-        raise RuntimeError("langfuse create boom")
-
-    def record_generation(self, payload: dict) -> None:
-        del payload
-        raise RuntimeError("langfuse generation boom")
-
-    def record_tool_span(self, payload: dict) -> None:
-        del payload
-        raise RuntimeError("langfuse tool boom")
-
-    def finalize_trace(self, payload: dict) -> None:
-        del payload
-        raise RuntimeError("langfuse finalize boom")
-
-    def flush(self) -> None:
-        pass
-
-    def shutdown(self) -> None:
-        pass
+from tests.support.langfuse_fakes import FakeLangfuseClient, ThrowingLangfuseClient
 
 
 class RuntimeLoopLangfuseObservabilityTests(unittest.TestCase):
