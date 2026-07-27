@@ -44,7 +44,11 @@ class GatewayContractTests(unittest.TestCase):
 
     @staticmethod
     def _non_summary_requests(llm: ScriptedLLMClient) -> list:
-        return [request for request in llm.requests if request.request_kind != "session_summary"]
+        return [
+            request
+            for request in llm.requests
+            if request.request_kind not in {"session_summary", "agent_routing"}
+        ]
 
     def _assert_http_turn_keeps_family_tool_surface(
         self,

@@ -140,6 +140,12 @@ class ScriptedLLMClient:
         self.requests: list[LLMRequest] = []
 
     def complete(self, request: LLMRequest) -> LLMReply:
+        if request.request_kind == "agent_routing":
+            self.requests.append(request)
+            return LLMReply(
+                tool_name="agent_route",
+                tool_payload={"target_agent_id": _test_route_target(request.message)},
+            )
         if request.request_kind == "session_summary":
             self.requests.append(request)
             if not self._session_summary_replies:
@@ -170,6 +176,11 @@ class DemoLLMClient:
         self.emit_explicit_empty_contract = emit_explicit_empty_contract
 
     def complete(self, request: LLMRequest) -> LLMReply:
+        if request.request_kind == "agent_routing":
+            return LLMReply(
+                tool_name="agent_route",
+                tool_payload={"target_agent_id": _test_route_target(request.message)},
+            )
         if request.tool_result is not None:
             if "iso_time" in request.tool_result:
                 return _normalize_reply_contract_metadata(
@@ -197,6 +208,23 @@ class DemoLLMClient:
         if self.emit_explicit_empty_contract:
             return _with_explicit_empty_contract(text)
         return str(text or "").strip()
+
+
+def _test_route_target(message: str) -> str:
+    text = str(message or "").lower()
+    bazi_markers = (
+        "八字",
+        "四柱",
+        "农历",
+        "子平",
+        "盲派",
+        "大运",
+        "年柱",
+        "月柱",
+        "日柱",
+        "时柱",
+    )
+    return "bazi" if any(marker in text for marker in bazi_markers) else "main"
 
 
 def _normalize_reply_contract_metadata(request: LLMRequest, reply: LLMReply) -> LLMReply:

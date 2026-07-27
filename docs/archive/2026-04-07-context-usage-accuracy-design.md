@@ -631,3 +631,18 @@ This design remains inside the approved theme and does **not** drift because:
   - trust actual provider/runtime usage when possible
   - otherwise estimate the real payload
   - keep user-facing output concise and operator-meaningful
+
+## 16. Implementation Plan Evidence
+
+The former detailed execution plan has been absorbed into this design and the architecture changelog.
+
+Durable implementation contract:
+
+- completed calls prefer normalized provider usage as the strongest evidence
+- current-turn preflight estimation uses the final outbound payload, including tool schemas and follow-up messages
+- rough estimation remains a labeled fallback
+- `runtime.context_status` keeps the same family/action contract and exposes concise user-facing status with richer diagnostics behind it
+- run and session records preserve actual and estimated usage metadata
+- focused unit, integration, compaction, full-suite, HTTP, and real-provider checks protect the accounting boundary
+
+The current implementation and verification timeline live in `docs/ARCHITECTURE_CHANGELOG.md`; current operator behavior is summarized in `.cs/spec/operations-and-verification.md`.

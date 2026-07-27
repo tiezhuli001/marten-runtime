@@ -205,11 +205,11 @@ class SessionCatalogTests(unittest.TestCase):
         self.assertEqual(summary_llm.requests, [])
         self.assertEqual(
             [request.request_kind for request in main_llm.requests],
-            ["interactive"],
+            ["agent_routing", "interactive"],
         )
         self.assertEqual(
             [request.request_kind for request in self._non_summary_requests(main_llm)],
-            ["interactive"],
+            ["agent_routing", "interactive"],
         )
 
     def test_diagnostics_sessions_is_operator_listing_not_user_filtered_tool_view(self) -> None:
@@ -332,7 +332,7 @@ class SessionCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             [request.request_kind for request in self._non_summary_requests(main_llm)],
-            ["interactive"],
+            ["agent_routing", "interactive"],
         )
 
 

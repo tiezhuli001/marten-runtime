@@ -37,6 +37,7 @@ dist/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
+third_party/taibu_bridge/node_modules/
 
 # Local runtime data
 data/

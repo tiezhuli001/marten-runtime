@@ -6,11 +6,22 @@ from marten_runtime.runtime.usage_models import ProviderCallAttempt, ProviderCal
 from tests.support.finalization_contracts import contracted_final_reply
 
 
+def _main_route_reply(request):  # noqa: ANN001
+    if request.request_kind != "agent_routing":
+        return None
+    return LLMReply(
+        tool_name="agent_route",
+        tool_payload={"target_agent_id": "main"},
+    )
+
+
 class FailingLLMClient:
     provider_name = "failing"
     model_name = "failing-local"
 
     def complete(self, request):  # noqa: ANN001
+        if route_reply := _main_route_reply(request):
+            return route_reply
         raise RuntimeError("provider_transport_error:connection reset")
 
 
@@ -23,6 +34,8 @@ class FirstSuccessThenFailingLLMClient:
         self._calls = 0
 
     def complete(self, request):  # noqa: ANN001
+        if route_reply := _main_route_reply(request):
+            return route_reply
         self._calls += 1
         if self._calls == 1:
             return self._first_reply
@@ -34,6 +47,8 @@ class BrokenInternalLLMClient:
     model_name = "broken-local"
 
     def complete(self, request):  # noqa: ANN001
+        if route_reply := _main_route_reply(request):
+            return route_reply
         raise ValueError("boom")
 
 
@@ -42,6 +57,8 @@ class AuthFailingLLMClient:
     model_name = "auth-failing-local"
 
     def complete(self, request):  # noqa: ANN001
+        if route_reply := _main_route_reply(request):
+            return route_reply
         raise RuntimeError("provider_http_error:401:unauthorized")
 
 
@@ -50,6 +67,8 @@ class OverloadedLLMClient:
     model_name = "overloaded-local"
 
     def complete(self, request):  # noqa: ANN001
+        if route_reply := _main_route_reply(request):
+            return route_reply
         raise RuntimeError(
             'provider_http_error:529:{"type":"error","error":{"type":"overloaded_error","message":"当前服务繁忙","http_code":"529"}}'
         )
@@ -60,6 +79,8 @@ class BrokenToolLLMClient:
     model_name = "scripted-local"
 
     def complete(self, request):  # noqa: ANN001
+        if route_reply := _main_route_reply(request):
+            return route_reply
         return LLMReply(tool_name="broken_tool", tool_payload={"value": "x"})
 
 
@@ -72,6 +93,8 @@ class FirstSuccessThenDisallowedToolLLMClient:
         self._calls = 0
 
     def complete(self, request):  # noqa: ANN001
+        if route_reply := _main_route_reply(request):
+            return route_reply
         self._calls += 1
         if self._calls == 1:
             return self._first_reply
@@ -107,6 +130,8 @@ class ObservedLLMClient:
         )
 
     def complete(self, request):  # noqa: ANN001
+        if route_reply := _main_route_reply(request):
+            return route_reply
         return contracted_final_reply("ok")
 
 
@@ -120,6 +145,8 @@ class PromptTooLongThenSuccessLLMClient:
 
     def complete(self, request):  # noqa: ANN001
         self.requests.append(request)
+        if route_reply := _main_route_reply(request):
+            return route_reply
         self._calls += 1
         if self._calls == 1:
             raise RuntimeError("provider_http_error:400:prompt too long")
@@ -131,6 +158,8 @@ class ConcurrentInterleavingLLMClient:
     model_name = "scripted-local"
 
     def complete(self, request):  # noqa: ANN001
+        if route_reply := _main_route_reply(request):
+            return route_reply
         if request.message == "first":
             if request.tool_result is None:
                 return LLMReply(tool_name="time", tool_payload={})

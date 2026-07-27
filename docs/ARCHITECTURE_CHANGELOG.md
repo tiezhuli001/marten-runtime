@@ -24,6 +24,30 @@
 
 ## 条目
 
+### 2026-07-23: CodeStable Became The Current Project-Truth Entry And Historical Docs Were Consolidated
+
+- Change:
+  - initialized `.cs/vision/`, `.cs/spec/`, and `.cs/notes/` as the target, current-truth, and reusable-knowledge layers
+  - updated `docs/README.md` so current project understanding starts from `.cs/spec/index.md`
+  - classified every Markdown document under `docs/` by evidence role, absorption state, and lifecycle action
+  - moved three completed root design documents into `docs/archive/`
+  - absorbed eight detailed cleanup, review, bootstrap, Feishu, GitHub MCP, compaction, context-usage, and tool-summary documents into surviving designs, summaries, and changelog entries
+  - reduced the `docs/` Markdown set from `34` to `27` while preserving durable conclusions and source links
+- Why:
+  - current project truth, stable decisions, timeline evidence, and historical execution material now have distinct reading responsibilities
+  - future changes can update `.cs/spec/` without replaying every historical plan
+  - archive cleanup keeps detailed reasoning where it remains valuable and compresses completed execution checklists
+- Source of truth:
+  - [Project Spec](../.cs/spec/index.md)
+  - [Vision](../.cs/vision/index.md)
+  - [Docs Lifecycle Inventory](../.cs/notes/002-docs-lifecycle-inventory.md)
+  - [Docs Index](./README.md)
+  - [Archive Index](./archive/README.md)
+- Verification:
+  - lifecycle inventory coverage matches all `27` Markdown files under `docs/`
+  - repository Markdown link validation passes after moves and merges
+  - `git diff --check` passes
+
 ### 2026-05-14: Agent-scoped SQLite memory became the durable memory baseline
 
 - Change:
@@ -526,7 +550,7 @@
 - Source of truth:
   - `src/marten_runtime/channels/output_normalization.py`
   - `src/marten_runtime/interfaces/http/channel_event_serialization.py`
-  - `docs/2026-04-01-feishu-generic-card-protocol-design.md`
+  - `docs/archive/2026-04-01-feishu-generic-card-protocol-design.md`
 - Verification:
   - focused normalization regressions:
     - `PYTHONPATH=src .venv/bin/python -m unittest -v tests.test_gateway tests.test_http_event_serialization tests.feishu.test_rendering tests.test_feishu_rendering_support`
@@ -642,7 +666,7 @@
   - `docs/architecture/adr/0004-llm-first-tool-routing-boundary.md`
   - `docs/architecture/adr/0001-thin-harness-boundary.md`
   - `docs/architecture/adr/0002-progressive-disclosure-default-surface.md`
-  - `docs/2026-03-31-progressive-disclosure-llm-first-capability-design.md`
+  - `docs/archive/2026-03-31-progressive-disclosure-llm-first-capability-design.md`
 - Verification:
   - read-side alignment review against ADR 0001, ADR 0002, the 2026-03-31 capability design, and the current routing code surface
   - `git diff --check`
@@ -668,7 +692,7 @@
   - local continuity evidence in `STATUS.md`
 - Verification:
   - fresh real Feishu last-hop proof:
-    - chat/conversation: `oc_5091efbdd295f49cad9bdeed9d92b7ae`
+    - chat/conversation: `[redacted]`
     - session: `sess_3072ef1d`
     - run: `run_3624374a`
     - trace: `trace_a579ef70`
@@ -1056,7 +1080,6 @@
 - Source of truth:
   - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
   - [2026-04-07 Context Usage Accuracy Design](./archive/2026-04-07-context-usage-accuracy-design.md)
-  - [2026-04-07 Context Usage Accuracy Plan](./archive/plans/2026-04-07-context-usage-accuracy-plan.md)
 - Verification:
   - `PYTHONPATH=src python -m unittest -v tests.test_runtime_loop tests.test_tools tests.test_feishu`
     - pass, `134` tests green
@@ -1101,7 +1124,6 @@
   - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
   - [ADR 0002: Progressive Disclosure Default Surface](./architecture/adr/0002-progressive-disclosure-default-surface.md)
   - [2026-04-07 Context Usage Accuracy Design](./archive/2026-04-07-context-usage-accuracy-design.md)
-  - [2026-04-07 Context Usage Accuracy Plan](./archive/plans/2026-04-07-context-usage-accuracy-plan.md)
 - Verification:
   - `PYTHONPATH=src python -m unittest tests.test_runtime_usage tests.test_usage_estimator tests.test_models tests.test_runtime_loop tests.test_session tests.test_tools tests.test_contract_compatibility -v`
     - pass, `104` tests green
@@ -1146,7 +1168,6 @@
   - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
   - [ADR 0002: Progressive Disclosure Default Surface](./architecture/adr/0002-progressive-disclosure-default-surface.md)
   - [2026-04-06 Thin LLM Context Compaction Design](./archive/2026-04-06-thin-llm-context-compaction-design.md)
-  - [2026-04-07 Thin LLM Context Compaction Plan](./archive/plans/2026-04-07-thin-llm-context-compaction-plan.md)
 - Verification:
   - `PYTHONPATH=src python -m unittest tests.test_runtime_capabilities tests.test_models -v`
     - pass, `19` tests green
@@ -1182,7 +1203,6 @@
   - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
   - [ADR 0002: Progressive Disclosure Default Surface](./architecture/adr/0002-progressive-disclosure-default-surface.md)
   - [2026-04-06 Thin LLM Context Compaction Design](./archive/2026-04-06-thin-llm-context-compaction-design.md)
-  - [2026-04-07 Thin LLM Context Compaction Plan](./archive/plans/2026-04-07-thin-llm-context-compaction-plan.md)
 - Verification:
   - `PYTHONPATH=src python -m unittest tests.test_runtime_capabilities tests.test_tools tests.test_runtime_loop tests.test_contract_compatibility tests.test_acceptance -v`
     - pass, `84` tests green
@@ -1215,7 +1235,6 @@
   - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
   - [ADR 0002: Progressive Disclosure Default Surface](./architecture/adr/0002-progressive-disclosure-default-surface.md)
   - [2026-04-06 Thin LLM Context Compaction Design](./archive/2026-04-06-thin-llm-context-compaction-design.md)
-  - [2026-04-07 Thin LLM Context Compaction Plan](./archive/plans/2026-04-07-thin-llm-context-compaction-plan.md)
 - Verification:
   - `PYTHONPATH=src python -m unittest tests.test_models tests.test_session tests.test_compaction_trigger tests.test_compaction_runner tests.test_runtime_context tests.test_runtime_loop tests.test_acceptance -v`
     - pass, `63` tests green
@@ -1242,7 +1261,7 @@
 - Source of truth:
   - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
   - [ADR 0002: Progressive Disclosure Default Surface](./architecture/adr/0002-progressive-disclosure-default-surface.md)
-  - [2026-04-05 GitHub Trending MCP Plan](./archive/plans/2026-04-05-github-trending-mcp-plan.md)
+  - implementation evidence is retained in this changelog entry and [the current capability spec](../.cs/spec/continuity-and-capabilities.md)
 - Verification:
   - `PYTHONPATH=src python -m unittest -v`
     - pass, `269` tests green
@@ -1275,7 +1294,7 @@
 - Source of truth:
   - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
   - [ADR 0002: Progressive Disclosure Default Surface](./architecture/adr/0002-progressive-disclosure-default-surface.md)
-  - [Feishu Generic Card Protocol Design](./2026-04-01-feishu-generic-card-protocol-design.md)
+  - [Feishu Generic Card Protocol Design](./archive/2026-04-01-feishu-generic-card-protocol-design.md)
 - Verification:
   - `PYTHONPATH=src python -m unittest tests.test_feishu tests.test_skills tests.test_contract_compatibility tests.test_runtime_loop -v`
     - pass
@@ -1308,7 +1327,7 @@
   - added legacy example assistant SYSTEM_LESSONS artifact to `.gitignore`
   - formalized `SYSTEM_LESSONS.md` as a runtime-managed artifact instead of a repository baseline file
   - introduced `docs/archive/` and moved completed one-off audits and the completed refinement plan out of the primary docs path
-  - recorded the bootstrap cleanup plan at `docs/archive/plans/2026-04-01-bootstrap-assembly-hygiene-plan.md`
+  - recorded the bootstrap assembly outcome in `docs/archive/plans/2026-04-11-repo-slimming-summary.md`
 - Why:
   - runtime-generated files should not keep dirtying the repository after normal live runs
   - completed audits and plans were competing with current source-of-truth docs and active reading paths
@@ -1335,8 +1354,8 @@
   - [ADR 0002: Progressive Disclosure Default Surface](./architecture/adr/0002-progressive-disclosure-default-surface.md)
   - [ADR 0003: Self-Improve Is Runtime Learning, Not Architecture Memory](./architecture/adr/0003-self-improve-runtime-learning-not-architecture-memory.md)
 - Supporting design docs:
-  - [Agent Runtime Harness Design](./2026-03-29-private-agent-harness-design.md)
-  - [Progressive Disclosure Capability Design](./2026-03-31-progressive-disclosure-llm-first-capability-design.md)
+  - [Agent Runtime Harness Design](./archive/2026-03-29-private-agent-harness-design.md)
+  - [Progressive Disclosure Capability Design](./archive/2026-03-31-progressive-disclosure-llm-first-capability-design.md)
 - Verification:
   - `PYTHONPATH=src python -m unittest -v`
   - docs index and live verification checklist updated to point at ADR + changelog rather than tracked `STATUS.md`
@@ -1354,7 +1373,7 @@
   - [ADR 0001: Thin Harness Boundary](./architecture/adr/0001-thin-harness-boundary.md)
   - [ADR 0002: Progressive Disclosure Default Surface](./architecture/adr/0002-progressive-disclosure-default-surface.md)
 - Supporting design docs:
-  - [Progressive Disclosure Capability Design](./2026-03-31-progressive-disclosure-llm-first-capability-design.md)
+  - [Progressive Disclosure Capability Design](./archive/2026-03-31-progressive-disclosure-llm-first-capability-design.md)
   - [Architecture Audit](./archive/audits/ARCHITECTURE_AUDIT.md)
 - Verification:
   - `PYTHONPATH=src python -m unittest tests.test_models tests.test_bootstrap_prompt tests.test_runtime_capabilities tests.test_contract_compatibility -v`

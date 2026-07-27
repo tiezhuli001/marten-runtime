@@ -94,10 +94,38 @@ def parse_feishu_card_protocol(text: str) -> tuple[str, FeishuCardProtocol | Non
     return strip_trailing_followup_offer(visible_text), card
 
 
+def recover_feishu_card_protocol(text: str) -> tuple[str, FeishuCardProtocol | None]:
+    try:
+        visible_text, payload = _extract_protocol_payload(text)
+        if not isinstance(payload, dict):
+            return text, None
+        supported = {
+            key: payload[key]
+            for key in ("title", "summary", "sections")
+            if key in payload
+        }
+        card = (
+            FeishuCardProtocol.model_validate(supported)
+            if supported
+            else _recover_rendered_lark_card(payload)
+        )
+        if card is None:
+            return text, None
+    except Exception as exc:
+        logger.info("feishu_card_protocol action=recover_failed reason=%s", str(exc))
+        return text, None
+    return strip_trailing_followup_offer(visible_text), card
+
+
 def normalize_feishu_visible_text(text: str) -> str:
-    visible_text, _ = parse_feishu_card_protocol(text)
+    visible_text, protocol = parse_feishu_card_protocol(text)
+    if protocol is None:
+        recovered_visible, recovered_protocol = recover_feishu_card_protocol(text)
+        if recovered_protocol is not None:
+            visible_text, protocol = recovered_visible, recovered_protocol
     protocol_context = (
         visible_text != text
+        or protocol is not None
         or "feishu_card" in text
         or "<invoke name=\"feishu_card\">" in text
         or "<minimax:tool_call>" in text
@@ -111,6 +139,10 @@ def normalize_feishu_visible_text(text: str) -> str:
 
 def normalize_feishu_durable_text(text: str) -> str:
     visible_text, protocol = parse_feishu_card_protocol(text)
+    if protocol is None:
+        recovered_visible, recovered_protocol = recover_feishu_card_protocol(text)
+        if recovered_protocol is not None:
+            visible_text, protocol = recovered_visible, recovered_protocol
     if protocol is None:
         return normalize_feishu_visible_text(text)
     lead = dedupe_visible_text_against_protocol(visible_text, protocol).strip()
@@ -284,6 +316,60 @@ def _validate_protocol_payload(payload: object) -> FeishuCardProtocol:
     return FeishuCardProtocol.model_validate(payload)
 
 
+def _recover_rendered_lark_card(payload: dict[str, object]) -> FeishuCardProtocol | None:
+    body = payload.get("body")
+    body_elements = body.get("elements") if isinstance(body, dict) else None
+    elements = payload.get("elements") or body_elements
+    header = payload.get("header")
+    if not isinstance(header, dict) or not isinstance(elements, list):
+        return None
+
+    title = ""
+    header_title = header.get("title")
+    if isinstance(header_title, dict):
+        title = str(header_title.get("content") or "").strip()
+    elif isinstance(header_title, str):
+        title = header_title.strip()
+
+    contents = _lark_card_visible_contents(elements)
+    if not title and not contents:
+        return None
+    sections = (
+        [FeishuCardSection(title=None, items=contents)]
+        if contents
+        else []
+    )
+    return FeishuCardProtocol(title=title or None, sections=sections)
+
+
+def _lark_card_visible_contents(elements: list[object]) -> list[str]:
+    contents: list[str] = []
+
+    def visit(items: list[object]) -> None:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            tag = str(item.get("tag") or "").strip()
+            content = ""
+            if tag == "markdown":
+                content = str(item.get("content") or "").strip()
+            elif tag == "div":
+                text = item.get("text")
+                if isinstance(text, dict):
+                    content = str(text.get("content") or "").strip()
+            if content and content not in contents:
+                contents.append(content)
+            nested = item.get("elements")
+            if isinstance(nested, list):
+                visit(nested)
+            columns = item.get("columns")
+            if isinstance(columns, list):
+                visit(columns)
+
+    visit(elements)
+    return contents
+
+
 def render_final_reply_card(
     text: str,
     *,
@@ -302,6 +388,10 @@ def render_final_reply_card(
             usage_summary=usage_summary,
         )
     visible_text, protocol = parse_feishu_card_protocol(text)
+    if protocol is None:
+        recovered_visible, recovered_protocol = recover_feishu_card_protocol(text)
+        if recovered_protocol is not None:
+            visible_text, protocol = recovered_visible, recovered_protocol
     if protocol is not None:
         visible_text = dedupe_visible_text_against_protocol(visible_text, protocol)
     if protocol is None:

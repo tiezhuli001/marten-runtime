@@ -2,7 +2,7 @@
 
 <div align="center">
 
-面向自托管场景的 simplified openclaw-style agent runtime harness，聚焦 `channel -> binding -> runtime loop -> builtin tool / MCP / skill -> delivery / diagnostics` 主链。
+面向自托管场景的 simplified openclaw-style agent runtime harness，聚焦 `channel -> binding -> top-level agent dispatch -> runtime loop -> builtin tool / MCP / skill -> delivery / diagnostics` 主链。
 
 [文档索引](./docs/README.md) · [部署指南](./docs/DEPLOYMENT.md) · [架构演进](./docs/ARCHITECTURE_EVOLUTION.md) · [架构时间线](./docs/ARCHITECTURE_CHANGELOG.md) · [ADR 索引](./docs/architecture/adr/README.md) · [配置面说明](./docs/CONFIG_SURFACES.md)
 
@@ -14,14 +14,15 @@
 
 `marten-runtime` 是一个自托管 agent runtime harness，目标是把 agent、MCP、skill、provider 和诊断面放进一条稳定主链：
 
-`channel -> binding -> runtime loop -> builtin tool / MCP / skill -> delivery / diagnostics`
+`channel -> binding -> top-level agent dispatch -> runtime loop -> builtin tool / MCP / skill -> delivery / diagnostics`
 
 ## 核心能力
 
 - LLM-first：意图理解、工具选择和能力组合留在模型路径中
 - Thin harness：host 侧负责配置、执行、安全检查、持久化、投递和诊断
 - 多入口：HTTP `/messages` 与 Feishu websocket 共享同一 runtime 主链
-- 多 agent：支持 channel / user / conversation 绑定与 selected-agent profile 切换
+- 多 agent：每个默认 turn 由 main 同步 handoff 给已授权的同级顶层 agent；精确 binding 与 requested agent 支持受控直达
+- Bazi：内置 Taibu bridge、地点解析、真太阳时、sect 1、Knowledge/RAG、固定结构解盘与敏感观测策略
 - 上下文治理：支持会话恢复、working context 压缩、thin memory continuity slice
 - 工具能力：支持 builtin tools、MCP tools、文件型 skills、namespace-scoped Knowledge/RAG
 - Provider 韧性：支持 OpenAI-compatible provider、retry/backoff 与 profile failover
@@ -32,11 +33,12 @@
 ```mermaid
 flowchart LR
     A["HTTP / Feishu"] --> B["Gateway + Binding"]
-    B --> C["Runtime Context"]
-    C --> D["Runtime Loop / LLM"]
-    D -->|"tool call"| E["Builtin / MCP / Skill"]
-    E --> D
-    D --> F["Delivery + Diagnostics"]
+    B --> C["Main Agent Dispatch"]
+    C --> D["Target Agent Runtime Context"]
+    D --> E["Runtime Loop / LLM"]
+    E -->|"tool call"| F["Builtin / MCP / Skill"]
+    F --> E
+    E --> G["Delivery + Diagnostics"]
 ```
 
 ## 评测运维面
@@ -59,6 +61,7 @@ JSON API 通过 `Accept: application/json` 保持可用。
 
 - 默认 runtime agent：`main`
 - canonical runtime agent id：`main`
+- 顶层 agent：`main`、`bazi`；main handoff catalog 由 `config/agents.toml` 管理
 - session persistence：SQLite
 - 会话控制：`session.new` / `session.resume`
 - provider 配置：`config/providers.toml` + `config/models.toml`
@@ -224,6 +227,7 @@ PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
 | `subagent_task_progress` | 子代理受理、调度、非 MCP 子任务进度与父线程吸收 |
 | `subagent_external_mcp_completion` | 子代理调用外部 MCP 后完成通知与父线程吸收 |
 | `knowledge_retrieval` | Knowledge/RAG 召回、重排、namespace 隔离、config mismatch 与入库进度 |
+| `bazi_agent` | main 到 Bazi 的顶层 handoff、排盘、Dayun、四柱反查、RAG 引用与降级契约 |
 
 产物位置：
 

@@ -108,6 +108,26 @@ class KnowledgeStoreTests(unittest.TestCase):
             self.assertEqual(len(store.list_embeddings("fanqie", "hash_a")), 1)
             self.assertEqual(store.list_embeddings("fanqie", "hash_b"), [])
 
+    def test_ingest_job_round_trip_includes_recovery_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLiteKnowledgeStore(Path(tmp) / "knowledge.sqlite3")
+            store.upsert_ingest_job(
+                namespace="bazi",
+                job_id="job-1",
+                source_title="Theory",
+                status="failed",
+                error="provider unavailable",
+                error_code="KNOWLEDGE_EMBEDDING_UNAVAILABLE",
+                retryable=True,
+                staged_file_path="upload-1/theory.md",
+            )
+
+            job = store.get_ingest_job("bazi", "job-1")
+
+            self.assertEqual(job["error_code"], "KNOWLEDGE_EMBEDDING_UNAVAILABLE")
+            self.assertTrue(job["retryable"])
+            self.assertEqual(job["staged_file_path"], "upload-1/theory.md")
+
 
 if __name__ == "__main__":
     unittest.main()

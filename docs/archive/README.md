@@ -2,6 +2,8 @@
 
 这个目录只保留少量仍有审计追溯价值的历史文档。
 
+全部 28 份 Markdown 的证据角色、CodeStable 吸收状态和整理结果见 [文档生命周期台账](../../.cs/notes/002-docs-lifecycle-inventory.md)。
+
 ## 这里保留什么
 
 - 仍然有助于解释旧代码或旧清理决策的过时设计历史
@@ -11,6 +13,9 @@
 ## 当前分组
 
 - 根目录归档设计说明：
+  - `2026-03-29-private-agent-harness-design.md`
+  - `2026-03-31-progressive-disclosure-llm-first-capability-design.md`
+  - `2026-04-01-feishu-generic-card-protocol-design.md`
   - `2026-04-06-thin-llm-context-compaction-design.md`
   - `2026-04-07-context-usage-accuracy-design.md`
   - `2026-04-07-llm-tool-episode-summary-design.md`
@@ -19,9 +24,10 @@
 - `branch-evolution/`
   - 2026-04-09 branch-evolution 阶段保留的一份 fast-path inventory 说明
 - `plans/`
-  - 为 2026-04-14 之前工作保留的少量历史执行计划
-  - 2026-04-30 与 2026-05-01 评测执行计划的压缩摘要
+  - 2026-04-11 repo slimming 压缩摘要
   - 2026-04-28 压缩后的 `STATUS.md` 历史摘要
+  - 2026-05-01 eval foundation 压缩摘要
+  - 2026-05-05 LLM-first review 压缩摘要
 
 ## 已吸收后移除
 
@@ -35,3 +41,4 @@
 - 稳定架构真相放在 `docs/architecture/adr/` 与 `docs/ARCHITECTURE_CHANGELOG.md`。
 - 当前运维与部署真相放在主文档路径。
 - 归档目录保持精简。
+- 详细执行计划完成合并后由对应设计、压缩摘要和 architecture changelog 承担证据职责。

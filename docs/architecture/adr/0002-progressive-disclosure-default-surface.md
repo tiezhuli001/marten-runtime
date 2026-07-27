@@ -41,6 +41,6 @@ The host declares the capability catalog, but the model chooses whether to expan
 
 ## References
 
-- [Progressive Disclosure Capability Design](../../2026-03-31-progressive-disclosure-llm-first-capability-design.md)
+- [Progressive Disclosure Capability Design](../../archive/2026-03-31-progressive-disclosure-llm-first-capability-design.md)
 - [Architecture Audit](../../archive/audits/ARCHITECTURE_AUDIT.md)
 - [Architecture Changelog](../../ARCHITECTURE_CHANGELOG.md)

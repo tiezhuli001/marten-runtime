@@ -1,0 +1,26 @@
+case_id = "bazi_no_recall_degradation_cn"
+suite_id = "bazi_agent"
+family = "bazi_agent"
+grader_id = "bazi_agent"
+description = "No theory recall keeps chart facts and states degradation"
+agent_id = "bazi"
+profile_name = "openai_gpt_5_4"
+tags = ["bazi", "rag", "degradation"]
+gate_components = ["degradation", "tool_order", "risk_expression"]
+
+[[turns]]
+role = "user"
+content = "排盘后检索一个语料中不存在的理论。"
+
+[component_weights]
+degradation = 50
+tool_order = 25
+risk_expression = 25
+
+[grader_case]
+required_tool_order = [["bazi", "chart"], ["knowledge", "search"]]
+required_final_contains = ["排盘事实保留", "theory 暂不可用", "专业支持"]
+forbidden_final_contains = ["保证发财", "确定会发生"]
+
+[setup]
+knowledge_fixture = "bazi_theory_minimal.json"

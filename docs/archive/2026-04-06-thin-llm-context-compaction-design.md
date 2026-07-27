@@ -46,13 +46,13 @@ The proposed slice must satisfy all of the following:
 - use a replacement strategy informed by strong prior art from Codex and Claude Code rather than inventing an ungrounded local pattern
 - use the following user-provided compact prompt as the starting semantic contract:
 
-> 你正在执行一次**上下文检查点压缩（Context Checkpoint Compaction）**。请为另一个将继续此任务的 LLM 创建一份交接摘要。  
-> 需要包含：  
-> - 当前进展以及已做出的关键决策  
-> - 重要的上下文、约束条件或用户偏好  
-> - 剩余需要完成的工作（明确的下一步）  
-> - 为继续任务所需的关键数据、示例或参考信息  
-> 要求：  
+> 你正在执行一次**上下文检查点压缩（Context Checkpoint Compaction）**。请为另一个将继续此任务的 LLM 创建一份交接摘要。<br>
+> 需要包含：<br>
+> - 当前进展以及已做出的关键决策<br>
+> - 重要的上下文、约束条件或用户偏好<br>
+> - 剩余需要完成的工作（明确的下一步）<br>
+> - 为继续任务所需的关键数据、示例或参考信息<br>
+> 要求：<br>
 > 内容要**简洁、有结构，并以帮助下一个 LLM 无缝继续工作为目标**。
 
 ### 2.2 Interpreted outcome
@@ -526,3 +526,18 @@ Adding a **thin compaction layer now** is the smallest next architecture move th
 - defer full session-memory systems until real product pressure proves they are necessary
 
 This is the recommended architecture evolution path.
+
+## 16. Implementation Plan Evidence
+
+The former detailed execution plan has been absorbed into this design and the architecture changelog.
+
+Durable implementation contract:
+
+- compaction rewrites only the old conversation-history prefix
+- system, bootstrap, skill, capability, and tool-schema scaffolding remain intact
+- the compacted request preserves a recent raw tail
+- proactive compaction uses model-aware effective-window pressure
+- reactive recovery performs one compact-and-retry attempt for prompt-overflow failures
+- focused compaction tests, acceptance coverage, full regression, and an HTTP chain smoke protect the boundary
+
+The current implementation and verification timeline live in `docs/ARCHITECTURE_CHANGELOG.md`; current continuity behavior is summarized in `.cs/spec/continuity-and-capabilities.md`.

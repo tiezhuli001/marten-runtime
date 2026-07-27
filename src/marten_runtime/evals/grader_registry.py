@@ -9,6 +9,7 @@ from marten_runtime.evals.family_graders.memory_long_horizon import (
 from marten_runtime.evals.family_graders.knowledge_retrieval import (
     grade_knowledge_retrieval_case_result,
 )
+from marten_runtime.evals.family_graders.bazi_agent import grade_bazi_agent_case_result
 from marten_runtime.evals.family_graders.subagent_task_progress import (
     grade_subagent_task_progress_case_result,
 )
@@ -20,6 +21,7 @@ _REGISTRY: dict[str, CaseGrader] = {
     "main_chain_core": grade_main_chain_case_result,
     "memory_long_horizon": grade_memory_long_horizon_case_result,
     "knowledge_retrieval": grade_knowledge_retrieval_case_result,
+    "bazi_agent": grade_bazi_agent_case_result,
     "subagent_task_progress": grade_subagent_task_progress_case_result,
 }
 

@@ -4,6 +4,7 @@ from unittest.mock import Mock
 from fastapi.testclient import TestClient
 
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
+from marten_runtime.runtime.observation_policy import REDACTED_TEXT
 from marten_runtime.runtime.provider_reliability import build_provider_call_diagnostics
 from marten_runtime.runtime.usage_models import ProviderCallAttempt
 from marten_runtime.session.models import SessionMessage
@@ -77,6 +78,72 @@ class HTTPRuntimeDiagnosticsTests(unittest.TestCase):
         self.assertTrue(memory["fts_enabled"])
         self.assertEqual(memory["loaded_count_last_turn"], 1)
         self.assertEqual(memory["budget_chars"], runtime.memory_service.prompt_char_limit)
+
+    def test_serialize_runtime_diagnostics_exposes_knowledge_summary(self) -> None:
+        app = build_test_app(
+            emit_explicit_empty_contract=True,
+            env_overrides={"KNOWLEDGE_OPERATOR_TOKEN": "diagnostic-secret"},
+        )
+        runtime = app.state.runtime
+        request = Mock()
+        request.base_url = "http://127.0.0.1:9000/"
+
+        body = serialize_runtime_diagnostics(runtime, request)
+
+        self.assertTrue(body["knowledge"]["operator_api"]["configured"])
+        self.assertIn("sqlite_vec", body["knowledge"])
+        self.assertTrue(body["knowledge"]["agent_scope"]["production_ready"])
+        self.assertTrue(body["knowledge"]["agent_scope"]["bazi_read_only"])
+        self.assertNotIn("diagnostic-secret", str(body["knowledge"]))
+
+    def test_bazi_session_diagnostics_and_catalog_redact_sensitive_text(self) -> None:
+        app = build_test_app(emit_explicit_empty_contract=True)
+        runtime = app.state.runtime
+        session = runtime.session_store.create(
+            session_id="sess_bazi_sensitive",
+            conversation_id="conv-bazi-sensitive",
+            channel_id="feishu",
+            user_id="user-sensitive",
+        )
+        runtime.session_store.set_catalog_metadata(
+            session.session_id,
+            user_id="user-sensitive",
+            agent_id="bazi",
+            session_title="虚构样例：1988年农历二月十五排盘",
+            session_preview="四川省成都市武侯区 10:20",
+        )
+        runtime.session_store.append_message(
+            session.session_id,
+            SessionMessage.user("测试用户，男，农历1988年2月15日上午10点20分，四川省成都市武侯区"),
+        )
+
+        with TestClient(app) as client:
+            detail = client.get(f"/diagnostics/session/{session.session_id}")
+            catalog = client.get("/diagnostics/sessions")
+
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()["sensitive_projection"], "sensitive_bazi")
+        self.assertEqual(
+            {item["content"] for item in detail.json()["history"]},
+            {REDACTED_TEXT},
+        )
+        observed = f"{detail.text}\n{catalog.text}"
+        for sensitive in ("1988", "武侯区", "10:20", "农历二月十五"):
+            self.assertNotIn(sensitive, observed)
+
+    def test_knowledge_readiness_rejects_family_level_scope(self) -> None:
+        app = build_test_app(emit_explicit_empty_contract=True)
+        runtime = app.state.runtime
+        runtime.agent_registry._items["main"] = runtime.agent_registry.get("main").model_copy(
+            update={"allowed_knowledge_namespaces": None}
+        )
+        request = Mock()
+        request.base_url = "http://127.0.0.1:9000/"
+
+        scope = serialize_runtime_diagnostics(runtime, request)["knowledge"]["agent_scope"]
+
+        self.assertFalse(scope["production_ready"])
+        self.assertEqual(scope["family_level_agents"], ["main"])
 
     def test_serialize_runtime_diagnostics_exposes_provider_reliability_block(self) -> None:
         app = build_test_app(emit_explicit_empty_contract=True)

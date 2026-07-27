@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "bazi.fixture.v1",
+  "kind": "clock",
+  "cases": [
+    {
+      "id": "sect1-before-zi-hour",
+      "birthDate": "1988-02-15",
+      "birthTime": "22:59",
+      "pillars": ["戊辰", "甲寅", "庚子", "丁亥"]
+    },
+    {
+      "id": "sect1-zi-hour-start",
+      "birthDate": "1988-02-15",
+      "birthTime": "23:00",
+      "pillars": ["戊辰", "甲寅", "辛丑", "戊子"]
+    },
+    {
+      "id": "sect1-zi-hour-middle",
+      "birthDate": "1988-02-15",
+      "birthTime": "23:30",
+      "pillars": ["戊辰", "甲寅", "辛丑", "戊子"]
+    },
+    {
+      "id": "sect1-zi-hour-end-of-day",
+      "birthDate": "1988-02-15",
+      "birthTime": "23:59",
+      "pillars": ["戊辰", "甲寅", "辛丑", "戊子"]
+    },
+    {
+      "id": "sect1-midnight",
+      "birthDate": "1988-02-16",
+      "birthTime": "00:00",
+      "pillars": ["戊辰", "甲寅", "辛丑", "戊子"]
+    }
+  ]
+}

@@ -323,6 +323,25 @@ class LLMClientInstructionTests(unittest.TestCase):
             instruction.rfind("如果这条回复已经包含正确的语义内容"),
         )
 
+    def test_request_specific_instruction_adds_lean_bazi_output_repair(self) -> None:
+        request = self._build_request(
+            agent_id="bazi",
+            request_kind="bazi_output_repair",
+            invalid_final_text=(
+                "违规项：过三关包含栏目名称，缺少可核验的具体事件。\n"
+                "原回复：完整八字分析。"
+            ),
+            available_tools=[],
+        )
+
+        instruction = _request_specific_instruction(request) or ""
+
+        self.assertIn("只修正列出的违规项", instruction)
+        self.assertIn("保留其余结论", instruction)
+        self.assertIn("不要调用工具", instruction)
+        self.assertIn("只输出原回复中待修复的栏目", instruction)
+        self.assertIn("过三关包含栏目名称", instruction)
+
     def test_request_specific_instruction_adds_contract_repair_guardrails(self) -> None:
         request = self._build_request(
             request_kind="contract_repair",

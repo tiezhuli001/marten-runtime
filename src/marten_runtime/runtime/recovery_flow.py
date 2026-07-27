@@ -39,6 +39,12 @@ from marten_runtime.tools.builtins.runtime_tool import render_runtime_compaction
 
 FinalizationAssessment = Literal["accepted", "retryable_degraded", "unrecoverable"]
 
+_TEXT_TOOL_INVOKE_RE = re.compile(
+    r"<invoke\s+name=[\"'](?P<name>[^\"']+)[\"']",
+    re.IGNORECASE,
+)
+_UNRESOLVED_TOOL_INVOCATION = "unresolved_tool_invocation"
+
 @dataclass(frozen=True)
 class FinalizationContractRule:
     contract_id: str
@@ -72,6 +78,19 @@ def is_generic_tool_failure_text(text: str) -> bool:
         "工具执行失败，请稍后重试。",
         "tool execution failed, please retry.",
     }
+
+
+def contains_unresolved_tool_invocation(text: str) -> bool:
+    normalized = _strip_code_literals(str(text or ""))
+    names = [match.group("name").strip().lower() for match in _TEXT_TOOL_INVOKE_RE.finditer(normalized)]
+    if names:
+        return any(name != "feishu_card" for name in names)
+    return "<invoke" in normalized.lower()
+
+
+def _strip_code_literals(text: str) -> str:
+    without_fences = re.sub(r"```[^\n]*\n.*?```", "", text, flags=re.DOTALL)
+    return re.sub(r"`[^`\n]*`", "", without_fences)
 
 
 def derive_finalization_contract_flags(
@@ -181,6 +200,16 @@ def assess_finalization_text_with_details(
     missing_diagnostic_evidence = tuple(
         _missing_required_evidence(diagnostic_required_evidence, final_text)
     )
+    if contains_unresolved_tool_invocation(normalized_text):
+        return FinalizationAssessmentDetails(
+            assessment=(
+                "retryable_degraded"
+                if history or _safe_recovery_fragments(history)
+                else "unrecoverable"
+            ),
+            required_evidence_items=diagnostic_required_evidence,
+            missing_evidence_items=(_UNRESOLVED_TOOL_INVOCATION,),
+        )
     if _first_violated_finalization_contract(
         history,
         normalized_text,

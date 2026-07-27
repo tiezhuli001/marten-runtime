@@ -1159,6 +1159,44 @@ class RuntimeLoopToolFollowupAndRecoveryTests(unittest.TestCase):
         self.assertEqual(run.finalization.missing_evidence_items, [])
         self.assertEqual(run.finalization.invalid_final_text, "工具执行失败，请重试。")
 
+    def test_runtime_never_emits_text_tool_invocation_after_retry(self) -> None:
+        tools = ToolRegistry()
+        tools.register("time", _fixed_time_tool)
+        history = InMemoryRunHistory()
+        unresolved = (
+            '<invoke name="time">\n'
+            '<parameter name="timezone">Asia/Shanghai</parameter>\n'
+            '</invoke>'
+        )
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(tool_name="time", tool_payload={"timezone": "Asia/Shanghai"}),
+                contracted_final_reply(unresolved),
+                contracted_final_reply(unresolved),
+            ]
+        )
+        runtime = RuntimeLoop(llm, tools, history)
+        agent = AgentSpec(
+            agent_id="main",
+            role="general_assistant",
+            allowed_tools=["time"],
+        )
+
+        events = runtime.run(
+            session_id="sess_text_tool_invoke",
+            message="查询北京时间并告诉我结果。",
+            trace_id="trace_text_tool_invoke",
+            agent=agent,
+        )
+
+        self.assertEqual([request.request_kind for request in llm.requests], ["interactive", "interactive", "finalization_retry"])
+        self.assertEqual(events[-1].event_type, "final")
+        self.assertNotIn("<invoke", events[-1].payload["text"])
+        run = history.get(events[-1].run_id)
+        self.assertTrue(run.finalization.retry_triggered)
+        self.assertTrue(run.finalization.recovered_from_fragments)
+        self.assertIn("unresolved_tool_invocation", run.finalization.missing_evidence_items)
+
     def test_runtime_finalization_retry_reuses_prior_grounded_mcp_summary(
         self,
     ) -> None:

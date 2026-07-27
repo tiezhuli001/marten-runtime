@@ -219,6 +219,8 @@ def serialize_runtime_diagnostics(
         },
         "provider_reliability": provider_health_summary.model_dump(mode="json"),
         "memory": runtime.memory_service.diagnostics_summary(),
+        "knowledge": _knowledge_diagnostics(runtime),
+        "bazi": runtime.bazi_bridge_manager.diagnostics_summary(),
         "compaction_worker": {
             "enabled": worker is not None,
             "running": bool(
@@ -230,4 +232,85 @@ def serialize_runtime_diagnostics(
         },
         "latest_session_transition": runtime.latest_session_transition,
         "env_loaded": runtime.env_load_result.loaded,
+    }
+
+
+def _knowledge_diagnostics(runtime: HTTPRuntimeState) -> dict[str, object]:
+    service = runtime.knowledge_service
+    namespaces = service.store.list_namespace_summaries()
+    mismatch_count = sum(
+        1
+        for item in namespaces
+        if item.get("index_embedding_config_hash")
+        and item.get("index_embedding_config_hash") != service.embedding_config_hash
+    )
+    job_counts = service.store.ingest_job_diagnostics()
+    model_status = service.model_status()
+    configured = bool(str(runtime.env.get("KNOWLEDGE_OPERATOR_TOKEN") or "").strip())
+    agent_scope = _knowledge_agent_scope_diagnostics(runtime)
+    return {
+        "operator_api": {
+            "configured": configured,
+            "reason": None if configured else "credential_missing",
+        },
+        "config_source": "config/knowledge.toml",
+        "database": "data/knowledge/knowledge.sqlite3",
+        "staging": "data/knowledge/uploads",
+        "embedding_config_hash": service.embedding_config_hash,
+        "namespace_count": len(namespaces),
+        "namespace_mismatch_count": mismatch_count,
+        "active_job_count": job_counts["active_count"],
+        "interrupted_job_count": job_counts["interrupted_count"],
+        "sqlite_vec": {"available": service.store.sqlite_vec_available()},
+        "embedding": model_status["embedding"],
+        "reranker": model_status["reranker"],
+        "job_recovery": service.job_recovery_status,
+        "agent_scope": agent_scope,
+    }
+
+
+def _knowledge_agent_scope_diagnostics(runtime: HTTPRuntimeState) -> dict[str, object]:
+    bazi_namespaces = {"bazi-theory", "bazi-cases"}
+    write_actions = {
+        "ingest_text",
+        "ingest_file",
+        "cancel_ingest",
+        "delete_source",
+        "reindex",
+        "unload_models",
+    }
+    items: list[dict[str, object]] = []
+    family_level_agents: list[str] = []
+    unsafe_bazi_write_agents: list[str] = []
+    for agent_id in sorted(runtime.agent_runtimes):
+        spec = runtime.agent_registry.get(agent_id)
+        if not spec.enabled or "knowledge" not in spec.allowed_tools:
+            continue
+        namespaces = spec.allowed_knowledge_namespaces
+        actions = spec.allowed_knowledge_actions
+        explicit = namespaces is not None and actions is not None
+        if not explicit:
+            family_level_agents.append(agent_id)
+        if bazi_namespaces & set(namespaces or []) and write_actions & set(actions or []):
+            unsafe_bazi_write_agents.append(agent_id)
+        items.append(
+            {
+                "agent_id": agent_id,
+                "explicit": explicit,
+                "namespaces": list(namespaces) if namespaces is not None else None,
+                "actions": list(actions) if actions is not None else None,
+            }
+        )
+    bazi = next((item for item in items if item["agent_id"] == "bazi"), None)
+    bazi_read_only = bool(
+        bazi
+        and set(bazi["namespaces"] or []) == bazi_namespaces
+        and set(bazi["actions"] or []) == {"search", "get_chunk", "model_status"}
+    )
+    return {
+        "production_ready": not family_level_agents and not unsafe_bazi_write_agents and bazi_read_only,
+        "bazi_read_only": bazi_read_only,
+        "family_level_agents": family_level_agents,
+        "unsafe_bazi_write_agents": unsafe_bazi_write_agents,
+        "agents": items,
     }

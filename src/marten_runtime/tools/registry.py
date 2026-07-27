@@ -17,6 +17,7 @@ class ToolDescriptor(BaseModel):
     server_id: str | None = None
     backend_id: str | None = None
     description: str = ""
+    observation_policy: str = "standard"
     parameters_schema: dict[str, object] = Field(
         default_factory=lambda: {"type": "object"}
     )
@@ -52,6 +53,7 @@ class ToolRegistry:
         server_id: str | None = None,
         backend_id: str | None = None,
         description: str = "",
+        observation_policy: str = "standard",
         parameters_schema: dict[str, object] | None = None,
     ) -> None:
         self._handlers[name] = handler
@@ -61,6 +63,7 @@ class ToolRegistry:
             server_id=server_id,
             backend_id=backend_id,
             description=description,
+            observation_policy=observation_policy,
             parameters_schema=parameters_schema or {"type": "object"},
         )
 
@@ -88,6 +91,7 @@ class ToolRegistry:
                 "backend_id": descriptor.backend_id or "",
                 "description": descriptor.description,
                 "parameters_schema": descriptor.parameters_schema,
+                "observation_policy": descriptor.observation_policy,
             }
             tool_metadata[name] = metadata
             if descriptor.source_kind == "mcp":

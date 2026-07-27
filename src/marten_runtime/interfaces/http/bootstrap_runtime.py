@@ -9,6 +9,7 @@ from marten_runtime.agents.bindings import AgentBindingRegistry
 from marten_runtime.agents.assets import AgentRuntimeAssets
 from marten_runtime.agents.defaults import DEFAULT_AGENT_ID, default_lessons_path
 from marten_runtime.agents.registry import AgentRegistry
+from marten_runtime.agents.dispatch import AgentDispatchService
 from marten_runtime.agents.router import AgentRouter
 from marten_runtime.agents.specs import AgentSpec
 from marten_runtime.automation.sqlite_store import SQLiteAutomationStore
@@ -60,6 +61,7 @@ from marten_runtime.runtime.capabilities import (
     get_capability_declarations,
     render_capability_catalog,
 )
+from marten_runtime.runtime.bazi_bridge import BaziBridgeManager
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.lanes import ConversationLaneManager
 from marten_runtime.runtime.llm_failover import (
@@ -256,6 +258,7 @@ class HTTPRuntimeState:
     agent_registry: AgentRegistry
     binding_registry: AgentBindingRegistry
     agent_router: AgentRouter
+    agent_dispatch_service: AgentDispatchService
     default_agent: AgentSpec
     default_prompt_manifest_id: str
     skill_service: SkillService
@@ -270,6 +273,7 @@ class HTTPRuntimeState:
     agent_runtimes: dict[str, AgentRuntimeAssets]
     llm_client_factory: CachedLLMClientFactory
     langfuse_observer: LangfuseObserver
+    bazi_bridge_manager: BaziBridgeManager
     repository_context_note: str | None = None
     trace_index: TraceIndex = field(default_factory=dict)
     latest_session_transition: dict[str, object] | None = None
@@ -280,15 +284,17 @@ def default_repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
+def resolve_repo_root(repo_root: str | Path | None = None) -> Path:
+    return Path(repo_root).resolve() if repo_root is not None else default_repo_root()
+
+
 def build_http_runtime(
     *,
     repo_root: str | Path | None = None,
     env: Mapping[str, str] | None = None,
     load_env_file: bool = True,
 ) -> HTTPRuntimeState:
-    resolved_repo_root = (
-        Path(repo_root) if repo_root is not None else default_repo_root()
-    )
+    resolved_repo_root = resolve_repo_root(repo_root)
     env_load_result, resolved_env = _resolve_environment(
         resolved_repo_root,
         env=env,
@@ -333,6 +339,7 @@ def build_http_runtime(
         repo_root=resolved_repo_root,
     )
     knowledge_service = KnowledgeService(knowledge_config)
+    bazi_bridge_manager = BaziBridgeManager(repo_root=resolved_repo_root, env=resolved_env)
     default_profile_name, default_profile = resolve_model_profile(
         models_config, default_agent.model_profile
     )
@@ -360,6 +367,11 @@ def build_http_runtime(
             llm_client_factory.get(profile_name, default_client=default_llm),
             resolve_model_profile(models_config, profile_name)[1],
         ),
+    )
+    agent_dispatch_service = AgentDispatchService(
+        registry=agent_registry,
+        run_history=runtime_loop.history,
+        observer=langfuse_observer,
     )
     feishu_delivery = build_feishu_delivery_client(
         env=resolved_env,
@@ -428,6 +440,7 @@ def build_http_runtime(
         agent_registry=agent_registry,
         binding_registry=binding_registry,
         agent_router=agent_router,
+        agent_dispatch_service=agent_dispatch_service,
         default_agent=default_agent,
         default_prompt_manifest_id=default_prompt_manifest_id,
         skill_service=skill_service,
@@ -442,6 +455,7 @@ def build_http_runtime(
         agent_runtimes=agent_runtimes,
         llm_client_factory=llm_client_factory,
         langfuse_observer=langfuse_observer,
+        bazi_bridge_manager=bazi_bridge_manager,
         repository_context_note=render_repository_context_note(repository_context),
     )
     state.compaction_worker = SessionCompactionWorker(
@@ -538,6 +552,7 @@ def _build_agent_runtime(
         if not spec.enabled:
             continue
         agent_registry.register(spec)
+    agent_registry.validate_handoff_catalog()
     binding_registry = AgentBindingRegistry(
         load_agent_bindings(str(repo_root / "config/bindings.toml"))
     )

@@ -240,6 +240,34 @@ class OpenAIChatClientTests(unittest.TestCase):
         self.assertNotIn("tools", payload)
         self.assertNotIn("tool_choice", payload)
 
+    def test_bazi_gpt_5_finalization_uses_bounded_low_reasoning(self) -> None:
+        request = LLMRequest(
+            session_id="sess_bazi_finalization",
+            trace_id="trace_bazi_finalization",
+            message="请完成详细解盘",
+            agent_id="bazi",
+            request_kind="finalization_retry",
+        )
+
+        payload = build_openai_chat_payload("gpt-5.4", request)
+
+        self.assertEqual(payload["reasoning_effort"], "low")
+        self.assertEqual(payload["max_completion_tokens"], 2500)
+        self.assertNotIn("tools", payload)
+
+        main_payload = build_openai_chat_payload(
+            "gpt-5.4", request.model_copy(update={"agent_id": "main"})
+        )
+        self.assertNotIn("reasoning_effort", main_payload)
+        self.assertNotIn("max_completion_tokens", main_payload)
+
+        repair_payload = build_openai_chat_payload(
+            "gpt-5.4",
+            request.model_copy(update={"request_kind": "bazi_output_repair"}),
+        )
+        self.assertEqual(repair_payload["reasoning_effort"], "low")
+        self.assertEqual(repair_payload["max_completion_tokens"], 1200)
+
     def test_openai_5_series_leaves_first_turn_live_time_query_on_auto_tool_choice(
         self,
     ) -> None:

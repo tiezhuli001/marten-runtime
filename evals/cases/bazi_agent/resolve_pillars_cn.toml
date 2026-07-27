@@ -1,0 +1,22 @@
+case_id = "bazi_resolve_pillars_cn"
+suite_id = "bazi_agent"
+family = "bazi_agent"
+grader_id = "bazi_agent"
+description = "Resolve pillars uses the Bazi builtin"
+agent_id = "bazi"
+profile_name = "openai_gpt_5_4"
+tags = ["bazi", "resolve-pillars"]
+gate_components = ["tool_order"]
+
+[[turns]]
+role = "user"
+content = "反查戊辰、甲寅、辛丑、戊子四柱。"
+
+[component_weights]
+tool_order = 100
+
+[grader_case]
+required_tool_order = [["bazi", "resolve_pillars"]]
+
+[setup]
+knowledge_fixture = "bazi_theory_minimal.json"

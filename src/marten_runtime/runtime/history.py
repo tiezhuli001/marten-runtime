@@ -5,6 +5,12 @@ from pydantic import BaseModel, Field
 
 from marten_runtime.runtime.provider_reliability import summarize_provider_run_reliability
 from marten_runtime.runtime.usage_models import NormalizedUsage, ProviderCallDiagnostics
+from marten_runtime.runtime.observation_policy import (
+    project_text,
+    project_tool_payload,
+    project_tool_result,
+    resolve_observation_policy,
+)
 from marten_runtime.session.tool_outcome_summary import ToolOutcomeSummary
 
 FINALIZATION_DIAGNOSTIC_ITEM_LIMIT = 3
@@ -112,6 +118,7 @@ class RunRecord(BaseModel):
     external_observability: ExternalObservabilityRefs = Field(default_factory=ExternalObservabilityRefs)
     finalization: FinalizationDiagnostics = Field(default_factory=FinalizationDiagnostics)
     final_text: str | None = None
+    observation_policy: str = "standard"
 
 
 class InMemoryRunHistory:
@@ -129,6 +136,7 @@ class InMemoryRunHistory:
         skill_snapshot_id: str = "skill_default",
         tool_snapshot_id: str = "tool_default",
         parent_run_id: str | None = None,
+        observation_policy: str = "standard",
     ) -> RunRecord:
         record = RunRecord(
             run_id=f"run_{uuid4().hex[:8]}",
@@ -140,6 +148,7 @@ class InMemoryRunHistory:
             skill_snapshot_id=skill_snapshot_id,
             tool_snapshot_id=tool_snapshot_id,
             parent_run_id=parent_run_id,
+            observation_policy=observation_policy,
             status="running",
             started_at=datetime.now(timezone.utc),
         )
@@ -236,13 +245,17 @@ class InMemoryRunHistory:
         tool_name: str,
         tool_payload: dict,
         tool_result: dict,
+        observation_policy: str | None = None,
     ) -> None:
         record = self._items[run_id]
+        effective_policy = resolve_observation_policy(
+            record.observation_policy, observation_policy
+        )
         record.tool_calls.append(
             {
                 "tool_name": tool_name,
-                "tool_payload": tool_payload,
-                "tool_result": tool_result,
+                "tool_payload": project_tool_payload(tool_payload, effective_policy),
+                "tool_result": project_tool_result(tool_result, effective_policy),
             }
         )
 
@@ -263,6 +276,8 @@ class InMemoryRunHistory:
         self._refresh_provider_reliability(record)
 
     def append_tool_outcome_summary(self, run_id: str, summary: ToolOutcomeSummary) -> None:
+        if self._items[run_id].observation_policy in {"sensitive_bazi", "metadata_only"}:
+            return
         self._items[run_id].tool_outcome_summaries.append(summary)
 
     def set_llm_request_count(self, run_id: str, count: int) -> None:
@@ -389,23 +404,29 @@ class InMemoryRunHistory:
             record.finalization.required_evidence_count = max(0, int(required_evidence_count))
         if missing_evidence_items is not None:
             record.finalization.missing_evidence_items = _normalize_diagnostic_items(
-                missing_evidence_items
+                [
+                    str(project_text(item, record.observation_policy) or "")
+                    for item in missing_evidence_items
+                ]
             )
         if retry_triggered is not None:
             record.finalization.retry_triggered = bool(retry_triggered)
         if recovered_from_fragments is not None:
             record.finalization.recovered_from_fragments = bool(recovered_from_fragments)
         if invalid_final_text is not None:
+            observed_invalid_text = project_text(
+                invalid_final_text, record.observation_policy
+            )
             record.finalization.invalid_final_text_full = _normalize_diagnostic_text_full(
-                invalid_final_text
+                observed_invalid_text
             )
             record.finalization.invalid_final_text = _normalize_diagnostic_text(
-                invalid_final_text
+                observed_invalid_text
             )
 
     def set_final_text(self, run_id: str, final_text: str | None) -> None:
         record = self._items[run_id]
-        normalized = str(final_text or "").strip()
+        normalized = str(project_text(final_text, record.observation_policy) or "").strip()
         record.final_text = normalized or None
         self._refresh_provider_reliability(record)
 

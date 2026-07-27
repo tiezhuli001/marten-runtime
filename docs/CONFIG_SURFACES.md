@@ -18,7 +18,7 @@ This page answers one question: which value belongs in which file.
 | Provider secrets | `.env` | `OPENAI_API_KEY`, `MINIMAX_API_KEY` |
 | Local OpenAI-compatible base URL override | `.env` | `OPENAI_API_BASE`, `MINIMAX_API_BASE`, `KIMI_API_BASE` |
 | Provider connection metadata | `config/providers.example.toml` or local `config/providers.toml` | `[providers.*]`, `adapter`, `base_url`, `api_key_env`, capability flags |
-| Default model/profile selection | `config/models.example.toml` or local `config/models.toml` | `default_profile`, `[profiles.*]`, `provider_ref`, `fallback_profiles` |
+| Default model/profile selection | `config/models.example.toml` or local `config/models.toml` | `default_profile`, `[profiles.*]`, `provider_ref`, `model`, `fallback_profiles` |
 | Runtime agent registry and agent-local asset/profile/tool selection | `config/agents.toml` | `[agents.*]`, `enabled`, `asset_root`, `allowed_tools`, `prompt_mode`, `model_profile`, `role` |
 | Runtime bind host/port defaults | `config/platform.example.toml` or local `config/platform.toml` | `[server].host`, `[server].port` |
 | Optional public HTTP base URL | `config/platform.example.toml` or local `config/platform.toml` | `[server].public_base_url` |
@@ -37,6 +37,9 @@ This page answers one question: which value belongs in which file.
 | Agent bootstrap instructions | `agents/<agent_id>/*.md` | `AGENTS.md`, `TOOLS.md`, `SOUL.md`, `BOOTSTRAP.md`, `SYSTEM_LESSONS.md` |
 | Knowledge/RAG runtime config | `config/knowledge.example.toml` or local `config/knowledge.toml` | `[knowledge]`, `[knowledge.chunking]`, `[knowledge.embedding]`, `[knowledge.reranker]`, `[knowledge.vector_store]`, `[knowledge.search]` |
 | Local embedding/reranker model files | `data/models/` | referenced by `[knowledge.embedding].local_path` and `[knowledge.reranker].local_path` |
+| Knowledge Operator API secret | `.env` | `KNOWLEDGE_OPERATOR_TOKEN` |
+| Bazi place resolution secret | `.env` | `AMAP_WEB_SERVICE_KEY` |
+| Runtime persistent data root | container volume | `/app/data` |
 
 ## Provider Selection And Failover
 
@@ -59,6 +62,8 @@ Agent ownership is split cleanly:
 
 When you want to route one agent to another asset root, tool surface, or model profile, change `config/agents.toml`.
 
+`agents.<id>.model_profile` references a profile id from `config/models.toml`, such as `openai_qwen3_6_plus`. The API model name belongs in that profile's `model` field, such as `qwen3.6-plus`.
+
 ## Knowledge/RAG Runtime
 
 Knowledge is a reusable runtime capability exposed through the builtin `knowledge` tool. It uses `namespace` as the logical knowledge base key, for example `fanqie`, `bazi`, or `personal`.
@@ -73,11 +78,27 @@ Key operator fields:
 - `[knowledge.vector_store] backend = "sqlite_vec"` uses sqlite-vec when the Python extension is installed; missing extension produces `vector_status=disabled` and search continues through FTS.
 - `[knowledge.search] default_top_k`, `candidate_pool`, and weights define retrieval ranking behavior.
 
+`KNOWLEDGE_OPERATOR_TOKEN` enables the authenticated `/knowledge/**` management API. The API lists namespaces, sources, chunks and ingest jobs; accepts reviewed `.txt` and `.md` files up to `10 MiB`; and exposes source delete, stats and reindex operations. The route set stays unregistered while the secret is empty. Upload staging is runtime-owned under `data/knowledge/uploads/`.
+
 Switching embedding config requires manual reindex with the current config:
 
 ```text
 knowledge.reindex --namespace fanqie
 ```
+
+## Bazi Runtime
+
+Bazi runtime policy is code-owned and versioned with the bundled bridge. It has no dedicated TOML file.
+
+- `AMAP_WEB_SERVICE_KEY` is the Amap Web Service credential used only for `true_solar` place resolution.
+- `KNOWLEDGE_OPERATOR_TOKEN` controls the separate Knowledge management router; the Bazi agent never receives this token.
+- `config/agents.toml` owns Bazi tool permissions and Knowledge action/namespace scope.
+- `config/bindings.toml` owns optional channel routing to the `bazi` agent.
+- the production image contains Node 22, the patched bridge, npm lockfile, licenses and CycloneDX SBOMs.
+- `/app/data` persists sessions, Knowledge state, upload staging and local Knowledge models.
+- outbound place resolution is restricted to `https://restapi.amap.com`.
+
+Runtime diagnostics report whether Amap and Knowledge Operator credentials are configured using booleans and stable reason codes. Secret values remain outside diagnostics, logs, traces and model context.
 
 ## Runtime-Owned Persistence Paths
 

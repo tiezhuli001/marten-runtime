@@ -15,6 +15,7 @@ dependencies = [
   "mcp",
   "python-socks",
   "python-dotenv",
+  "python-multipart",
   "sqlite-vec",
   "sentence-transformers",
   "uvicorn",

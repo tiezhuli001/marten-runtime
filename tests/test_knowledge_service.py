@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -32,6 +33,33 @@ class PartiallyFailingEmbeddingAdapter:
         if self.calls > 1:
             return EmbeddingResult(status=EmbeddingStatus.MISSING_MODEL, message="embedding failed after first batch")
         return EmbeddingResult(status=EmbeddingStatus.AVAILABLE, vectors=[[1.0] + [0.0] * 7 for _ in texts])
+
+    def is_loaded(self) -> bool:
+        return False
+
+    def unload(self) -> bool:
+        return False
+
+    def model_status(self, *, idle_ttl_seconds: float | None) -> dict[str, object]:
+        return {"status": "not_loaded"}
+
+
+class BlockingEmbeddingAdapter:
+    def __init__(self, dimension: int) -> None:
+        self.dimension = dimension
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.calls = 0
+
+    def embed_texts(self, texts: list[str]) -> EmbeddingResult:
+        self.calls += 1
+        self.entered.set()
+        if not self.release.wait(timeout=3):
+            raise AssertionError("embedding release timed out")
+        return EmbeddingResult(
+            status=EmbeddingStatus.AVAILABLE,
+            vectors=[[1.0] + [0.0] * (self.dimension - 1) for _ in texts],
+        )
 
     def is_loaded(self) -> bool:
         return False
@@ -192,6 +220,33 @@ reranker_weight = 2.0
         self.assertEqual(result["embedding_status"], "missing_model")
         self.assertIn("missing local model", result["message"])
 
+    def test_parallel_searches_serialize_local_model_execution(self) -> None:
+        service = self._service()
+        adapter = BlockingEmbeddingAdapter(service.config.embedding.dimension)
+        service.embedding_adapter = adapter
+        results: list[dict[str, object]] = []
+        first = threading.Thread(
+            target=lambda: results.append(service.search(namespace="fanqie", query="甲木"))
+        )
+        second = threading.Thread(
+            target=lambda: results.append(service.search(namespace="fanqie", query="乙木"))
+        )
+
+        first.start()
+        self.assertTrue(adapter.entered.wait(timeout=2))
+        second.start()
+        time.sleep(0.05)
+
+        self.assertEqual(adapter.calls, 1)
+        adapter.release.set()
+        first.join(timeout=3)
+        second.join(timeout=3)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(adapter.calls, 2)
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(result["ok"] for result in results))
+
     def test_ingest_file_reports_embedding_progress_and_reads_gb18030(self) -> None:
         service = self._service()
         tmp_file = Path(service._tmp.name) / "novel_gbk.txt"
@@ -233,6 +288,89 @@ reranker_weight = 2.0
         self.assertLess(final["chunks_embedded"], final["chunks_total"])
         self.assertEqual(final["message"], "embedding_failed")
         self.assertIn("embedding_status=missing_model", final["error"])
+        self.assertEqual(service.stats(namespace="fanqie")["source_count"], 0)
+        self.assertEqual(service.stats(namespace="fanqie")["chunk_count"], 0)
+        self.assertEqual(
+            service.store.list_embeddings("fanqie", service.embedding_config_hash),
+            [],
+        )
+
+    def test_cancel_during_embedding_does_not_publish_source_bundle(self) -> None:
+        service = self._service()
+        adapter = BlockingEmbeddingAdapter(service.config.embedding.dimension)
+        service.embedding_adapter = adapter
+        tmp_file = Path(service._tmp.name) / "cancelled.txt"
+        tmp_file.write_text("甲木生于春季。\n" * 20, encoding="utf-8")
+
+        result = service.ingest_file(
+            namespace="fanqie",
+            file_path=str(tmp_file),
+            source={"title": "Cancelled", "kind": "txt", "uri": tmp_file.as_uri()},
+        )
+        self.assertTrue(adapter.entered.wait(timeout=2))
+        cancelled = service.cancel_ingest(namespace="fanqie", job_id=result["job_id"])
+        adapter.release.set()
+
+        final = {}
+        for _ in range(100):
+            final = service.ingest_status(namespace="fanqie", job_id=result["job_id"])
+            if final.get("status") == "cancelled":
+                break
+            time.sleep(0.02)
+        self.assertEqual(cancelled["status"], "cancelled")
+        self.assertEqual(final["status"], "cancelled")
+        self.assertEqual(service.stats(namespace="fanqie")["source_count"], 0)
+        self.assertEqual(service.stats(namespace="fanqie")["chunk_count"], 0)
+        self.assertEqual(
+            service.store.list_embeddings("fanqie", service.embedding_config_hash),
+            [],
+        )
+
+    def test_delete_waits_for_ingest_publication_then_removes_complete_bundle(self) -> None:
+        service = self._service()
+        adapter = BlockingEmbeddingAdapter(service.config.embedding.dimension)
+        service.embedding_adapter = adapter
+        tmp_file = Path(service._tmp.name) / "delete-race.txt"
+        tmp_file.write_text("甲木生于春季。\n" * 20, encoding="utf-8")
+        source_id = "ksrc_delete_race"
+        result = service.ingest_file(
+            namespace="fanqie",
+            file_path=str(tmp_file),
+            source={
+                "source_id": source_id,
+                "title": "Delete race",
+                "kind": "txt",
+                "uri": tmp_file.as_uri(),
+            },
+        )
+        self.assertTrue(adapter.entered.wait(timeout=2))
+        deleted: list[dict[str, object]] = []
+        delete_thread = threading.Thread(
+            target=lambda: deleted.append(
+                service.delete_source(namespace="fanqie", source_id=source_id)
+            )
+        )
+        delete_thread.start()
+        time.sleep(0.05)
+        self.assertTrue(delete_thread.is_alive())
+        adapter.release.set()
+        delete_thread.join(timeout=3)
+
+        final = {}
+        for _ in range(100):
+            final = service.ingest_status(namespace="fanqie", job_id=result["job_id"])
+            if final.get("status") in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.02)
+        self.assertFalse(delete_thread.is_alive())
+        self.assertEqual(final["status"], "completed")
+        self.assertEqual(deleted[0]["deleted_source_id"], source_id)
+        self.assertEqual(service.stats(namespace="fanqie")["source_count"], 0)
+        self.assertEqual(service.stats(namespace="fanqie")["chunk_count"], 0)
+        self.assertEqual(
+            service.store.list_embeddings("fanqie", service.embedding_config_hash),
+            [],
+        )
 
     def test_reindex_uses_current_embedding_config(self) -> None:
         service = self._service()
@@ -317,6 +455,28 @@ reranker_weight = 2.0
 
         self.assertTrue(cancelled["ok"])
         self.assertEqual(cancelled["status"], "cancelled")
+
+    def test_file_ingest_terminal_state_cleans_owned_staging(self) -> None:
+        service = self._service()
+        staged = Path(service._tmp.name) / "data" / "knowledge" / "uploads" / "upload-1" / "source.txt"
+        staged.parent.mkdir(parents=True)
+        staged.write_text("师父在山门出现", encoding="utf-8")
+
+        result = service.ingest_file(
+            namespace="fanqie",
+            file_path=str(staged),
+            staged_file_path="upload-1/source.txt",
+            source={"title": "Novel", "kind": "txt", "uri": "upload://fanqie/upload-1/source.txt"},
+        )
+
+        final = {}
+        for _ in range(50):
+            final = service.ingest_status(namespace="fanqie", job_id=result["job_id"])
+            if final.get("status") in {"completed", "failed"}:
+                break
+            time.sleep(0.02)
+        self.assertEqual(final["status"], "completed")
+        self.assertFalse(staged.parent.exists())
 
 
 if __name__ == "__main__":

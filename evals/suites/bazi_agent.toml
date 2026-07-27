@@ -1,0 +1,14 @@
+suite_id = "bazi_agent"
+grader_id = "bazi_agent"
+description = "Deterministic Bazi orchestration, calculation contract, RAG citation and degradation regression suite; live provider runs verify natural-language extraction"
+default_mode = "scripted"
+scripted_supported = true
+required_dependencies = []
+baseline_policy = "latest_passed_auto"
+case_files = [
+  "evals/cases/bazi_agent/theory_citation_cn.toml",
+  "evals/cases/bazi_agent/dayun_citation_cn.toml",
+  "evals/cases/bazi_agent/no_recall_degradation_cn.toml",
+  "evals/cases/bazi_agent/fingerprint_mismatch_cn.toml",
+  "evals/cases/bazi_agent/resolve_pillars_cn.toml",
+]

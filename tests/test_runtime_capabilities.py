@@ -18,6 +18,7 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
             set(declarations.keys()),
             {
                 "automation",
+                "bazi",
                 "cancel_subagent",
                 "knowledge",
                 "memory",

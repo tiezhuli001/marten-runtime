@@ -1,7 +1,7 @@
 # Langfuse Observability Integration Design
 
-Date: 2026-04-17  
-Status: Draft for review  
+Date: 2026-04-17<br>
+Status: Draft for review<br>
 Scope: design only; implementation and execution checklist stay for the next stage after design review
 
 ## Goal

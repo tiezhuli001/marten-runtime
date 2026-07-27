@@ -121,6 +121,67 @@ _FOLLOWUP_STOP_RULE = (
     "不要在结尾追加“如果你需要/如果你要/如果你愿意/我也可以继续帮你”这类下一步菜单。"
 )
 
+_BAZI_ANALYSIS_OUTPUT_CONTRACT = (
+    "八字解盘最终输出使用自然中文，面向用户的正文不得展示原始 JSON、卡片 schema、工具字段、source_id 或 chunk_id。"
+    "Bazi 正文始终使用普通 Markdown，Feishu 卡片由宿主根据固定栏目构造。"
+    "完整解盘严格按以下顺序和标题组织："
+    "一、命盘（天干一行、地支一行，并列出已核验大运）；"
+    "二、原局格局喜用（合并写格局、旺衰、调候、病药、财官、体用、做功和喜忌）；"
+    "三、大运；四、健康注意；五、学历；六、事业；七、婚姻；八、六亲（合并父母与子女）；"
+    "九、财富等级；十、过三关；十一、参考依据。"
+    "全文控制在约 1600 至 2400 个中文字符，每节最多两个短段或三个短条目，只保留结论、关键盘面依据和成立条件。"
+    "子平取格先以月令本气、司令与透藏会局为依据，再看月干和其他透干；月干某十神透出本身不足以覆盖月令本气定格。"
+    "例如丁火生巳月，巳中本气丙为劫财，己土透月干只能说明食神透出，不能据此直接定食神格。"
+    "原局核心再检查天干地支中真实成立的十神生克链，例如财克印、印制食伤、食伤生财、比劫夺财；"
+    "某条关系确实成立时，明确写出谁作用于谁、它为何构成病或做功，禁止用泛化寒暖判断替代结构关系。"
+    "十神阴阳必须准确区分，例如丁火以壬为正官、癸为七杀；食神制杀只在七杀与食神形成真实制化时成立。"
+    "喜用按旺衰、调候、格局制化与干支落点逐层推导，说明金水进入的先后、根气和触发条件，避免直接写成无条件的‘金水为用’。"
+    "bazi.resolve_pillars 用四柱反查出生日期候选；请求中同时携带用户给出的 gender。完整解盘选择唯一不晚于当前年份的候选继续调用 bazi.dayun，并在命盘中说明候选选择依据。"
+    "出现多个已出生候选时列出候选并要求确认；用户同时提供的大运序列属于待核验输入，正文明确标注‘用户提供、未由本轮工具复算’。"
+    "只有 bazi.dayun 成功返回的大运和起运信息才属于本轮计算事实。"
+    "每节先给结论，再写盘面依据和触发条件，明确区分排盘事实、传统命理推断与现实建议。"
+    "家庭、兄弟姐妹数量、父母健康和品行属于推断项，写明结论、具体应期、成立条件和待核验点。"
+    "学历固定判断为高中、大专、本科、顶级本科四档之一；给出最可能档位、关键考试或升学年份及流年、大运、原局依据。"
+    "事业部分给行业类型、能力模式、收益驱动、发展高点与风险；能够定位时写出入行、转岗、晋升、创业或收入跃迁的具体年份及依据。"
+    "婚姻重点判断恋爱、首次结婚年份或一至两年窗口；只有夫妻宫持续受损、配偶星严重受制并被岁运重复引动等明确证据成立时，才讨论二婚、本人或配偶外缘风险。没有这些证据时完全省略二婚和外缘，不写‘风险不高’‘不能单凭某关系定论’等无结论句。"
+    "逐年检查配偶星出现、得根或被合，桃花到位，以及夫妻宫被合冲刑害、伏吟的年份；男命以财星、女命以官杀作为配偶星。"
+    "婚姻应期的桃花以日支所属三合局取：寅午戌见卯、申子辰见酉、巳酉丑见午、亥卯未见子；"
+    "先写出命局日支对应的桃花地支，再逐年核对流年地支；只有流年地支等于该桃花地支时才能标注婚恋桃花应期。年支桃花只可作为一般社交信号，不能单独参与恋爱或结婚判断；流年支只合年支而未作用夫妻宫，也不能写成夫妻宫被合。"
+    "婚姻栏逐项核对配偶星、桃花和夫妻宫，只输出证据较强的应期；桃花只代表关系机会，配偶星与夫妻宫共同支持时再提高结婚判断。"
+    "每个婚恋应期写明流年干支、所在大运、配偶星或桃花、夫妻宫作用，至少两项信号会合时优先落到单年。"
+    "健康只写传统五行关注方向、待核验事件和现实体检建议，不作医学诊断；"
+    "先定位原局受损或失衡的天干地支及身体部位，再逐年检查该病位被流年、大运合冲刑害、伏吟或岁运共同引动的年份。"
+    "每个年份统一核对日主、日支、时支、原局病位与所在大运的全部作用关系；任何单一干支组合只构成一项候选证据。"
+    "出现病位受强冲刑且岁运重复引动等至少两项独立信号时，可写‘较需留意检查、治疗、住院或开刀经历’，"
+    "同时给出具体年份、对应部位和推算链，使用待本人核验表述，不把命理信号写成疾病结论。"
+    "健康栏必须单独判断住院、开刀或手术应期：信号充分时给出最强候选年、部位与至少两项触发依据；证据不足时明确写‘本轮未形成可靠手术应期’，禁止省略此项。"
+    "财富使用多路径结构评分，不把“原局无财星”等同于无赚钱能力。先列成局路径 0-3 分：财星清而可用、食伤生财或无财而暗成财局均可得分；官印相生、杀印相生、食神制杀、归禄等成格时作为职业职位变现路径得 1-2 分，但官杀、印、禄不得直接改称财星。再列日主承载与结构流通 0-2 分、当前及未来十年大运引动 0-3 分、比劫夺财/财多身弱/枭夺食/混杂破格等制约扣 0-3 分，总分限制为 0-9。分档固定为 0-2 分 5-15 万、3-4 分 15-30 万、5-6 分 30-60 万、7-8 分 50-100 万、9 分 80-150 万以上。无现实收入时必须写“财富结构分：X/9＝成局路径 A + 承载 B + 大运 C - 制约 D”和“命理年收入能力区间”，并声明这是传统文化模型估算、不等同现实收入；不得因缺少现实数据而完全拒绝计算。财富栏只允许出现当前分数对应的一个金额区间；未来运只描述上升、持平或下降方向，不能追加第二个金额区间。用户提供收入时优先展示真实收入，并用结构分解释其所处区间，不能用命盘覆盖用户事实。净积累和总资产仍需储蓄率、现有资产与负债；缺少这些数据时不得把收入区间当成净资产。资产基线完整时才按低于 300 万元普通积累、300 万元小康、1000 万元小富、5000 万元中富分级。"
+    "六亲中的父母健康结合父星、母星、年柱及其身体取象逐年定位；流年干直接克合父母星且年柱同步受作用时列为候选，每项写明哪一位长辈、哪个部位、流年与大运如何引动。父母身份按被作用的原局十神判定，不能因流年自身是偏财就直接写父亲、因流年自身是正印就直接写母亲。健康部位同时核对受作用干支和施加作用的流年干支，例如辛金直接作用父母星时需同时核对肺胸、呼吸与金属刀伤取象。仅有大运长期作用父母星时不能单独定为父母健康年份，也不得挤掉证据更强的本人、事业或家宅事件。某一方缺少星宫同参时明确写未形成可靠高信号年份。"
+    "大运、健康注意、学历、事业、婚姻、六亲和财富等级中，凡能从原局、大运与流年定位具体事项，优先写‘年份或区间｜具体结论｜推算原因’；证据只支持趋势时说明精度边界。"
+    "应期分析先由大运确定十年主题，再逐年核对流年干与原局四干、大运干的克合伏吟，并把流年支与原局四支、大运支逐个比较以补齐关系列表可能省略的同支伏吟；单年存在两项以上相互支持的触发信号时直接给具体年份。"
+    "候选排序后复查全部流年干支，确保同年存在两项以上直接强关系的高信号年份已经进入候选；"
+    "先审查成年后结构组合摘要，再用完整应期逐年表补齐其他年份；结构组合是确定性干支比较摘要，候选排序必须逐项审查，不能用较弱的单一神煞或泛化年份替代。"
+    "逐年表中的候选归属来自通用干支关系计算；分别核对命主本人、父亲、母亲、配偶、子女、事业平台和家宅资产，同年多个候选按十神、宫位、直接作用和岁运重复选出一个主应事件，其余只作次级核验点。"
+    "所有十神组合采用同一套直接作用、岁运重复、星宫同参和事件可核验性评分，先记录全部可能归属，再选证据最强的主应事件。"
+    "连续相邻年份构成同一事件的出现、发展与落实链条时才使用一至两年窗口。"
+    "过三关从全部已发生年份中列出三至五个证据最强的待核验大事，不为满足栏目数量而加入较弱事件；"
+    "能够可靠定位时优先给单个具体公历年份，每项固定写成‘年份｜待核验事件｜推算原因’，原因必须写明该年流年干支、所在大运，以及二者如何引动原局。"
+    "过三关每行只写一个主题和一个可核验事件，事件必须带明确动作，例如升学、入职、转岗、换行业、搬家、买房、恋爱、分手、结婚、住院、手术或检查；‘工作平台、居住地、家宅、长辈、压力上升’这类栏目词或状态词不算事件。学业、工作、婚恋、本人健康、父母健康不能在同一行合并；避免用‘或、也可能、以及、且、伴随、同步’串联多个事件。"
+    "每项使用独立 Markdown 列表行，推算原因固定写成‘流年：...；大运：...；原局：...’。"
+    "证据只能支持阶段判断时使用一至两年窄窗口，并明确无法缩小到单年的原因；不得把仅有大运依据的十年范围伪装成具体流年。"
+    "所有年份区间的终点必须早于或等于当前年份，禁止混入未来趋势。"
+    "缺少 bazi.dayun 结果或可靠出生年份时，明确说明本轮无法可靠定位流年。"
+    "信息边界集中说明一次；已有唯一已出生候选和 dayun 结果时，禁止再写‘只有四柱所以无法起大运、无法落年’。"
+    "使用标准干支关系术语并直接描述作用，避免自造‘双支自重’等模糊标签。"
+    "自刑只包括辰辰、午午、酉酉、亥亥；其他两个相同地支按伏吟分析，例如巳巳属于伏吟。"
+    "可见正文完全省略‘巳巳自刑’和‘双巳自刑’这两个错误词组，也不采用先复述错误词组再否定的写法。"
+    "同支伏吟落到日支或夫妻宫时，可分析关系反复、决定偏慢或晚婚倾向，并结合配偶星与行运验证；不能把伏吟单独当成婚变定论。"
+    "健康取象先把天干、地支对应部位与实际刑冲合害、伏吟和行运引动结合；单个干支只提供关注方向，不能直接诊断疾病。"
+    "禁止在正文或结尾追加‘哪几年适合结婚’‘哪步运财运更强’‘是否适合创业或换城市’等问题菜单。"
+    "最后使用‘参考依据’列出检索结果的书名 source_title 与篇章 heading，格式为《书名》·篇章，并只声明该资料实际支持的分析点；格局框架资料不能直接证明具体学历、财富金额、婚姻年份或健康部位。"
+    "内部检索标识留在运行时追踪中。参考依据必须是最后一节，其后不追加整体总结、建议或问句。"
+)
+
 _SUBAGENT_TASK_CONTRACT = (
     "Subagent task contract: this request is running inside a child agent. "
     "Complete the child work described by the user message directly. "
@@ -292,8 +353,66 @@ def is_tool_followup_request(request) -> bool:  # noqa: ANN001
 
 def request_specific_instruction(request) -> str | None:  # noqa: ANN001
     parts: list[str] = []
-    if request.channel_protocol_instruction_text:
+    if request.request_kind == "agent_routing":
+        return (
+            "这是 main 顶层 agent 的内部路由阶段。根据当前用户消息与最近会话，"
+            "调用且只调用 agent_route，选择最适合完成本轮请求的顶层 agent。"
+            "连续追问应延续最近明确的专业领域。不要回答用户问题，不要补问信息。"
+        )
+    if request.channel_protocol_instruction_text and request.agent_id != "bazi":
         parts.append(request.channel_protocol_instruction_text)
+    elif request.channel_protocol_instruction_text and request.agent_id == "bazi":
+        parts.append(
+            "Bazi 最终正文只生成普通 Markdown，不生成 feishu_card、JSON 或卡片 schema。"
+            "宿主会把固定栏目转换为飞书卡片。"
+        )
+    if request.request_kind == "bazi_chart_repair":
+        parts.append(
+            "用户已经给出可执行的出生资料或完整四柱，上一条回复却在工具调用前结束。"
+            "现在直接调用 bazi：出生年月日时与地点输入使用 chart，只有四柱输入使用 resolve_pillars。"
+            "明确写农历时设置 calendarType=lunar；未写闰月时设置 isLeapMonth=false。"
+            "中国大陆区县级地点直接使用 timeBasis=true_solar、sourceTimeStandard=recorded_civil。"
+            "不得再次询问钟表时间、是否闰月或是否开始排盘，不要生成最终回答。"
+        )
+        parts.append(_FINALIZATION_CONTRACT_TAIL_RULE)
+        return "\n\n".join(part for part in parts if part).strip() or None
+    if request.request_kind == "bazi_knowledge_search":
+        parts.append(
+            "本轮 Bazi 排盘事实已经获得，理论检索尚未完成。"
+            "现在调用 knowledge.search，namespace 固定为 bazi-theory，"
+            "query 根据工具结果中的日主、月令与五行关系生成紧凑检索词。"
+            "用户询问财富、收入或财富范围时，query 必须同时包含“财气通门户、无财暗成财局、食伤生财、官印职业变现”，"
+            "以召回财富路径古籍和方法边界。"
+            "拿到结果后再生成带书名、篇章和理论依据的最终分析。"
+        )
+        parts.append(_BAZI_ANALYSIS_OUTPUT_CONTRACT)
+        parts.append(_FINALIZATION_CONTRACT_TAIL_RULE)
+        return "\n\n".join(part for part in parts if part).strip() or None
+    if request.request_kind == "bazi_dayun_repair":
+        parts.append(
+            "完整解盘需要核验大运。现在严格按 requested payload 调用 bazi.dayun。"
+            "该 payload 可能来自 chart 原始出生字段，也可能来自 resolve_pillars 唯一已出生候选。"
+            "不要生成最终回答，也不要重复 chart 或 resolve_pillars。"
+        )
+        parts.append(_FINALIZATION_CONTRACT_TAIL_RULE)
+        return "\n\n".join(part for part in parts if part).strip() or None
+    if request.request_kind == "bazi_output_repair":
+        invalid_final_text = str(request.invalid_final_text or "").strip()
+        parts.append(
+            "上一版八字答案已经包含完整排盘与分析事实，但少量输出契约未通过。"
+            "只修正列出的违规项，保留其余结论、年份、干支关系、金额区间和参考依据。"
+            "不要调用工具，不要新增未经原回复支持的事实。"
+            "只输出原回复中待修复的栏目，保留原栏目标题，不要输出其他栏目、前言或总结。"
+            "每个列出的待修复栏目都必须输出一次且有正文，不得漏掉任何待修复栏目。"
+            "婚姻不得用低风险二婚或外缘套话；父母健康每一方都要有具体年份、部位和岁运作用，"
+            "证据不足时明确写该方未形成可靠高信号年份。"
+            "财富结构分、四项算式和唯一收入能力区间必须一致。"
+            "过三关每行只保留一个带明确动作的事件，并写清流年、大运、原局。"
+        )
+        if invalid_final_text:
+            parts.append(invalid_final_text)
+        parts.append(_FINALIZATION_CONTRACT_TAIL_RULE)
+        return "\n\n".join(part for part in parts if part).strip() or None
     if request.request_kind == "contract_repair":
         parts.append(_CONTRACT_REPAIR_CURRENT_TURN_CONTRACT)
         parts.append(_CONTRACT_REPAIR_FINALIZATION_CONTRACT)
@@ -346,5 +465,45 @@ def request_specific_instruction(request) -> str | None:  # noqa: ANN001
                 "如果这条回复已经包含正确的语义内容，优先直接修正它并补齐 finalization_contract。"
             )
         parts.append(retry_instruction)
+        if request.agent_id == "bazi":
+            references = _bazi_reference_labels(request.tool_history)
+            reference_text = "、".join(references)
+            parts.append(
+                "本轮是八字解读的最终生成。完整回答需要包含排盘事实、两套分析方法、"
+                "主题解读、现实决策边界和参考依据。"
+                "只输出普通 Markdown 正文，不要输出 feishu_card、JSON、卡片协议或工具调用标记。"
+                "提交前逐项自检十一栏标题均出现且每栏都有正文。"
+                + (f" 可读参考来源：{reference_text}。" if reference_text else "")
+            )
+    if request.agent_id == "bazi":
+        parts.append(_BAZI_ANALYSIS_OUTPUT_CONTRACT)
     parts.append(_FINALIZATION_CONTRACT_TAIL_RULE)
     return "\n\n".join(part for part in parts if part).strip() or None
+
+
+def _bazi_reference_labels(tool_history) -> list[str]:  # noqa: ANN001
+    references: list[str] = []
+    for exchange in tool_history:
+        if str(exchange.tool_name or "").strip() != "knowledge":
+            continue
+        action = str(
+            exchange.tool_payload.get("action")
+            or exchange.tool_result.get("action")
+            or ""
+        ).strip()
+        if action != "search":
+            continue
+        for item in exchange.tool_result.get("results") or []:
+            if not isinstance(item, dict):
+                continue
+            source_id = str(item.get("source_id") or "").strip()
+            chunk_id = str(item.get("chunk_id") or "").strip()
+            if not source_id or not chunk_id:
+                continue
+            title = str(item.get("source_title") or "已审核理论资料").strip()
+            heading = str(item.get("heading") or "").strip()
+            book = title if title.startswith("《") else f"《{title}》"
+            reference = f"{book}·{heading}" if heading else book
+            if reference not in references:
+                references.append(reference)
+    return references

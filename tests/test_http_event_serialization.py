@@ -68,7 +68,7 @@ class HTTPEventSerializationTests(unittest.TestCase):
             "处理完成。\n\n共 2 项\n\n详情\n- builtin 正常\n- mcp 正常",
         )
 
-    def test_serialize_event_for_channel_renders_feishu_card_and_visible_text(self) -> None:
+    def test_serialize_event_for_channel_renders_feishu_card_and_durable_text(self) -> None:
         history = InMemoryRunHistory()
         run = history.start(
             session_id="sess_test",
@@ -100,7 +100,7 @@ class HTTPEventSerializationTests(unittest.TestCase):
             run_history=history,
         )
 
-        self.assertEqual(item["payload"]["text"], "处理完成")
+        self.assertEqual(item["payload"]["text"], "处理完成\n\n- hello")
         self.assertIn("card", item["payload"])
         self.assertIn("header", item["payload"]["card"])
 

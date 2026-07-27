@@ -1,0 +1,28 @@
+case_id = "bazi_dayun_citation_cn"
+suite_id = "bazi_agent"
+family = "bazi_agent"
+grader_id = "bazi_agent"
+description = "Chart and Dayun share one fingerprint before theory retrieval"
+agent_id = "bazi"
+profile_name = "openai_gpt_5_4"
+tags = ["bazi", "dayun", "fingerprint", "rag"]
+gate_components = ["citation_integrity", "tool_order", "fingerprint_consistency", "output_structure"]
+
+[[turns]]
+role = "user"
+content = "按北京时间排盘并查看大运，再给出有来源的文化研究分析。"
+
+[component_weights]
+citation_integrity = 25
+tool_order = 20
+fingerprint_consistency = 35
+output_structure = 20
+
+[grader_case]
+required_tool_order = [["bazi", "chart"], ["bazi", "dayun"], ["knowledge", "search"]]
+require_past_event_reasoning = true
+require_concrete_topics = true
+require_timing_triggers = true
+
+[setup]
+knowledge_fixture = "bazi_theory_minimal.json"

@@ -9,6 +9,7 @@ from marten_runtime.knowledge.models import (
     KnowledgeChunk,
     KnowledgeDeleteResult,
     KnowledgeEmbeddingRecord,
+    KnowledgeIngestJob,
     KnowledgeSource,
     utc_now_iso,
 )
@@ -120,6 +121,9 @@ class SQLiteKnowledgeStore:
                   percent REAL NOT NULL DEFAULT 0.0,
                   message TEXT NOT NULL DEFAULT '',
                   error TEXT NOT NULL DEFAULT '',
+                  error_code TEXT NOT NULL DEFAULT '',
+                  retryable INTEGER NOT NULL DEFAULT 0,
+                  staged_file_path TEXT NOT NULL DEFAULT '',
                   created_at TEXT NOT NULL,
                   updated_at TEXT NOT NULL,
                   PRIMARY KEY(namespace, job_id)
@@ -135,37 +139,18 @@ class SQLiteKnowledgeStore:
                 """
             )
             _ensure_column(conn, "knowledge_embedding_vec_map", "dimension", "INTEGER NOT NULL DEFAULT 0")
+            _ensure_column(conn, "knowledge_ingest_jobs", "error_code", "TEXT NOT NULL DEFAULT ''")
+            _ensure_column(conn, "knowledge_ingest_jobs", "retryable", "INTEGER NOT NULL DEFAULT 0")
+            _ensure_column(conn, "knowledge_ingest_jobs", "staged_file_path", "TEXT NOT NULL DEFAULT ''")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_knowledge_ingest_jobs_status_updated "
+                "ON knowledge_ingest_jobs(status, updated_at)"
+            )
             self._ensure_sqlite_vec_schema(conn)
 
     def upsert_source(self, source: KnowledgeSource) -> KnowledgeSource:
         with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO knowledge_sources (
-                  namespace, source_id, kind, title, uri, version, metadata_json, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(namespace, source_id) DO UPDATE SET
-                  kind=excluded.kind,
-                  title=excluded.title,
-                  uri=excluded.uri,
-                  version=excluded.version,
-                  metadata_json=excluded.metadata_json,
-                  status=excluded.status,
-                  updated_at=excluded.updated_at
-                """,
-                (
-                    source.namespace,
-                    source.source_id,
-                    source.kind,
-                    source.title,
-                    source.uri,
-                    source.version,
-                    json.dumps(source.metadata, ensure_ascii=False, sort_keys=True),
-                    source.status,
-                    source.created_at,
-                    source.updated_at,
-                ),
-            )
+            self._upsert_source(conn, source)
         return source
 
     def find_source_id_by_uri_version(self, namespace: str, uri: str, version: str) -> str | None:
@@ -218,45 +203,85 @@ class SQLiteKnowledgeStore:
 
     def replace_chunks(self, namespace: str, source_id: str, chunks: list[KnowledgeChunk]) -> None:
         with self._connect() as conn:
-            existing = conn.execute(
-                "SELECT chunk_id FROM knowledge_chunks WHERE namespace=? AND source_id=?",
-                (namespace, source_id),
-            ).fetchall()
-            for row in existing:
-                self._delete_fts(conn, namespace, str(row["chunk_id"]))
-            conn.execute(
-                "DELETE FROM knowledge_chunks WHERE namespace=? AND source_id=?",
-                (namespace, source_id),
+            self._replace_chunks(conn, namespace, source_id, chunks)
+
+    def replace_source_bundle(
+        self,
+        *,
+        source: KnowledgeSource,
+        chunks: list[KnowledgeChunk],
+        vectors: list[list[float]],
+        model_id: str,
+        dimension: int,
+        embedding_config_hash: str,
+    ) -> None:
+        if len(chunks) != len(vectors):
+            raise ValueError("chunks and vectors must have the same length")
+        with self._connect() as conn:
+            self._replace_source_bundle(
+                conn,
+                source=source,
+                chunks=chunks,
+                vectors=vectors,
+                model_id=model_id,
+                dimension=dimension,
+                embedding_config_hash=embedding_config_hash,
             )
-            self._delete_orphan_embeddings(conn, namespace)
-            source_row = conn.execute(
-                "SELECT title FROM knowledge_sources WHERE namespace=? AND source_id=? AND status='active'",
-                (namespace, source_id),
+
+    def complete_ingest_job_with_source_bundle(
+        self,
+        *,
+        namespace: str,
+        job_id: str,
+        source_title: str,
+        source: KnowledgeSource,
+        chunks: list[KnowledgeChunk],
+        vectors: list[list[float]],
+        model_id: str,
+        dimension: int,
+        embedding_config_hash: str,
+    ) -> bool:
+        if len(chunks) != len(vectors):
+            raise ValueError("chunks and vectors must have the same length")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT status FROM knowledge_ingest_jobs WHERE namespace=? AND job_id=?",
+                (namespace, job_id),
             ).fetchone()
-            title = str(source_row["title"]) if source_row is not None else ""
-            for chunk in chunks:
-                conn.execute(
-                    """
-                    INSERT INTO knowledge_chunks (
-                      namespace, chunk_id, source_id, heading, ordinal, text, token_estimate,
-                      metadata_json, status, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        chunk.namespace,
-                        chunk.chunk_id,
-                        chunk.source_id,
-                        chunk.heading,
-                        chunk.ordinal,
-                        chunk.text,
-                        chunk.token_estimate,
-                        json.dumps(chunk.metadata, ensure_ascii=False, sort_keys=True),
-                        chunk.status,
-                        chunk.created_at,
-                        chunk.updated_at,
-                    ),
-                )
-                self._insert_fts(conn, namespace, chunk.chunk_id, title, chunk.heading, chunk.text)
+            if row is None or str(row["status"]) in {"completed", "failed", "cancelled"}:
+                return False
+            self._replace_source_bundle(
+                conn,
+                source=source,
+                chunks=chunks,
+                vectors=vectors,
+                model_id=model_id,
+                dimension=dimension,
+                embedding_config_hash=embedding_config_hash,
+            )
+            now = utc_now_iso()
+            cursor = conn.execute(
+                """
+                UPDATE knowledge_ingest_jobs SET
+                  source_title=?, status='completed', chunks_total=?, chunks_embedded=?,
+                  percent=100.0, message='completed', error='', error_code='', retryable=0,
+                  updated_at=?
+                WHERE namespace=? AND job_id=?
+                  AND status NOT IN ('completed', 'failed', 'cancelled')
+                """,
+                (
+                    source_title,
+                    len(chunks),
+                    len(vectors),
+                    now,
+                    namespace,
+                    job_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("ingest job changed while publishing source bundle")
+            return True
 
     def get_chunk(self, namespace: str, chunk_id: str) -> KnowledgeChunk | None:
         with self._connect() as conn:
@@ -330,18 +355,8 @@ class SQLiteKnowledgeStore:
         return KnowledgeDeleteResult(deleted_source_id=source_id, deleted_chunk_count=len(chunk_rows))
 
     def set_namespace_config_hash(self, namespace: str, embedding_config_hash: str) -> None:
-        now = utc_now_iso()
         with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO knowledge_namespaces(namespace, embedding_config_hash, created_at, updated_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(namespace) DO UPDATE SET
-                  embedding_config_hash=excluded.embedding_config_hash,
-                  updated_at=excluded.updated_at
-                """,
-                (namespace, embedding_config_hash, now, now),
-            )
+            self._set_namespace_config_hash(conn, namespace, embedding_config_hash)
 
     def get_namespace_config_hash(self, namespace: str) -> str | None:
         with self._connect() as conn:
@@ -361,39 +376,15 @@ class SQLiteKnowledgeStore:
         embedding_config_hash: str,
         vector: list[float],
     ) -> None:
-        now = utc_now_iso()
         with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO knowledge_embeddings (
-                  namespace, chunk_id, model_id, dimension, embedding_config_hash, vector_json,
-                  status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
-                ON CONFLICT(namespace, chunk_id, embedding_config_hash) DO UPDATE SET
-                  model_id=excluded.model_id,
-                  dimension=excluded.dimension,
-                  vector_json=excluded.vector_json,
-                  status='active',
-                  updated_at=excluded.updated_at
-                """,
-                (
-                    namespace,
-                    chunk_id,
-                    model_id,
-                    dimension,
-                    embedding_config_hash,
-                    json.dumps(vector),
-                    now,
-                    now,
-                ),
-            )
-            self._upsert_sqlite_vec_embedding(
+            self._upsert_embedding(
                 conn,
                 namespace=namespace,
                 chunk_id=chunk_id,
+                model_id=model_id,
+                dimension=dimension,
                 embedding_config_hash=embedding_config_hash,
                 vector=vector,
-                now=now,
             )
 
     def list_embeddings(self, namespace: str, embedding_config_hash: str) -> list[KnowledgeEmbeddingRecord]:
@@ -558,6 +549,163 @@ class SQLiteKnowledgeStore:
             ).fetchone()
         return int(row["count"]) if row is not None else 0
 
+    def list_namespace_summaries(self) -> list[dict[str, object]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                WITH namespaces(namespace) AS (
+                  SELECT namespace FROM knowledge_namespaces
+                  UNION SELECT namespace FROM knowledge_sources
+                  UNION SELECT namespace FROM knowledge_chunks
+                  UNION SELECT namespace FROM knowledge_ingest_jobs
+                )
+                SELECT
+                  n.namespace,
+                  COALESCE((SELECT COUNT(*) FROM knowledge_sources s
+                    WHERE s.namespace=n.namespace AND s.status='active'), 0) AS source_count,
+                  COALESCE((SELECT COUNT(*) FROM knowledge_chunks c
+                    WHERE c.namespace=n.namespace AND c.status='active'), 0) AS chunk_count,
+                  COALESCE((SELECT embedding_config_hash FROM knowledge_namespaces k
+                    WHERE k.namespace=n.namespace), '') AS index_embedding_config_hash
+                FROM namespaces n
+                ORDER BY n.namespace ASC
+                """
+            ).fetchall()
+        return [
+            {
+                "namespace": str(row["namespace"]),
+                "source_count": int(row["source_count"]),
+                "chunk_count": int(row["chunk_count"]),
+                "index_embedding_config_hash": str(row["index_embedding_config_hash"]),
+            }
+            for row in rows
+        ]
+
+    def list_source_summaries(
+        self,
+        namespace: str,
+        *,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[dict[str, object]], int]:
+        offset = (page - 1) * page_size
+        with self._connect() as conn:
+            total_row = conn.execute(
+                "SELECT COUNT(*) AS count FROM knowledge_sources WHERE namespace=? AND status='active'",
+                (namespace,),
+            ).fetchone()
+            rows = conn.execute(
+                """
+                SELECT s.*, COUNT(c.chunk_id) AS chunk_count
+                FROM knowledge_sources s
+                LEFT JOIN knowledge_chunks c
+                  ON c.namespace=s.namespace AND c.source_id=s.source_id AND c.status='active'
+                WHERE s.namespace=? AND s.status='active'
+                GROUP BY s.namespace, s.source_id
+                ORDER BY s.updated_at DESC, s.source_id ASC
+                LIMIT ? OFFSET ?
+                """,
+                (namespace, page_size, offset),
+            ).fetchall()
+        return (
+            [
+                {
+                    **_source_from_row(row).model_dump(mode="json"),
+                    "chunk_count": int(row["chunk_count"]),
+                }
+                for row in rows
+            ],
+            int(total_row["count"]) if total_row is not None else 0,
+        )
+
+    def list_chunk_summaries(
+        self,
+        namespace: str,
+        source_id: str,
+        *,
+        page: int,
+        page_size: int,
+        preview_chars: int = 240,
+    ) -> tuple[list[dict[str, object]], int]:
+        offset = (page - 1) * page_size
+        with self._connect() as conn:
+            total_row = conn.execute(
+                """
+                SELECT COUNT(*) AS count FROM knowledge_chunks
+                WHERE namespace=? AND source_id=? AND status='active'
+                """,
+                (namespace, source_id),
+            ).fetchone()
+            rows = conn.execute(
+                """
+                SELECT * FROM knowledge_chunks
+                WHERE namespace=? AND source_id=? AND status='active'
+                ORDER BY ordinal ASC, chunk_id ASC
+                LIMIT ? OFFSET ?
+                """,
+                (namespace, source_id, page_size, offset),
+            ).fetchall()
+        return (
+            [
+                {
+                    "namespace": str(row["namespace"]),
+                    "chunk_id": str(row["chunk_id"]),
+                    "source_id": str(row["source_id"]),
+                    "heading": str(row["heading"]),
+                    "ordinal": int(row["ordinal"]),
+                    "token_estimate": int(row["token_estimate"]),
+                    "metadata": json.loads(str(row["metadata_json"] or "{}")),
+                    "status": str(row["status"]),
+                    "text_preview": str(row["text"])[:preview_chars],
+                    "updated_at": str(row["updated_at"]),
+                }
+                for row in rows
+            ],
+            int(total_row["count"]) if total_row is not None else 0,
+        )
+
+    def list_ingest_job_summaries(
+        self,
+        namespace: str,
+        *,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[dict[str, object]], int]:
+        offset = (page - 1) * page_size
+        with self._connect() as conn:
+            total_row = conn.execute(
+                "SELECT COUNT(*) AS count FROM knowledge_ingest_jobs WHERE namespace=?",
+                (namespace,),
+            ).fetchone()
+            rows = conn.execute(
+                """
+                SELECT * FROM knowledge_ingest_jobs
+                WHERE namespace=?
+                ORDER BY updated_at DESC, job_id ASC
+                LIMIT ? OFFSET ?
+                """,
+                (namespace, page_size, offset),
+            ).fetchall()
+        return (
+            [_ingest_job_from_row(row).model_dump(mode="json") for row in rows],
+            int(total_row["count"]) if total_row is not None else 0,
+        )
+
+    def ingest_job_diagnostics(self) -> dict[str, int]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                  SUM(CASE WHEN status IN ('queued', 'reading', 'chunking', 'embedding') THEN 1 ELSE 0 END) AS active_count,
+                  SUM(CASE WHEN error_code='KNOWLEDGE_JOB_INTERRUPTED' THEN 1 ELSE 0 END) AS interrupted_count
+                FROM knowledge_ingest_jobs
+                """
+            ).fetchone()
+        return {
+            "active_count": int((row or {})["active_count"] or 0),
+            "interrupted_count": int((row or {})["interrupted_count"] or 0),
+        }
+
     def upsert_ingest_job(
         self,
         *,
@@ -570,6 +718,9 @@ class SQLiteKnowledgeStore:
         percent: float = 0.0,
         message: str = "",
         error: str = "",
+        error_code: str = "",
+        retryable: bool = False,
+        staged_file_path: str = "",
     ) -> None:
         now = utc_now_iso()
         with self._connect() as conn:
@@ -577,8 +728,9 @@ class SQLiteKnowledgeStore:
                 """
                 INSERT INTO knowledge_ingest_jobs (
                   namespace, job_id, source_title, status, chunks_total, chunks_embedded,
-                  percent, message, error, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  percent, message, error, error_code, retryable, staged_file_path,
+                  created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(namespace, job_id) DO UPDATE SET
                   source_title=excluded.source_title,
                   status=excluded.status,
@@ -587,6 +739,9 @@ class SQLiteKnowledgeStore:
                   percent=excluded.percent,
                   message=excluded.message,
                   error=excluded.error,
+                  error_code=excluded.error_code,
+                  retryable=excluded.retryable,
+                  staged_file_path=excluded.staged_file_path,
                   updated_at=excluded.updated_at
                 """,
                 (
@@ -599,10 +754,80 @@ class SQLiteKnowledgeStore:
                     percent,
                     message,
                     error,
+                    error_code,
+                    int(retryable),
+                    staged_file_path,
                     now,
                     now,
                 ),
             )
+
+    def update_ingest_job(
+        self,
+        *,
+        namespace: str,
+        job_id: str,
+        source_title: str,
+        status: str,
+        chunks_total: int,
+        chunks_embedded: int,
+        percent: float,
+        message: str,
+        error: str,
+        error_code: str,
+        retryable: bool,
+    ) -> bool:
+        now = utc_now_iso()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE knowledge_ingest_jobs SET
+                  source_title=?, status=?, chunks_total=?, chunks_embedded=?,
+                  percent=?, message=?, error=?, error_code=?, retryable=?, updated_at=?
+                WHERE namespace=? AND job_id=?
+                  AND status NOT IN ('completed', 'failed', 'cancelled')
+                """,
+                (
+                    source_title,
+                    status,
+                    chunks_total,
+                    chunks_embedded,
+                    percent,
+                    message,
+                    error,
+                    error_code,
+                    int(retryable),
+                    now,
+                    namespace,
+                    job_id,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def recover_interrupted_ingest_jobs(self) -> int:
+        now = utc_now_iso()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE knowledge_ingest_jobs SET
+                  status='failed',
+                  message='interrupted by runtime restart',
+                  error='runtime stopped before ingest completed',
+                  error_code='KNOWLEDGE_JOB_INTERRUPTED',
+                  retryable=1,
+                  updated_at=?
+                WHERE status IN ('queued', 'reading', 'chunking', 'embedding')
+                """,
+                (now,),
+            )
+            return max(cursor.rowcount, 0)
+
+    def list_ingest_jobs(self) -> list[dict[str, object]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM knowledge_ingest_jobs ORDER BY updated_at DESC, job_id ASC"
+            ).fetchall()
+        return [_ingest_job_from_row(row).model_dump(mode="json") for row in rows]
 
     def get_ingest_job(self, namespace: str, job_id: str) -> dict[str, object] | None:
         with self._connect() as conn:
@@ -612,19 +837,184 @@ class SQLiteKnowledgeStore:
             ).fetchone()
         if row is None:
             return None
-        return {
-            "namespace": str(row["namespace"]),
-            "job_id": str(row["job_id"]),
-            "source_title": str(row["source_title"]),
-            "status": str(row["status"]),
-            "chunks_total": int(row["chunks_total"]),
-            "chunks_embedded": int(row["chunks_embedded"]),
-            "percent": float(row["percent"]),
-            "message": str(row["message"]),
-            "error": str(row["error"]),
-            "created_at": str(row["created_at"]),
-            "updated_at": str(row["updated_at"]),
-        }
+        return _ingest_job_from_row(row).model_dump(mode="json")
+
+    def _replace_source_bundle(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source: KnowledgeSource,
+        chunks: list[KnowledgeChunk],
+        vectors: list[list[float]],
+        model_id: str,
+        dimension: int,
+        embedding_config_hash: str,
+    ) -> None:
+        self._upsert_source(conn, source)
+        self._replace_chunks(conn, source.namespace, source.source_id, chunks)
+        for chunk, vector in zip(chunks, vectors, strict=True):
+            self._upsert_embedding(
+                conn,
+                namespace=source.namespace,
+                chunk_id=chunk.chunk_id,
+                model_id=model_id,
+                dimension=dimension,
+                embedding_config_hash=embedding_config_hash,
+                vector=vector,
+            )
+        self._set_namespace_config_hash(
+            conn,
+            source.namespace,
+            embedding_config_hash,
+        )
+
+    @staticmethod
+    def _upsert_source(conn: sqlite3.Connection, source: KnowledgeSource) -> None:
+        conn.execute(
+            """
+            INSERT INTO knowledge_sources (
+              namespace, source_id, kind, title, uri, version, metadata_json, status,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(namespace, source_id) DO UPDATE SET
+              kind=excluded.kind,
+              title=excluded.title,
+              uri=excluded.uri,
+              version=excluded.version,
+              metadata_json=excluded.metadata_json,
+              status=excluded.status,
+              updated_at=excluded.updated_at
+            """,
+            (
+                source.namespace,
+                source.source_id,
+                source.kind,
+                source.title,
+                source.uri,
+                source.version,
+                json.dumps(source.metadata, ensure_ascii=False, sort_keys=True),
+                source.status,
+                source.created_at,
+                source.updated_at,
+            ),
+        )
+
+    def _replace_chunks(
+        self,
+        conn: sqlite3.Connection,
+        namespace: str,
+        source_id: str,
+        chunks: list[KnowledgeChunk],
+    ) -> None:
+        existing = conn.execute(
+            "SELECT chunk_id FROM knowledge_chunks WHERE namespace=? AND source_id=?",
+            (namespace, source_id),
+        ).fetchall()
+        for row in existing:
+            self._delete_fts(conn, namespace, str(row["chunk_id"]))
+        conn.execute(
+            "DELETE FROM knowledge_chunks WHERE namespace=? AND source_id=?",
+            (namespace, source_id),
+        )
+        self._delete_orphan_embeddings(conn, namespace)
+        source_row = conn.execute(
+            "SELECT title FROM knowledge_sources WHERE namespace=? AND source_id=? AND status='active'",
+            (namespace, source_id),
+        ).fetchone()
+        title = str(source_row["title"]) if source_row is not None else ""
+        for chunk in chunks:
+            conn.execute(
+                """
+                INSERT INTO knowledge_chunks (
+                  namespace, chunk_id, source_id, heading, ordinal, text, token_estimate,
+                  metadata_json, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    chunk.namespace,
+                    chunk.chunk_id,
+                    chunk.source_id,
+                    chunk.heading,
+                    chunk.ordinal,
+                    chunk.text,
+                    chunk.token_estimate,
+                    json.dumps(chunk.metadata, ensure_ascii=False, sort_keys=True),
+                    chunk.status,
+                    chunk.created_at,
+                    chunk.updated_at,
+                ),
+            )
+            self._insert_fts(
+                conn,
+                namespace,
+                chunk.chunk_id,
+                title,
+                chunk.heading,
+                chunk.text,
+            )
+
+    @staticmethod
+    def _set_namespace_config_hash(
+        conn: sqlite3.Connection,
+        namespace: str,
+        embedding_config_hash: str,
+    ) -> None:
+        now = utc_now_iso()
+        conn.execute(
+            """
+            INSERT INTO knowledge_namespaces(namespace, embedding_config_hash, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(namespace) DO UPDATE SET
+              embedding_config_hash=excluded.embedding_config_hash,
+              updated_at=excluded.updated_at
+            """,
+            (namespace, embedding_config_hash, now, now),
+        )
+
+    def _upsert_embedding(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        namespace: str,
+        chunk_id: str,
+        model_id: str,
+        dimension: int,
+        embedding_config_hash: str,
+        vector: list[float],
+    ) -> None:
+        now = utc_now_iso()
+        conn.execute(
+            """
+            INSERT INTO knowledge_embeddings (
+              namespace, chunk_id, model_id, dimension, embedding_config_hash, vector_json,
+              status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+            ON CONFLICT(namespace, chunk_id, embedding_config_hash) DO UPDATE SET
+              model_id=excluded.model_id,
+              dimension=excluded.dimension,
+              vector_json=excluded.vector_json,
+              status='active',
+              updated_at=excluded.updated_at
+            """,
+            (
+                namespace,
+                chunk_id,
+                model_id,
+                dimension,
+                embedding_config_hash,
+                json.dumps(vector),
+                now,
+                now,
+            ),
+        )
+        self._upsert_sqlite_vec_embedding(
+            conn,
+            namespace=namespace,
+            chunk_id=chunk_id,
+            embedding_config_hash=embedding_config_hash,
+            vector=vector,
+            now=now,
+        )
 
     def _insert_fts(self, conn: sqlite3.Connection, namespace: str, chunk_id: str, title: str, heading: str, text: str) -> None:
         conn.execute(
@@ -832,6 +1222,25 @@ def _embedding_from_row(row: sqlite3.Row) -> KnowledgeEmbeddingRecord:
         embedding_config_hash=str(row["embedding_config_hash"]),
         vector=[float(item) for item in json.loads(str(row["vector_json"] or "[]"))],
         status=str(row["status"]),
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def _ingest_job_from_row(row: sqlite3.Row) -> KnowledgeIngestJob:
+    return KnowledgeIngestJob(
+        namespace=str(row["namespace"]),
+        job_id=str(row["job_id"]),
+        source_title=str(row["source_title"]),
+        status=str(row["status"]),
+        chunks_total=int(row["chunks_total"]),
+        chunks_embedded=int(row["chunks_embedded"]),
+        percent=float(row["percent"]),
+        message=str(row["message"]),
+        error=str(row["error"]),
+        error_code=str(row["error_code"]),
+        retryable=bool(row["retryable"]),
+        staged_file_path=str(row["staged_file_path"]),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
     )
