@@ -21,6 +21,7 @@ from marten_runtime.interfaces.http.bootstrap import (
     render_metrics,
 )
 from marten_runtime.interfaces.http.eval_routes import build_eval_router
+from marten_runtime.interfaces.http.knowledge_console import build_knowledge_console_router
 from marten_runtime.interfaces.http.knowledge_routes import (
     KnowledgeRouteError,
     MAX_UPLOAD_REQUEST_BYTES,
@@ -58,7 +59,7 @@ class KnowledgeUploadSizeLimitMiddleware:
             scope.get("type") == "http"
             and str(scope.get("method") or "").upper() == "POST"
             and path.startswith("/knowledge/")
-            and path.endswith("/uploads")
+            and path.endswith(("/uploads", "/previews"))
         )
         if not limited:
             await self.app(scope, receive, send)
@@ -212,7 +213,8 @@ def create_app(
 
     @app.middleware("http")
     async def knowledge_operator_boundary(request: Request, call_next):  # noqa: ANN001, ANN202
-        if operator_token and request.url.path.startswith("/knowledge/"):
+        console_path = request.url.path.startswith("/knowledge/console")
+        if operator_token and request.url.path.startswith("/knowledge/") and not console_path:
             if not operator_authorized(request.headers.get("authorization"), operator_token):
                 return JSONResponse(
                     status_code=401,
@@ -222,7 +224,7 @@ def create_app(
                     ),
                     headers={"WWW-Authenticate": "Bearer"},
                 )
-            if request.method == "POST" and request.url.path.endswith("/uploads"):
+            if request.method == "POST" and request.url.path.endswith(("/uploads", "/previews")):
                 declared_error = declared_upload_error(request.headers.get("content-length"))
                 if declared_error is not None:
                     return JSONResponse(
@@ -257,6 +259,18 @@ def create_app(
             build_knowledge_router(runtime, operator_token=operator_token),
             prefix="/knowledge",
         )
+        try:
+            console_ttl = int(str(getattr(runtime, "env", {}).get("KNOWLEDGE_CONSOLE_SESSION_TTL_SECONDS") or "1800"))
+        except ValueError:
+            console_ttl = 1800
+        app.include_router(
+            build_knowledge_console_router(
+                runtime,
+                operator_token=operator_token,
+                session_ttl_seconds=console_ttl,
+            ),
+            prefix="/knowledge/console",
+        )
     app.include_router(
         build_eval_router(
             getattr(runtime, "repo_root", Path.cwd()),
@@ -270,7 +284,12 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/readyz")
-    def readyz() -> dict[str, str]:
+    def readyz():  # noqa: ANN201
+        if not runtime.knowledge_service.ready:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "blocked", "component": "knowledge"},
+            )
         return {"status": "ready"}
 
     @app.get("/metrics", response_class=PlainTextResponse)

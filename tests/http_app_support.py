@@ -12,6 +12,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def _write_test_repo(root: Path) -> None:
     copytree(REPO_ROOT / "config", root / "config")
+    knowledge_config = root / "config" / "knowledge.toml"
+    knowledge_config.write_text(
+        knowledge_config.read_text(encoding="utf-8").replace(
+            "prewarm_on_start = true",
+            "prewarm_on_start = false",
+        ),
+        encoding="utf-8",
+    )
     copytree(REPO_ROOT / "agents", root / "agents")
     copytree(REPO_ROOT / "skills", root / "skills")
     if (REPO_ROOT / "mcps.example.json").exists():

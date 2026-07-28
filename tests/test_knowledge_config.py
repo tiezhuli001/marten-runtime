@@ -164,6 +164,24 @@ class KnowledgeConfigTests(unittest.TestCase):
         self.assertNotEqual(digest, embedding_config_hash(changed_path))
         self.assertNotEqual(digest, embedding_config_hash(changed_precision))
 
+    def test_named_embedding_profiles_are_loaded_with_default_profile(self) -> None:
+        text = _valid_config() + """
+        [knowledge.embedding_profiles.large]
+        enabled = true
+        provider = "fake"
+        model = "fake-large"
+        local_path = "data/models/fake-large"
+        dimension = 768
+        allow_remote_download = false
+        use_fp16 = false
+        """
+
+        config = load_knowledge_config.from_text(text).knowledge
+
+        profiles = config.resolved_embedding_profiles()
+        self.assertEqual(set(profiles), {"default", "large"})
+        self.assertEqual(profiles["large"].dimension, 768)
+
 
 def _valid_config(
     *,

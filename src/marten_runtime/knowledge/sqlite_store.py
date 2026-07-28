@@ -76,6 +76,7 @@ class SQLiteKnowledgeStore:
                 CREATE TABLE IF NOT EXISTS knowledge_namespaces (
                   namespace TEXT PRIMARY KEY,
                   embedding_config_hash TEXT NOT NULL,
+                  embedding_profile_id TEXT NOT NULL DEFAULT 'default',
                   created_at TEXT NOT NULL,
                   updated_at TEXT NOT NULL
                 );
@@ -139,6 +140,7 @@ class SQLiteKnowledgeStore:
                 """
             )
             _ensure_column(conn, "knowledge_embedding_vec_map", "dimension", "INTEGER NOT NULL DEFAULT 0")
+            _ensure_column(conn, "knowledge_namespaces", "embedding_profile_id", "TEXT NOT NULL DEFAULT 'default'")
             _ensure_column(conn, "knowledge_ingest_jobs", "error_code", "TEXT NOT NULL DEFAULT ''")
             _ensure_column(conn, "knowledge_ingest_jobs", "retryable", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(conn, "knowledge_ingest_jobs", "staged_file_path", "TEXT NOT NULL DEFAULT ''")
@@ -214,6 +216,7 @@ class SQLiteKnowledgeStore:
         model_id: str,
         dimension: int,
         embedding_config_hash: str,
+        embedding_profile_id: str = "default",
     ) -> None:
         if len(chunks) != len(vectors):
             raise ValueError("chunks and vectors must have the same length")
@@ -226,6 +229,7 @@ class SQLiteKnowledgeStore:
                 model_id=model_id,
                 dimension=dimension,
                 embedding_config_hash=embedding_config_hash,
+                embedding_profile_id=embedding_profile_id,
             )
 
     def complete_ingest_job_with_source_bundle(
@@ -240,6 +244,7 @@ class SQLiteKnowledgeStore:
         model_id: str,
         dimension: int,
         embedding_config_hash: str,
+        embedding_profile_id: str = "default",
     ) -> bool:
         if len(chunks) != len(vectors):
             raise ValueError("chunks and vectors must have the same length")
@@ -259,6 +264,7 @@ class SQLiteKnowledgeStore:
                 model_id=model_id,
                 dimension=dimension,
                 embedding_config_hash=embedding_config_hash,
+                embedding_profile_id=embedding_profile_id,
             )
             now = utc_now_iso()
             cursor = conn.execute(
@@ -354,9 +360,19 @@ class SQLiteKnowledgeStore:
             )
         return KnowledgeDeleteResult(deleted_source_id=source_id, deleted_chunk_count=len(chunk_rows))
 
-    def set_namespace_config_hash(self, namespace: str, embedding_config_hash: str) -> None:
+    def set_namespace_config_hash(
+        self,
+        namespace: str,
+        embedding_config_hash: str,
+        embedding_profile_id: str = "default",
+    ) -> None:
         with self._connect() as conn:
-            self._set_namespace_config_hash(conn, namespace, embedding_config_hash)
+            self._set_namespace_config_hash(
+                conn,
+                namespace,
+                embedding_config_hash,
+                embedding_profile_id,
+            )
 
     def get_namespace_config_hash(self, namespace: str) -> str | None:
         with self._connect() as conn:
@@ -365,6 +381,56 @@ class SQLiteKnowledgeStore:
                 (namespace,),
             ).fetchone()
         return str(row["embedding_config_hash"]) if row is not None else None
+
+    def get_namespace_embedding_profile_id(self, namespace: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT embedding_profile_id FROM knowledge_namespaces WHERE namespace=?",
+                (namespace,),
+            ).fetchone()
+        return str(row["embedding_profile_id"]) if row is not None else None
+
+    def replace_namespace_embeddings(
+        self,
+        *,
+        namespace: str,
+        chunks: list[KnowledgeChunk],
+        vectors: list[list[float]],
+        model_id: str,
+        dimension: int,
+        embedding_config_hash: str,
+        embedding_profile_id: str,
+    ) -> None:
+        if len(chunks) != len(vectors):
+            raise ValueError("chunks and vectors must have the same length")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT chunk_id FROM knowledge_embeddings WHERE namespace=?",
+                (namespace,),
+            ).fetchall()
+            self._delete_sqlite_vec_embeddings(
+                conn,
+                namespace,
+                chunk_ids=[str(row["chunk_id"]) for row in existing],
+            )
+            conn.execute("DELETE FROM knowledge_embeddings WHERE namespace=?", (namespace,))
+            for chunk, vector in zip(chunks, vectors, strict=True):
+                self._upsert_embedding(
+                    conn,
+                    namespace=namespace,
+                    chunk_id=chunk.chunk_id,
+                    model_id=model_id,
+                    dimension=dimension,
+                    embedding_config_hash=embedding_config_hash,
+                    vector=vector,
+                )
+            self._set_namespace_config_hash(
+                conn,
+                namespace,
+                embedding_config_hash,
+                embedding_profile_id,
+            )
 
     def upsert_embedding(
         self,
@@ -566,7 +632,9 @@ class SQLiteKnowledgeStore:
                   COALESCE((SELECT COUNT(*) FROM knowledge_chunks c
                     WHERE c.namespace=n.namespace AND c.status='active'), 0) AS chunk_count,
                   COALESCE((SELECT embedding_config_hash FROM knowledge_namespaces k
-                    WHERE k.namespace=n.namespace), '') AS index_embedding_config_hash
+                    WHERE k.namespace=n.namespace), '') AS index_embedding_config_hash,
+                  COALESCE((SELECT embedding_profile_id FROM knowledge_namespaces k
+                    WHERE k.namespace=n.namespace), 'default') AS embedding_profile_id
                 FROM namespaces n
                 ORDER BY n.namespace ASC
                 """
@@ -577,6 +645,7 @@ class SQLiteKnowledgeStore:
                 "source_count": int(row["source_count"]),
                 "chunk_count": int(row["chunk_count"]),
                 "index_embedding_config_hash": str(row["index_embedding_config_hash"]),
+                "embedding_profile_id": str(row["embedding_profile_id"]),
             }
             for row in rows
         ]
@@ -849,6 +918,7 @@ class SQLiteKnowledgeStore:
         model_id: str,
         dimension: int,
         embedding_config_hash: str,
+        embedding_profile_id: str = "default",
     ) -> None:
         self._upsert_source(conn, source)
         self._replace_chunks(conn, source.namespace, source.source_id, chunks)
@@ -866,6 +936,7 @@ class SQLiteKnowledgeStore:
             conn,
             source.namespace,
             embedding_config_hash,
+            embedding_profile_id,
         )
 
     @staticmethod
@@ -958,17 +1029,20 @@ class SQLiteKnowledgeStore:
         conn: sqlite3.Connection,
         namespace: str,
         embedding_config_hash: str,
+        embedding_profile_id: str = "default",
     ) -> None:
         now = utc_now_iso()
         conn.execute(
             """
-            INSERT INTO knowledge_namespaces(namespace, embedding_config_hash, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO knowledge_namespaces(
+              namespace, embedding_config_hash, embedding_profile_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(namespace) DO UPDATE SET
               embedding_config_hash=excluded.embedding_config_hash,
+              embedding_profile_id=excluded.embedding_profile_id,
               updated_at=excluded.updated_at
             """,
-            (namespace, embedding_config_hash, now, now),
+            (namespace, embedding_config_hash, embedding_profile_id, now, now),
         )
 
     def _upsert_embedding(

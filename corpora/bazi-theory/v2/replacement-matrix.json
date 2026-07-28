@@ -1,0 +1,42 @@
+{
+  "schema_version": "knowledge.corpus.replacement.v1",
+  "release_id": "bazi-theory-classics-structured-v2",
+  "replacements": {
+    "ksrc_bazi_classics_qiongtong_v1": [
+      "ksrc_bazi_qiongtong_original_v2"
+    ],
+    "ksrc_bazi_classics_ditiansui_v1": [
+      "ksrc_bazi_ditiansui_original_v2",
+      "ksrc_bazi_ditiansui_commentary_v2"
+    ],
+    "ksrc_bazi_classics_shenfeng_v1": [
+      "ksrc_bazi_shenfeng_original_v2"
+    ],
+    "ksrc_bazi_classics_yuanhai_v1": [
+      "ksrc_bazi_yuanhai_original_v2"
+    ],
+    "ksrc_bazi_classics_ziping_v1": [
+      "ksrc_bazi_ziping_original_v2",
+      "ksrc_bazi_ziping_modern_v2"
+    ],
+    "ksrc_bazi_classics_sanming_v1": [
+      "ksrc_bazi_sanming_original_v2"
+    ],
+    "ksrc_localtest_ziping_benyi_full": [
+      "ksrc_bazi_ziping_original_v2",
+      "ksrc_bazi_ziping_modern_v2",
+      "ksrc_bazi_ziping_cases_v2"
+    ]
+  },
+  "new_source_ids": [
+    "ksrc_bazi_ziping_original_v2",
+    "ksrc_bazi_ziping_modern_v2",
+    "ksrc_bazi_ziping_cases_v2",
+    "ksrc_bazi_qiongtong_original_v2",
+    "ksrc_bazi_ditiansui_original_v2",
+    "ksrc_bazi_ditiansui_commentary_v2",
+    "ksrc_bazi_shenfeng_original_v2",
+    "ksrc_bazi_yuanhai_original_v2",
+    "ksrc_bazi_sanming_original_v2"
+  ]
+}

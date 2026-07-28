@@ -108,6 +108,8 @@ def build_openai_chat_payload(
         "model": model_name,
         "messages": build_openai_messages(request),
     }
+    if request.max_completion_tokens is not None:
+        body["max_completion_tokens"] = request.max_completion_tokens
     if (
         str(model_name).lower().startswith("gpt-5")
         and request.agent_id == "bazi"

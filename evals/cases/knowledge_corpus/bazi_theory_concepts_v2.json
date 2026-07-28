@@ -1,0 +1,32 @@
+{
+  "schema_version": "knowledge.corpus.gold.v1",
+  "release_id": "bazi-theory-classics-structured-v2",
+  "namespace": "bazi-theory",
+  "required_metadata_fields": ["work", "chapter", "evidence_kind", "edition_or_source", "source_url", "verification_status", "corpus_release_id"],
+  "cases": [
+    {"case_id":"concept_month_robbery","query":"月劫格有什么特征","expected_source_ids":["ksrc_bazi_ziping_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["建禄月劫"]},
+    {"case_id":"concept_jianlu_success","query":"建禄格怎样成格","expected_source_ids":["ksrc_bazi_ziping_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["透官而逢财印"]},
+    {"case_id":"concept_yongshen_month","query":"用神为什么专求月令","expected_source_ids":["ksrc_bazi_ziping_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["专求月令"]},
+    {"case_id":"concept_forward_reverse","query":"用神顺用和逆用是什么意思","expected_source_ids":["ksrc_bazi_ziping_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["顺用","逆用"]},
+    {"case_id":"concept_pattern_success","query":"什么叫成格","expected_source_ids":["ksrc_bazi_ziping_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["何谓成"]},
+    {"case_id":"concept_pattern_failure","query":"什么叫破格或败格","expected_source_ids":["ksrc_bazi_ziping_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["何谓败"]},
+    {"case_id":"concept_rescue","query":"格局中的救应是什么","expected_source_ids":["ksrc_bazi_ziping_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["何谓救应"]},
+    {"case_id":"concept_pattern_change","query":"用神格局如何发生变化","expected_source_ids":["ksrc_bazi_ziping_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["用神之变化"]},
+    {"case_id":"concept_four_good_break","query":"四吉神为什么也能破格","expected_source_ids":["ksrc_bazi_ziping_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["四吉神"]},
+    {"case_id":"concept_four_bad_form","query":"四凶神怎样成格","expected_source_ids":["ksrc_bazi_ziping_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["四凶神"]},
+    {"case_id":"concept_disease_remedy","query":"神峰通考的病药是什么意思","expected_source_ids":["ksrc_bazi_shenfeng_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["何以为之病"]},
+    {"case_id":"concept_four_diseases","query":"雕枯旺弱四病是什么","expected_source_ids":["ksrc_bazi_shenfeng_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["何以为之雕"]},
+    {"case_id":"concept_four_remedies","query":"损益生长四药是什么","expected_source_ids":["ksrc_bazi_shenfeng_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["何以谓之损"]},
+    {"case_id":"concept_day_master","query":"渊海子平为什么以日为主","expected_source_ids":["ksrc_bazi_yuanhai_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["取日干为主"]},
+    {"case_id":"concept_month_command","query":"月令为什么叫提纲","expected_source_ids":["ksrc_bazi_yuanhai_original_v2","ksrc_bazi_ziping_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["月令"]},
+    {"case_id":"concept_hurting_officer","query":"伤官格的基本条件","expected_source_ids":["ksrc_bazi_yuanhai_original_v2","ksrc_bazi_sanming_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["伤官"]},
+    {"case_id":"concept_food_god","query":"食神格如何取用","expected_source_ids":["ksrc_bazi_yuanhai_original_v2","ksrc_bazi_sanming_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["食神"]},
+    {"case_id":"concept_officer","query":"正官格有哪些成败条件","expected_source_ids":["ksrc_bazi_sanming_original_v2","ksrc_bazi_ziping_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["正官"]},
+    {"case_id":"concept_seven_killings","query":"偏官七杀怎样制化","expected_source_ids":["ksrc_bazi_sanming_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["七煞"]},
+    {"case_id":"concept_seal","query":"印绶格喜忌是什么","expected_source_ids":["ksrc_bazi_sanming_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["印绶"]},
+    {"case_id":"concept_mixed_qi","query":"杂气格怎样取用","expected_source_ids":["ksrc_bazi_sanming_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["杂气"]},
+    {"case_id":"concept_balance","query":"滴天髓怎样论中和","expected_source_ids":["ksrc_bazi_ditiansui_original_v2","ksrc_bazi_ditiansui_commentary_v2"],"expected_evidence_kinds":["classical_original","historical_commentary"],"required_text_any":["中和"]},
+    {"case_id":"concept_flow","query":"滴天髓源流是什么意思","expected_source_ids":["ksrc_bazi_ditiansui_original_v2","ksrc_bazi_ditiansui_commentary_v2"],"expected_evidence_kinds":["classical_original","historical_commentary"],"required_text_any":["何处起根源"]},
+    {"case_id":"concept_spring_jia","query":"穷通宝鉴三春甲木如何取用","expected_source_ids":["ksrc_bazi_qiongtong_original_v2"],"expected_evidence_kinds":["classical_original"],"required_text_any":["三春甲木"]}
+  ]
+}

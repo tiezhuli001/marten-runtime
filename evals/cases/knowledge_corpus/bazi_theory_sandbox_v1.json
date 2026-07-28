@@ -1,0 +1,134 @@
+{
+  "schema_version": "knowledge.corpus.gold.v1",
+  "release_id": "bazi-theory-sandbox-local-20260728",
+  "namespace": "bazi-theory-sandbox",
+  "required_metadata_fields": [
+    "source_url",
+    "verification_status",
+    "license",
+    "provenance",
+    "review_status",
+    "extraction_method"
+  ],
+  "cases": [
+    {
+      "case_id": "ziping_useful_god",
+      "query": "子平真诠本义 用神专求月令 取用定格 格局变化",
+      "expected_source_ids": ["ksrc_localtest_ziping_benyi_full"]
+    },
+    {
+      "case_id": "xia_zhongqi_catalog",
+      "query": "夏仲奇卜命遗例 豆腐佬的传奇 五妻之命 黑道头目",
+      "expected_source_ids": ["ksrc_localtest_blind_xia_zhongqi"]
+    },
+    {
+      "case_id": "hao_jinyang_brick_kiln",
+      "query": "郝金阳口诀 戌为火库类化为窑 烧砖窑 银币生意",
+      "expected_source_ids": ["ksrc_localtest_blind_haojinyang_formulas"]
+    },
+    {
+      "case_id": "zhongyuan_direct_four_pillars",
+      "query": "中原盲派命理学 直断四柱法 不分析五行旺衰 时柱直断",
+      "expected_source_ids": ["ksrc_localtest_blind_zhongyuan"]
+    },
+    {
+      "case_id": "renfuhong_tomb_storage",
+      "query": "任付红 四墓库 辰戌丑未 入墓库 使用条件 使用方法",
+      "expected_source_ids": ["ksrc_localtest_blind_renfuhong_tombs"]
+    },
+    {
+      "case_id": "renfuhong_2017_notes",
+      "query": "任付红2017民间八字面授班 打印笔记 易学传送者",
+      "expected_source_ids": ["ksrc_localtest_blind_renfuhong_2017"],
+      "forbidden_source_ids": ["ksrc_localtest_blind_renfuhong_practice"]
+    },
+    {
+      "case_id": "renfuhong_practice_case",
+      "query": "甲庚乙甲 申午丑申 国家名牌大学系主任 民间实用八字实战技巧",
+      "expected_source_ids": ["ksrc_localtest_blind_renfuhong_practice"],
+      "forbidden_source_ids": ["ksrc_localtest_blind_renfuhong_2017"]
+    },
+    {
+      "case_id": "marriage_disaster",
+      "query": "财门一关女命婚必离 患妻患夫 重婚重配 婚灾信息",
+      "expected_source_ids": ["ksrc_localtest_blind_marriage"],
+      "forbidden_source_ids": ["ksrc_localtest_blind_hour_marriage"]
+    },
+    {
+      "case_id": "hour_pillar_marriage",
+      "query": "时柱看婚姻 速断婚姻 一柱断婚姻法",
+      "expected_source_ids": ["ksrc_localtest_blind_hour_marriage"],
+      "forbidden_source_ids": ["ksrc_localtest_blind_marriage"]
+    },
+    {
+      "case_id": "prison_mourning",
+      "query": "牢狱之灾 亥水丑土辰土 枭神夺食 出狱看法 戴孝",
+      "expected_source_ids": ["ksrc_localtest_blind_prison_mourning"]
+    },
+    {
+      "case_id": "peng_kangmin_preface",
+      "query": "彭康民命理精华 幼年失目 五十余年 命理真知 风水八成",
+      "expected_source_ids": ["ksrc_localtest_blind_peng_kangmin"]
+    },
+    {
+      "case_id": "yang_qingjuan_stems",
+      "query": "杨清娟 十天干五行属性 方位颜色 人体部位 244页命例集",
+      "expected_source_ids": ["ksrc_localtest_blind_yang_qingjuan_244"]
+    },
+    {
+      "case_id": "duan_jianye_system",
+      "query": "段建业2016沈阳强化班 宾主体用 做功 理法象法技法",
+      "expected_source_ids": ["ksrc_localtest_blind_duan_jianye_2016"]
+    },
+    {
+      "case_id": "xing_xiufen_parents",
+      "query": "邢秀芬函授教材 少年克父母 正印为母偏财为父 死绝墓地",
+      "expected_source_ids": ["ksrc_localtest_blind_xing_xiufen"]
+    },
+    {
+      "case_id": "abandon_office_use_food",
+      "query": "弃官就食格 不用官星尽可伤 改用食伤格",
+      "expected_source_ids": ["ksrc_localtest_blind_abandon_office"]
+    },
+    {
+      "case_id": "semantic_useful_god_month",
+      "query": "为什么传统格局法取用神要先从月令入手，而不是随便挑一个五行",
+      "expected_source_ids": ["ksrc_localtest_ziping_benyi_full"]
+    },
+    {
+      "case_id": "semantic_direct_reading",
+      "query": "不计算旺衰，也不取用神，只根据四柱八个字和时柱组合直接提取信息的方法",
+      "expected_source_ids": ["ksrc_localtest_blind_zhongyuan"]
+    },
+    {
+      "case_id": "semantic_tomb_storage",
+      "query": "辰戌丑未在实际断命中怎样表示收藏、得到、控制和入墓",
+      "expected_source_ids": ["ksrc_localtest_blind_renfuhong_tombs"]
+    },
+    {
+      "case_id": "semantic_prison_release",
+      "query": "怎样从亥丑辰、枭神夺食和冲穿墓库判断入狱与出狱",
+      "expected_source_ids": ["ksrc_localtest_blind_prison_mourning"]
+    },
+    {
+      "case_id": "semantic_parent_timing",
+      "query": "正印代表母亲偏财代表父亲，父母星落死绝墓地时怎样找早年应期",
+      "expected_source_ids": ["ksrc_localtest_blind_xing_xiufen"]
+    },
+    {
+      "case_id": "semantic_stem_colors",
+      "query": "甲乙木、丙丁火、庚辛金分别对应什么方位颜色和身体部位",
+      "expected_source_ids": ["ksrc_localtest_blind_yang_qingjuan_244"]
+    },
+    {
+      "case_id": "semantic_guest_host_work",
+      "query": "盲派论命里的宾主、体用和做功应该如何理解",
+      "expected_source_ids": ["ksrc_localtest_blind_duan_jianye_2016"]
+    },
+    {
+      "case_id": "semantic_abandon_office",
+      "query": "官格被食伤破坏后，能否放弃官星改以食伤成格",
+      "expected_source_ids": ["ksrc_localtest_blind_abandon_office"]
+    }
+  ]
+}

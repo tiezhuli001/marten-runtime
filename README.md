@@ -28,6 +28,25 @@
 - Provider 韧性：支持 OpenAI-compatible provider、retry/backoff 与 profile failover
 - 运维面：提供 diagnostics、automation、eval 等轻量 HTTP 页面和 API
 
+## Knowledge/RAG 管理面
+
+配置 `KNOWLEDGE_OPERATOR_TOKEN` 后，可访问 `/knowledge/console` 管理经典书籍知识库。
+
+![Knowledge Console 草稿箱](./docs/assets/knowledge-console-draft.png)
+
+当前流程：
+
+```text
+上传文件 -> 调整 chunk/profile -> 预览全部 chunks -> 保存草稿
+         -> 查看导入任务 -> 审核发布 -> bazi-theory 正式检索
+```
+
+- `bazi-theory-sandbox` 在页面中显示为“草稿箱”，不参与 Bazi Agent 解盘。
+- `bazi-theory` 在页面中显示为“正式库”，是 Bazi Agent 唯一检索的理论 namespace。
+- chunk 参数按上传保存；embedding 使用 namespace 级命名 profile，同一 namespace 不混用向量空间。
+- 检索试查支持临时 `top_k`、candidate pool 和 ranking weights，不改变生产默认值。
+- embedding profile 切换需要完整 namespace reindex；新向量全部生成成功后才替换旧索引。
+
 ## 运行主链
 
 ```mermaid
@@ -188,6 +207,7 @@ PYTHONPATH=src python -m marten_runtime.interfaces.http.serve
 - `POST /sessions`
 - `POST /messages`
 - `GET /automations`
+- `GET /knowledge/console`
 - `GET /diagnostics/runtime`
 - `GET /diagnostics/session/{session_id}`
 - `GET /diagnostics/run/{run_id}`

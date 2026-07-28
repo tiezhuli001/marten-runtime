@@ -73,6 +73,7 @@ flowchart LR
 | 8 | 执行面 | `main`、agent-owned assets、lightweight subagents、执行型默认 prompt |
 | 9 | 可观测性硬化 | Langfuse tracing、run/trace correlation、实链验证 |
 | 10 | 评测运维面 | 离线评测、专项评分族、稳定性 compare、HTML 报告 |
+| 11 | Knowledge/RAG 产品化 | 可审计语料、索引 profile、草稿审核、正式检索与 Console |
 
 ## 当前 agent 资产模型
 
@@ -117,6 +118,11 @@ flowchart LR
   - `global` / `agent` / `workspace` scope filters
   - FTS5 recall with prompt budget and priority rules
   - generated `MEMORY.md` exports and explicit edited-Markdown import
+- **Knowledge/RAG 面**
+  - namespace-scoped sources、chunks、FTS5、sqlite-vec 与 reranker
+  - versioned corpus manifest、真实语料 retrieval eval 与引用证据
+  - 草稿箱、正式库、来源审核与 Knowledge Console
+  - 上传级 chunk profile 与 namespace 级 embedding profile
 
 当前部署相关的结论也很直接：
 
@@ -185,6 +191,7 @@ flowchart LR
 ### 关键引用
 
 - [`README.md`](../README.md)
+
 - [`Agent Runtime Harness Design`](./archive/2026-03-29-private-agent-harness-design.md)
 
 ## 第 2 阶段：Agent Runtime Harness 成为第一层正式基线
@@ -687,6 +694,69 @@ flowchart LR
 - [`archive/plans/2026-05-01-eval-foundation-summary.md`](./archive/plans/2026-05-01-eval-foundation-summary.md)
 - [`README.md`](../README.md)
 
+## 第 11 阶段：Knowledge/RAG 从 Runtime Capability 进入可管理语料阶段
+
+### 时间范围
+
+2026-05-19 到 2026-07-28。
+
+### 新增了什么
+
+Knowledge 首先作为 namespace-scoped builtin capability 进入主链，提供 source、chunk、FTS/vector/hybrid retrieval、rerank、引用、ingest job、delete、reindex 与 diagnostics。随后增加了面向真实语料的管理与证明能力：
+
+- versioned corpus manifest、digest 校验、幂等发布和 drift 报告
+- 真实语料 Recall@K、MRR、首来源和引用完整率评估
+- 受 Operator token 保护的 Knowledge Console
+- 上传内容和全部 chunks 预览
+- 草稿箱、来源审核与正式库发布
+- 上传级 chunk profile
+- namespace 级命名 embedding profile
+- profile 切换失败时保留原索引
+- 单次检索参数试查
+- 原文、注解、课程和命例的证据类型分层
+- 六本经典的结构化 v2 release 与概念问答评估
+- 最多 3 条证据、单次模型请求的 Console AI 解释
+- Knowledge 模型启动预热与分阶段耗时
+
+![Knowledge Console 草稿箱](./assets/knowledge-console-draft.png)
+
+### 为什么重要
+
+底层 RAG 能力能检索并不等于语料可治理。正式应用还需要回答：内容来自哪里、使用哪组分段和向量配置、是否审核、检索质量是否可重复，以及错误索引切换会不会破坏现有查询。
+
+本阶段把这些责任放在 KnowledgeService、Operator API、corpus tooling 和轻量 Console 中，没有把 runtime 主链改成内容管理平台。Bazi Agent 仍通过原有 builtin tool 调用检索，只读取正式 `bazi-theory`；草稿不会进入解盘上下文。
+
+![Knowledge 来源审核](./assets/knowledge-console-review.png)
+
+![Knowledge Console AI 解释](./assets/knowledge-console-ai-answer.png)
+
+### 这一阶段的主链
+
+```mermaid
+flowchart LR
+    A["Operator Upload"] --> B["Preview + Chunk Profile"]
+    B --> C["Draft Namespace"]
+    C --> D["Review"]
+    D --> E["Formal Namespace"]
+    E --> F["FTS + Vector Retrieval"]
+    F --> G["Bazi Agent Evidence"]
+    F --> K["Console AI Explanation"]
+
+    H["Corpus Manifest + Eval"] -.-> E
+    I["Namespace Embedding Profile"] -.-> F
+    J["Knowledge Console"] -.-> B
+    J -.-> D
+    L["Evidence Kind + Timings"] -.-> F
+```
+
+### 关键引用
+
+- [Knowledge/RAG Runtime](../.cs/spec/knowledge-runtime.md)
+- [Knowledge 经典书籍层与管理入口](../.cs/epics/002-o-knowledge-corpus-quality/spec.md)
+- [Knowledge/RAG 选型与演进记录](../.cs/notes/005-knowledge-runtime-selection-history.md)
+- [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
+- [`CONFIG_SURFACES.md`](./CONFIG_SURFACES.md)
+
 ## 明确未构建的能力
 
 | Capability | 状态 | 为什么暂不进入基线 |
@@ -715,7 +785,7 @@ flowchart LR
 
 ## Harness 工程化经验总结
 
-这 10 个阶段可以压缩成一组可复用的 agent runtime harness 工程化经验：
+这 11 个阶段可以压缩成一组可复用的 agent runtime harness 工程化经验：
 
 1. **先把一条执行主链打稳，再考虑横向扩张**
    - 这个仓库一直反复回到同一条路径：`channel -> binding -> agent -> runtime -> LLM -> tool/skill -> channel`。

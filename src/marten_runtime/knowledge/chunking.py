@@ -74,6 +74,9 @@ def _split_buffer(
     start: int,
 ) -> list[KnowledgeChunk]:
     text = buffer.strip()
+    chunk_metadata = {**dict(metadata or {})}
+    if heading:
+        chunk_metadata["chapter"] = heading
     if len(text) <= config.max_chars:
         return [
             KnowledgeChunk.new(
@@ -82,7 +85,7 @@ def _split_buffer(
                 ordinal=start,
                 text=text,
                 heading=heading,
-                metadata=metadata,
+                metadata=chunk_metadata,
                 token_estimate=max(1, len(text) // 2),
             )
         ]
@@ -101,7 +104,7 @@ def _split_buffer(
                 ordinal=start + len(chunks),
                 text=part,
                 heading=heading,
-                metadata=metadata,
+                metadata=chunk_metadata,
                 token_estimate=max(1, len(part) // 2),
             )
         )

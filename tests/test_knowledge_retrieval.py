@@ -81,6 +81,20 @@ class KnowledgeRetrievalTests(unittest.TestCase):
 
         self.assertEqual([item.chunk_id for item in result.results], [chunk.chunk_id])
 
+    def test_theory_search_excludes_course_notes_and_cases_by_default(self) -> None:
+        store, source, original = _store_with_chunk("月劫格以月令为据", metadata={"evidence_kind": "classical_original"})
+        notes = KnowledgeChunk.new(namespace="fanqie", source_id=source.source_id, ordinal=1, text="月劫格课程笔记", metadata={"evidence_kind": "course_notes"})
+        case = KnowledgeChunk.new(namespace="fanqie", source_id=source.source_id, ordinal=2, text="月劫格命例", metadata={"evidence_kind": "case_record"})
+        store.replace_chunks("fanqie", source.source_id, [original, notes, case])
+        retriever = KnowledgeRetriever(store)
+
+        default_result = retriever.search(namespace="fanqie", query="月劫格", embedding_config_hash="missing", query_vector=[], top_k=5)
+        notes_result = retriever.search(namespace="fanqie", query="月劫格", embedding_config_hash="missing", query_vector=[], top_k=5, filters={"evidence_kind": "course_notes"})
+
+        self.assertEqual([item.chunk_id for item in default_result.results], [original.chunk_id])
+        self.assertEqual([item.chunk_id for item in notes_result.results], [notes.chunk_id])
+        self.assertGreaterEqual(default_result.total_ms, default_result.fts_ms)
+
     def test_reranker_top_n_limits_configured_rerank_scope(self) -> None:
         store, source, chunk = _store_with_chunk("师父在山门出现")
         other_chunks = [
@@ -98,9 +112,29 @@ class KnowledgeRetrievalTests(unittest.TestCase):
         result = retriever.search(namespace="fanqie", query="师父", embedding_config_hash="h", query_vector=[1.0, 0.0], top_k=5)
 
         self.assertEqual(reranker.top_n_values, [2])
-        self.assertEqual(len(result.results), 5)
+        self.assertLessEqual(len(result.results), 5)
         self.assertEqual(len(reranker.passage_values[0]), 2)
-        self.assertTrue(any("候选" in item.text for item in result.results[2:]))
+        self.assertTrue(any("候选" in item.text for item in result.results))
+
+    def test_search_limits_repeated_chunks_from_one_source(self) -> None:
+        store, source, first = _store_with_chunk("月劫格 条件一")
+        repeated = [
+            KnowledgeChunk.new(namespace="fanqie", source_id=source.source_id, ordinal=index + 1, text=f"月劫格 条件{index + 2}")
+            for index in range(4)
+        ]
+        other_source = KnowledgeSource.new(namespace="fanqie", title="Other", kind="text", uri="local://other")
+        other = KnowledgeChunk.new(namespace="fanqie", source_id=other_source.source_id, ordinal=0, text="月劫格 另一来源")
+        store.upsert_source(other_source)
+        store.replace_chunks("fanqie", source.source_id, [first, *repeated])
+        store.replace_chunks("fanqie", other_source.source_id, [other])
+        retriever = KnowledgeRetriever(store)
+
+        result = retriever.search(namespace="fanqie", query="月劫格", embedding_config_hash="missing", query_vector=[], top_k=5)
+
+        counts = {}
+        for item in result.results:
+            counts[item.source_id] = counts.get(item.source_id, 0) + 1
+        self.assertLessEqual(max(counts.values()), 2)
 
     def test_reranker_top_n_uses_highest_weighted_candidates(self) -> None:
         store, source, chunk = _store_with_chunk("师父 强相关")

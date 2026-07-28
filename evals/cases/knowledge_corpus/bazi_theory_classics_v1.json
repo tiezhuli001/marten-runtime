@@ -1,0 +1,79 @@
+{
+  "schema_version": "knowledge.corpus.gold.v1",
+  "release_id": "bazi-theory-classics-selected-v1",
+  "namespace": "bazi-theory",
+  "cases": [
+    {
+      "case_id": "qiongtong_jia_spring",
+      "query": "正月甲木初春余寒丙癸",
+      "expected_source_ids": ["ksrc_bazi_classics_qiongtong_v1"],
+      "expected_headings": ["古籍原文"]
+    },
+    {
+      "case_id": "qiongtong_boundary",
+      "query": "富贵双全不能直接断定现实财富社会地位",
+      "expected_source_ids": ["ksrc_bazi_classics_qiongtong_v1"],
+      "expected_headings": ["Marten 释义"]
+    },
+    {
+      "case_id": "ditiansui_pattern",
+      "query": "财官印绶分偏正食伤格局",
+      "expected_source_ids": ["ksrc_bazi_classics_ditiansui_v1"],
+      "expected_headings": ["古籍原文"]
+    },
+    {
+      "case_id": "ditiansui_wealth_flow",
+      "query": "财气通门户伤官流通",
+      "expected_source_ids": ["ksrc_bazi_classics_ditiansui_v1"],
+      "expected_headings": ["古籍原文", "Marten 释义"]
+    },
+    {
+      "case_id": "shenfeng_disease_remedy",
+      "query": "有病方为贵格中去病",
+      "expected_source_ids": ["ksrc_bazi_classics_shenfeng_v1"],
+      "expected_headings": ["古籍原文"]
+    },
+    {
+      "case_id": "shenfeng_medical_boundary",
+      "query": "病药属于命理结构术语不对应医学诊断",
+      "expected_source_ids": ["ksrc_bazi_classics_shenfeng_v1"],
+      "expected_headings": ["Marten 释义"]
+    },
+    {
+      "case_id": "yuanhai_day_month",
+      "query": "以日为主月为提纲时为辅佐",
+      "expected_source_ids": ["ksrc_bazi_classics_yuanhai_v1"],
+      "expected_headings": ["古籍原文"]
+    },
+    {
+      "case_id": "yuanhai_strength_boundary",
+      "query": "旺衰不能只按五行数量判断",
+      "expected_source_ids": ["ksrc_bazi_classics_yuanhai_v1"],
+      "expected_headings": ["Marten 释义"]
+    },
+    {
+      "case_id": "ziping_useful_god",
+      "query": "八字用神专求月令财官印食顺用",
+      "expected_source_ids": ["ksrc_bazi_classics_ziping_v1"],
+      "expected_headings": ["古籍原文"]
+    },
+    {
+      "case_id": "ziping_structure",
+      "query": "用神不是只取一个五行名称成格破格救应",
+      "expected_source_ids": ["ksrc_bazi_classics_ziping_v1"],
+      "expected_headings": ["Marten 释义"]
+    },
+    {
+      "case_id": "sanming_reading_order",
+      "query": "看命先看月支有无财官月令为命",
+      "expected_source_ids": ["ksrc_bazi_classics_sanming_v1"],
+      "expected_headings": ["古籍原文"]
+    },
+    {
+      "case_id": "sanming_evidence_layers",
+      "query": "观察顺序不能只凭月支或单一十神作结论",
+      "expected_source_ids": ["ksrc_bazi_classics_sanming_v1"],
+      "expected_headings": ["Marten 释义"]
+    }
+  ]
+}
