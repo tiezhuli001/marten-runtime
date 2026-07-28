@@ -339,6 +339,8 @@ def build_http_runtime(
         repo_root=resolved_repo_root,
     )
     knowledge_service = KnowledgeService(knowledge_config)
+    if knowledge_config.prewarm_on_start:
+        knowledge_service.prewarm_models()
     bazi_bridge_manager = BaziBridgeManager(repo_root=resolved_repo_root, env=resolved_env)
     default_profile_name, default_profile = resolve_model_profile(
         models_config, default_agent.model_profile

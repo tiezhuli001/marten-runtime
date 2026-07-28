@@ -65,6 +65,8 @@
   - 提供真实 `Feishu -> LLM -> MCP -> Feishu` 链路的检查清单
 - `2026-07-23-bazi-agent-design.md`
   - Bazi Agent、builtin Bazi、bundled `taibu-core`、Knowledge/RAG 与领域 Skill 组合方案
+- `../.cs/spec/knowledge-runtime.md`
+  - Knowledge/RAG 当前能力、语料发布、Console、索引 profile、检索评估与延期性能基准
 - `archive/`
   - 保留少量仍有追溯价值的历史设计、审计和计划
 
@@ -139,6 +141,16 @@ PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
 - 单 case 详情：`cases/<case_id>.json`
 
 边界：eval 运维面只复用 eval harness、SQLite store、报告层和 HTTP diagnostics；`/messages` 主链仍由 runtime loop 与 LLM 工具选择驱动。
+
+## Knowledge 运维入口
+
+配置 `KNOWLEDGE_OPERATOR_TOKEN` 后访问 `/knowledge/console`。Console 提供草稿上传、chunk/profile 预览、导入任务、来源审核、正式库、检索试查和 reindex。
+
+![Knowledge 来源审核](./assets/knowledge-console-review.png)
+
+![Knowledge Console AI 解释](./assets/knowledge-console-ai-answer.png)
+
+操作与架构约束见 [Knowledge/RAG Runtime](../.cs/spec/knowledge-runtime.md)。
 
 ## 当前状态
 

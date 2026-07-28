@@ -4,8 +4,8 @@ import time
 import unittest
 from pathlib import Path
 
-from marten_runtime.knowledge.config import load_knowledge_config
-from marten_runtime.knowledge.embeddings import EmbeddingResult, EmbeddingStatus
+from marten_runtime.knowledge.config import KnowledgeEmbeddingConfig, embedding_config_hash, load_knowledge_config
+from marten_runtime.knowledge.embeddings import EmbeddingResult, EmbeddingStatus, FakeEmbeddingAdapter
 from marten_runtime.knowledge.models import KnowledgeSource
 from marten_runtime.knowledge.service import KnowledgeService
 
@@ -383,6 +383,86 @@ reranker_weight = 2.0
         self.assertEqual(reindex["chunk_count"], ingest["chunk_count"])
         self.assertEqual(reindex["embedding_config_hash"], service.embedding_config_hash)
 
+    def test_namespace_embedding_profile_change_replaces_vectors_atomically(self) -> None:
+        service = self._service()
+        service.ingest_text(
+            namespace="fanqie",
+            source={"title": "Book", "kind": "text", "uri": "local://book", "text": "师父在山门出现"},
+        )
+        alternate = KnowledgeEmbeddingConfig(
+            provider="fake",
+            model="fake-embedding-768",
+            local_path="models/fake-embedding-768",
+            dimension=768,
+        )
+        service.embedding_profiles["alternate"] = alternate
+        service.embedding_profile_hashes["alternate"] = embedding_config_hash(alternate)
+        service._embedding_adapters["alternate"] = FakeEmbeddingAdapter(
+            dimension=768,
+            model_id=alternate.model,
+        )
+
+        result = service.reindex(namespace="fanqie", embedding_profile_id="alternate")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(service.store.get_namespace_embedding_profile_id("fanqie"), "alternate")
+        self.assertEqual(service.store.list_embeddings("fanqie", service.embedding_config_hash), [])
+        records = service.store.list_embeddings("fanqie", service.embedding_profile_hashes["alternate"])
+        self.assertTrue(records)
+        self.assertEqual({record.dimension for record in records}, {768})
+
+    def test_approve_source_rejects_missing_evidence_kind(self) -> None:
+        service = self._service()
+        ingest = service.ingest_text(
+            namespace="bazi-theory-sandbox",
+            source={
+                "title": "Unclassified",
+                "kind": "text",
+                "uri": "local://unclassified",
+                "text": "月令为先。",
+            },
+        )
+
+        result = service.approve_source(
+            draft_namespace="bazi-theory-sandbox",
+            source_id=str(ingest["source_id"]),
+            target_namespace="bazi-theory",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_code"], "KNOWLEDGE_APPROVAL_EVIDENCE_KIND_REQUIRED")
+        self.assertIsNotNone(
+            service.store.get_source("bazi-theory-sandbox", str(ingest["source_id"]))
+        )
+        self.assertIsNone(service.store.get_source("bazi-theory", str(ingest["source_id"])))
+
+    def test_failed_embedding_profile_change_preserves_current_index(self) -> None:
+        service = self._service()
+        service.ingest_text(
+            namespace="fanqie",
+            source={"title": "Book", "kind": "text", "uri": "local://book", "text": "师父在山门出现"},
+        )
+        original = service.store.list_embeddings("fanqie", service.embedding_config_hash)
+        alternate = KnowledgeEmbeddingConfig(
+            provider="fake",
+            model="missing-embedding",
+            local_path="models/missing",
+            dimension=768,
+        )
+        service.embedding_profiles["missing"] = alternate
+        service.embedding_profile_hashes["missing"] = embedding_config_hash(alternate)
+        service._embedding_adapters["missing"] = MissingEmbeddingAdapter()
+
+        result = service.reindex(namespace="fanqie", embedding_profile_id="missing")
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(service.store.get_namespace_embedding_profile_id("fanqie"), "default")
+        self.assertEqual(
+            [record.chunk_id for record in service.store.list_embeddings("fanqie", service.embedding_config_hash)],
+            [record.chunk_id for record in original],
+        )
+        self.assertEqual(service.store.list_embeddings("fanqie", service.embedding_profile_hashes["missing"]), [])
+
     def test_reindex_reports_missing_source_id(self) -> None:
         service = self._service()
 
@@ -436,6 +516,18 @@ reranker_weight = 2.0
         self.assertTrue(unloaded["reranker_unloaded"])
         self.assertEqual(unloaded["embedding"]["status"], "not_loaded")
         self.assertEqual(unloaded["reranker"]["status"], "not_loaded")
+
+    def test_prewarm_loads_embedding_and_reranker_and_marks_service_ready(self) -> None:
+        service = self._service()
+
+        result = service.prewarm_models()
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(service.ready)
+        status = service.model_status()
+        self.assertEqual(status["embedding"]["status"], "loaded")
+        self.assertEqual(status["reranker"]["status"], "loaded")
+        self.assertTrue(status["prewarm"]["ready"])
 
     def test_idle_ttl_unloads_models_on_tool_boundary(self) -> None:
         service = self._service()

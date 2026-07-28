@@ -264,6 +264,7 @@ def _knowledge_diagnostics(runtime: HTTPRuntimeState) -> dict[str, object]:
         "sqlite_vec": {"available": service.store.sqlite_vec_available()},
         "embedding": model_status["embedding"],
         "reranker": model_status["reranker"],
+        "prewarm": model_status["prewarm"],
         "job_recovery": service.job_recovery_status,
         "agent_scope": agent_scope,
     }

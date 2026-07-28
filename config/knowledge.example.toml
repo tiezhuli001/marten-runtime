@@ -1,7 +1,8 @@
 [knowledge]
 db_path = "data/knowledge/knowledge.sqlite3"
 default_namespace = "personal"
-model_idle_ttl_seconds = 300
+model_idle_ttl_seconds = 0
+prewarm_on_start = true
 file_encoding = "auto"
 
 [knowledge.chunking]
@@ -20,6 +21,10 @@ local_path = "data/models/embeddings/BAAI/bge-small-zh-v1.5"
 dimension = 512
 allow_remote_download = false
 use_fp16 = false
+
+# 可选的命名 embedding profile 通过
+# [knowledge.embedding_profiles.<profile_id>] 声明。Console 只能从已配置
+# profile 中选择；切换 namespace profile 时必须执行完整 namespace reindex。
 
 [knowledge.reranker]
 enabled = true

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import tomllib
 from pathlib import Path
 from typing import ClassVar
@@ -71,9 +72,11 @@ class KnowledgeRuntimeConfig(BaseModel):
     repo_root: str = ""
     default_namespace: str
     model_idle_ttl_seconds: float = Field(default=300.0, ge=0.0)
+    prewarm_on_start: bool = False
     file_encoding: str = "auto"
     chunking: KnowledgeChunkingConfig
     embedding: KnowledgeEmbeddingConfig
+    embedding_profiles: dict[str, KnowledgeEmbeddingConfig] = Field(default_factory=dict)
     reranker: KnowledgeRerankerConfig
     vector_store: KnowledgeVectorStoreConfig
     search: KnowledgeSearchConfig
@@ -84,7 +87,12 @@ class KnowledgeRuntimeConfig(BaseModel):
             raise ValueError("default_namespace is required")
         if not self.file_encoding.strip():
             raise ValueError("file_encoding is required")
+        if any(not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", profile_id) for profile_id in self.embedding_profiles):
+            raise ValueError("embedding profile ids must use lowercase letters, digits, '_' or '-'")
         return self
+
+    def resolved_embedding_profiles(self) -> dict[str, KnowledgeEmbeddingConfig]:
+        return {"default": self.embedding, **self.embedding_profiles}
 
 
 class KnowledgeConfigFile(BaseModel):

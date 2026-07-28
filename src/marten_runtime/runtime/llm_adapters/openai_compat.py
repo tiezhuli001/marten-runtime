@@ -357,6 +357,8 @@ class OpenAICompatLLMClient:
             "input": input_items,
             "text": {"format": {"type": "text"}, "verbosity": "medium"},
         }
+        if request.max_completion_tokens is not None:
+            body["max_output_tokens"] = request.max_completion_tokens
         if stream:
             body["stream"] = True
         if instructions:

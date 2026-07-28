@@ -1,0 +1,2204 @@
+{
+  "cases": [
+    {
+      "actual_rank": 1,
+      "actual_source_ids": [
+        "ksrc_bazi_classics_qiongtong_v1",
+        "ksrc_bazi_classics_qiongtong_v1",
+        "ksrc_bazi_classics_yuanhai_v1",
+        "ksrc_bazi_classics_sanming_v1",
+        "ksrc_bazi_classics_sanming_v1"
+      ],
+      "case_id": "qiongtong_jia_spring",
+      "citation_complete": true,
+      "degraded_reason": "",
+      "expected_headings": [
+        "古籍原文"
+      ],
+      "expected_source_ids": [
+        "ksrc_bazi_classics_qiongtong_v1"
+      ],
+      "forbidden_hits": [],
+      "heading_match": true,
+      "query": "正月甲木初春余寒丙癸",
+      "rerank_status": "available",
+      "results": [
+        {
+          "chunk_id": "kchk_a3f866eac8c2",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论甲木·三春甲木",
+            "content_bytes": 398,
+            "content_sha256": "a4e5a99aa05dd921c6102664ace26401b972e33710a30ae434b9147385c16a10",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 2294674 (2023-06-14)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "tiaohou",
+            "provenance": "Verified against Chinese Wikisource revision 2294674; local file contains a selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-tiaohou",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=穷通宝鉴&oldid=2294674#三春甲木",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "穷通宝鉴"
+          },
+          "score": 1.0595667410696499,
+          "score_parts": {
+            "rerank": 0.9988093376159668,
+            "vector": 0.6552730995244966
+          },
+          "source_id": "ksrc_bazi_classics_qiongtong_v1",
+          "source_title": "穷通宝鉴：论甲木·三春甲木",
+          "text": "正月甲木，初春尚有余寒，得丙癸逢，富贵双全。"
+        },
+        {
+          "chunk_id": "kchk_f1809a5822fc",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论甲木·三春甲木",
+            "content_bytes": 398,
+            "content_sha256": "a4e5a99aa05dd921c6102664ace26401b972e33710a30ae434b9147385c16a10",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 2294674 (2023-06-14)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "tiaohou",
+            "provenance": "Verified against Chinese Wikisource revision 2294674; local file contains a selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-tiaohou",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=穷通宝鉴&oldid=2294674#三春甲木",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "穷通宝鉴"
+          },
+          "score": 0.9942406493527441,
+          "score_parts": {
+            "rerank": 0.9821021556854248,
+            "vector": 0.5577620734053578
+          },
+          "source_id": "ksrc_bazi_classics_qiongtong_v1",
+          "source_title": "穷通宝鉴：论甲木·三春甲木",
+          "text": "本条提供正月甲木关注余寒及丙、癸配置的调候线索。原文中的“富贵双全”保留为历史文本内容，解盘时仍需结合全局透干、通根、制化与行运，且不能据此直接断定现实财富或社会地位。"
+        },
+        {
+          "chunk_id": "kchk_a96c93c2ee17",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论日为主；论月令",
+            "content_bytes": 566,
+            "content_sha256": "52ea0062de43f72cbaa4a1093accca5d6ab7d6b5d67ec45a325bde42544e374a",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 2593607 (2025-08-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "day-master-and-month-command",
+            "provenance": "Verified against Chinese Wikisource revision 2593607; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-foundation",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=淵海子平&oldid=2593607#论日为主",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "渊海子平"
+          },
+          "score": 0.3298114557460228,
+          "score_parts": {
+            "rerank": 0.07130073755979538,
+            "vector": 0.5089107990075745
+          },
+          "source_id": "ksrc_bazi_classics_yuanhai_v1",
+          "source_title": "渊海子平：论日为主与月令",
+          "text": "以日为主，年为本，月为提纲，时为辅佐。\n\n以日为主，大要看日加临于甚度，或身旺，或身弱；又看地支有何格局，后看月令中五行何者旺，再看岁运，逐次消详。"
+        },
+        {
+          "chunk_id": "kchk_4cce9519ac46",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 0.3097653847726141,
+          "score_parts": {
+            "rerank": 0.04797864705324173,
+            "vector": 0.5021460578824453
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "本条强调先以日干为主、月令为提纲，再检查财官印食煞伤等结构以及年时的配合。它规定的是观察顺序，不是允许只凭月支或单一十神作结论。原局成败、干支生克制化和岁运引动仍须逐层核对。"
+        },
+        {
+          "chunk_id": "kchk_367698c6e103",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 0.3077161618305668,
+          "score_parts": {
+            "rerank": 0.03552241623401642,
+            "vector": 0.5142735826668278
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "大凡看命，先看月支有无财官，方看其他；月令为命也。年为本，日为主。凡看命专以日干为主，取提纲所用之物为命。"
+        }
+      ],
+      "retrieval_mode": "hybrid_rerank",
+      "vector_status": "available"
+    },
+    {
+      "actual_rank": 1,
+      "actual_source_ids": [
+        "ksrc_bazi_classics_qiongtong_v1",
+        "ksrc_bazi_classics_shenfeng_v1",
+        "ksrc_bazi_classics_qiongtong_v1",
+        "ksrc_bazi_classics_ditiansui_v1",
+        "ksrc_bazi_classics_ditiansui_v1"
+      ],
+      "case_id": "qiongtong_boundary",
+      "citation_complete": true,
+      "degraded_reason": "",
+      "expected_headings": [
+        "Marten 释义"
+      ],
+      "expected_source_ids": [
+        "ksrc_bazi_classics_qiongtong_v1"
+      ],
+      "forbidden_hits": [],
+      "heading_match": true,
+      "query": "富贵双全不能直接断定现实财富社会地位",
+      "rerank_status": "available",
+      "results": [
+        {
+          "chunk_id": "kchk_f1809a5822fc",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论甲木·三春甲木",
+            "content_bytes": 398,
+            "content_sha256": "a4e5a99aa05dd921c6102664ace26401b972e33710a30ae434b9147385c16a10",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 2294674 (2023-06-14)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "tiaohou",
+            "provenance": "Verified against Chinese Wikisource revision 2294674; local file contains a selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-tiaohou",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=穷通宝鉴&oldid=2294674#三春甲木",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "穷通宝鉴"
+          },
+          "score": 0.9960077875597737,
+          "score_parts": {
+            "rerank": 0.9988143444061279,
+            "vector": 0.5397049935917894
+          },
+          "source_id": "ksrc_bazi_classics_qiongtong_v1",
+          "source_title": "穷通宝鉴：论甲木·三春甲木",
+          "text": "本条提供正月甲木关注余寒及丙、癸配置的调候线索。原文中的“富贵双全”保留为历史文本内容，解盘时仍需结合全局透干、通根、制化与行运，且不能据此直接断定现实财富或社会地位。"
+        },
+        {
+          "chunk_id": "kchk_03b268e65c18",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "病药说类",
+            "content_bytes": 489,
+            "content_sha256": "d60cca2be5219b7294e66254955744902f168cac807f3a9e7f5d580296b2176f",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 1378606 (2018-03-02)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "disease-remedy",
+            "provenance": "Verified against Chinese Wikisource revision 1378606; local file contains a selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-disease-remedy",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=神峰通考&oldid=1378606#病药说类",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "神峰通考"
+          },
+          "score": 0.7986695735167402,
+          "score_parts": {
+            "rerank": 0.7526261806488037,
+            "vector": 0.4942386310228684
+          },
+          "source_id": "ksrc_bazi_classics_shenfeng_v1",
+          "source_title": "神峰通考：病药说类",
+          "text": "同篇把“病”解释为原局中造成妨害的因素，把“药”解释为能够解除该妨害的因素。本条用于建立病、药与去病的分析顺序；其中病药属于命理结构术语，不对应医学诊断，财禄措辞也不直接转换成现实财富结论。分析必须写明受损对象、作用关系与解除条件。"
+        },
+        {
+          "chunk_id": "kchk_a3f866eac8c2",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论甲木·三春甲木",
+            "content_bytes": 398,
+            "content_sha256": "a4e5a99aa05dd921c6102664ace26401b972e33710a30ae434b9147385c16a10",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 2294674 (2023-06-14)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "tiaohou",
+            "provenance": "Verified against Chinese Wikisource revision 2294674; local file contains a selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-tiaohou",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=穷通宝鉴&oldid=2294674#三春甲木",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "穷通宝鉴"
+          },
+          "score": 0.5227450111642051,
+          "score_parts": {
+            "rerank": 0.36439111828804016,
+            "vector": 0.4866749606592308
+          },
+          "source_id": "ksrc_bazi_classics_qiongtong_v1",
+          "source_title": "穷通宝鉴：论甲木·三春甲木",
+          "text": "正月甲木，初春尚有余寒，得丙癸逢，富贵双全。"
+        },
+        {
+          "chunk_id": "kchk_227b2b4fcf0c",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "格局论；贵贱贫富吉凶寿夭论",
+            "content_bytes": 509,
+            "content_sha256": "7ea4ba2d98437c465f549d7df4e9942a842e764f6235b3e60c03f84c3759244b",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcriptions, revisions 844363 (2017-03-23) and 844408 (2017-03-24)",
+            "license": "Public-domain classical work; Wikisource transcriptions under CC-BY-SA-4.0",
+            "method": "pattern-and-wealth-flow",
+            "provenance": "Verified against Chinese Wikisource revisions 844363 and 844408; local file combines two short excerpts with Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern-and-flow",
+            "secondary_source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/41&oldid=844408",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/06&oldid=844363",
+            "verification_status": "verified_against_fixed_public_transcriptions",
+            "work": "滴天髓"
+          },
+          "score": 0.43743242608472266,
+          "score_parts": {
+            "rerank": 0.18966369330883026,
+            "vector": 0.5539415286700754
+          },
+          "source_id": "ksrc_bazi_classics_ditiansui_v1",
+          "source_title": "滴天髓：格局与财气流通",
+          "text": "第一条要求先分辨财、官、印、食伤及其偏正关系，再进入格局判断。第二条论富不只数明见财星，还检查身能否任财、伤官能否使财气流通，以及财、官、印之间能否形成可用结构。现实收入与资产结论仍需结合原局强弱、成格破格、当前大运和现实信息核验。"
+        },
+        {
+          "chunk_id": "kchk_8508866b6eb1",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "格局论；贵贱贫富吉凶寿夭论",
+            "content_bytes": 509,
+            "content_sha256": "7ea4ba2d98437c465f549d7df4e9942a842e764f6235b3e60c03f84c3759244b",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcriptions, revisions 844363 (2017-03-23) and 844408 (2017-03-24)",
+            "license": "Public-domain classical work; Wikisource transcriptions under CC-BY-SA-4.0",
+            "method": "pattern-and-wealth-flow",
+            "provenance": "Verified against Chinese Wikisource revisions 844363 and 844408; local file combines two short excerpts with Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern-and-flow",
+            "secondary_source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/41&oldid=844408",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/06&oldid=844363",
+            "verification_status": "verified_against_fixed_public_transcriptions",
+            "work": "滴天髓"
+          },
+          "score": 0.4078428866138284,
+          "score_parts": {
+            "rerank": 0.16829264163970947,
+            "vector": 0.527341886301876
+          },
+          "source_id": "ksrc_bazi_classics_ditiansui_v1",
+          "source_title": "滴天髓：格局与财气流通",
+          "text": "財官印綬分偏正，兼論食傷格局定。\n\n何知其人富，財氣通門戶。"
+        }
+      ],
+      "retrieval_mode": "hybrid_rerank",
+      "vector_status": "available"
+    },
+    {
+      "actual_rank": 1,
+      "actual_source_ids": [
+        "ksrc_bazi_classics_ditiansui_v1",
+        "ksrc_bazi_classics_ziping_v1",
+        "ksrc_bazi_classics_ditiansui_v1",
+        "ksrc_bazi_classics_sanming_v1",
+        "ksrc_bazi_classics_ziping_v1"
+      ],
+      "case_id": "ditiansui_pattern",
+      "citation_complete": true,
+      "degraded_reason": "",
+      "expected_headings": [
+        "古籍原文"
+      ],
+      "expected_source_ids": [
+        "ksrc_bazi_classics_ditiansui_v1"
+      ],
+      "forbidden_hits": [],
+      "heading_match": true,
+      "query": "财官印绶分偏正食伤格局",
+      "rerank_status": "available",
+      "results": [
+        {
+          "chunk_id": "kchk_8508866b6eb1",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "格局论；贵贱贫富吉凶寿夭论",
+            "content_bytes": 509,
+            "content_sha256": "7ea4ba2d98437c465f549d7df4e9942a842e764f6235b3e60c03f84c3759244b",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcriptions, revisions 844363 (2017-03-23) and 844408 (2017-03-24)",
+            "license": "Public-domain classical work; Wikisource transcriptions under CC-BY-SA-4.0",
+            "method": "pattern-and-wealth-flow",
+            "provenance": "Verified against Chinese Wikisource revisions 844363 and 844408; local file combines two short excerpts with Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern-and-flow",
+            "secondary_source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/41&oldid=844408",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/06&oldid=844363",
+            "verification_status": "verified_against_fixed_public_transcriptions",
+            "work": "滴天髓"
+          },
+          "score": 1.0339576503244703,
+          "score_parts": {
+            "rerank": 0.996955156326294,
+            "vector": 0.6110709834473903
+          },
+          "source_id": "ksrc_bazi_classics_ditiansui_v1",
+          "source_title": "滴天髓：格局与财气流通",
+          "text": "財官印綬分偏正，兼論食傷格局定。\n\n何知其人富，財氣通門戶。"
+        },
+        {
+          "chunk_id": "kchk_b84044c87768",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论用神",
+            "content_bytes": 603,
+            "content_sha256": "9b3a50016a30a9f378b493e67b3347ab93f2f8b4e68a35a5a6ce9df417cce44d",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Text Project Wiki resource ctp:wb631975, chapter 974137; base edition unspecified",
+            "license": "Public-domain classical work; local normalized excerpt with verification link to the CTP Wiki transcription",
+            "method": "month-command-useful-god",
+            "provenance": "Verified on 2026-07-28 against Chinese Text Project resource ctp:wb631975, chapter 974137. CTP reports the electronic base edition as unspecified, so this release pins the local text by SHA256 and does not claim edition completeness.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern",
+            "source_url": "https://ctext.org/wiki.pl?if=gb&chapter=974137&remap=gb",
+            "verification_status": "verified_against_public_transcription_snapshot_with_edition_limitation",
+            "work": "子平真诠评注"
+          },
+          "score": 0.9872994342529655,
+          "score_parts": {
+            "rerank": 0.9837823510169983,
+            "vector": 0.5430032518928487
+          },
+          "source_id": "ksrc_bazi_classics_ziping_v1",
+          "source_title": "子平真诠评注：论用神",
+          "text": "八字用神，专求月令，以日干配月令地支，而生克不同，格局分焉。财官印食，此用神之善而顺用之者也；煞伤劫刃，用神之不善而逆用之者也。"
+        },
+        {
+          "chunk_id": "kchk_227b2b4fcf0c",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "格局论；贵贱贫富吉凶寿夭论",
+            "content_bytes": 509,
+            "content_sha256": "7ea4ba2d98437c465f549d7df4e9942a842e764f6235b3e60c03f84c3759244b",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcriptions, revisions 844363 (2017-03-23) and 844408 (2017-03-24)",
+            "license": "Public-domain classical work; Wikisource transcriptions under CC-BY-SA-4.0",
+            "method": "pattern-and-wealth-flow",
+            "provenance": "Verified against Chinese Wikisource revisions 844363 and 844408; local file combines two short excerpts with Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern-and-flow",
+            "secondary_source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/41&oldid=844408",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/06&oldid=844363",
+            "verification_status": "verified_against_fixed_public_transcriptions",
+            "work": "滴天髓"
+          },
+          "score": 0.9480382180496505,
+          "score_parts": {
+            "rerank": 0.9155985116958618,
+            "vector": 0.5583986542955405
+          },
+          "source_id": "ksrc_bazi_classics_ditiansui_v1",
+          "source_title": "滴天髓：格局与财气流通",
+          "text": "第一条要求先分辨财、官、印、食伤及其偏正关系，再进入格局判断。第二条论富不只数明见财星，还检查身能否任财、伤官能否使财气流通，以及财、官、印之间能否形成可用结构。现实收入与资产结论仍需结合原局强弱、成格破格、当前大运和现实信息核验。"
+        },
+        {
+          "chunk_id": "kchk_4cce9519ac46",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 0.9063446636794761,
+          "score_parts": {
+            "rerank": 0.8783451318740845,
+            "vector": 0.5300055843047582
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "本条强调先以日干为主、月令为提纲，再检查财官印食煞伤等结构以及年时的配合。它规定的是观察顺序，不是允许只凭月支或单一十神作结论。原局成败、干支生克制化和岁运引动仍须逐层核对。"
+        },
+        {
+          "chunk_id": "kchk_84c04c3444d3",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论用神",
+            "content_bytes": 603,
+            "content_sha256": "9b3a50016a30a9f378b493e67b3347ab93f2f8b4e68a35a5a6ce9df417cce44d",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Text Project Wiki resource ctp:wb631975, chapter 974137; base edition unspecified",
+            "license": "Public-domain classical work; local normalized excerpt with verification link to the CTP Wiki transcription",
+            "method": "month-command-useful-god",
+            "provenance": "Verified on 2026-07-28 against Chinese Text Project resource ctp:wb631975, chapter 974137. CTP reports the electronic base edition as unspecified, so this release pins the local text by SHA256 and does not claim edition completeness.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern",
+            "source_url": "https://ctext.org/wiki.pl?if=gb&chapter=974137&remap=gb",
+            "verification_status": "verified_against_public_transcription_snapshot_with_edition_limitation",
+            "work": "子平真诠评注"
+          },
+          "score": 0.8874713070501432,
+          "score_parts": {
+            "rerank": 0.8527243733406067,
+            "vector": 0.528298628566761
+          },
+          "source_id": "ksrc_bazi_classics_ziping_v1",
+          "source_title": "子平真诠评注：论用神",
+          "text": "本条说明用神判断先从月令与日干关系进入，再按财、官、印、食、煞、伤、劫、刃的结构决定顺用或逆用。它不是只取一个五行名称，而是要求检查成格、破格、救应与配置是否得宜。调候、扶抑、病药等方法需要在同一原局中分层说明，不能互相替代。"
+        }
+      ],
+      "retrieval_mode": "hybrid_rerank",
+      "vector_status": "available"
+    },
+    {
+      "actual_rank": 1,
+      "actual_source_ids": [
+        "ksrc_bazi_classics_ditiansui_v1",
+        "ksrc_bazi_classics_ditiansui_v1",
+        "ksrc_bazi_classics_ziping_v1",
+        "ksrc_bazi_classics_ziping_v1",
+        "ksrc_bazi_classics_sanming_v1"
+      ],
+      "case_id": "ditiansui_wealth_flow",
+      "citation_complete": true,
+      "degraded_reason": "",
+      "expected_headings": [
+        "古籍原文",
+        "Marten 释义"
+      ],
+      "expected_source_ids": [
+        "ksrc_bazi_classics_ditiansui_v1"
+      ],
+      "forbidden_hits": [],
+      "heading_match": true,
+      "query": "财气通门户伤官流通",
+      "rerank_status": "available",
+      "results": [
+        {
+          "chunk_id": "kchk_8508866b6eb1",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "格局论；贵贱贫富吉凶寿夭论",
+            "content_bytes": 509,
+            "content_sha256": "7ea4ba2d98437c465f549d7df4e9942a842e764f6235b3e60c03f84c3759244b",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcriptions, revisions 844363 (2017-03-23) and 844408 (2017-03-24)",
+            "license": "Public-domain classical work; Wikisource transcriptions under CC-BY-SA-4.0",
+            "method": "pattern-and-wealth-flow",
+            "provenance": "Verified against Chinese Wikisource revisions 844363 and 844408; local file combines two short excerpts with Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern-and-flow",
+            "secondary_source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/41&oldid=844408",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/06&oldid=844363",
+            "verification_status": "verified_against_fixed_public_transcriptions",
+            "work": "滴天髓"
+          },
+          "score": 0.9514059976729974,
+          "score_parts": {
+            "rerank": 0.9475712180137634,
+            "vector": 0.5238293546606599
+          },
+          "source_id": "ksrc_bazi_classics_ditiansui_v1",
+          "source_title": "滴天髓：格局与财气流通",
+          "text": "財官印綬分偏正，兼論食傷格局定。\n\n何知其人富，財氣通門戶。"
+        },
+        {
+          "chunk_id": "kchk_227b2b4fcf0c",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "格局论；贵贱贫富吉凶寿夭论",
+            "content_bytes": 509,
+            "content_sha256": "7ea4ba2d98437c465f549d7df4e9942a842e764f6235b3e60c03f84c3759244b",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcriptions, revisions 844363 (2017-03-23) and 844408 (2017-03-24)",
+            "license": "Public-domain classical work; Wikisource transcriptions under CC-BY-SA-4.0",
+            "method": "pattern-and-wealth-flow",
+            "provenance": "Verified against Chinese Wikisource revisions 844363 and 844408; local file combines two short excerpts with Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern-and-flow",
+            "secondary_source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/41&oldid=844408",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/06&oldid=844363",
+            "verification_status": "verified_against_fixed_public_transcriptions",
+            "work": "滴天髓"
+          },
+          "score": 0.7129673516884174,
+          "score_parts": {
+            "rerank": 0.6103414297103882,
+            "vector": 0.5195060925293558
+          },
+          "source_id": "ksrc_bazi_classics_ditiansui_v1",
+          "source_title": "滴天髓：格局与财气流通",
+          "text": "第一条要求先分辨财、官、印、食伤及其偏正关系，再进入格局判断。第二条论富不只数明见财星，还检查身能否任财、伤官能否使财气流通，以及财、官、印之间能否形成可用结构。现实收入与资产结论仍需结合原局强弱、成格破格、当前大运和现实信息核验。"
+        },
+        {
+          "chunk_id": "kchk_84c04c3444d3",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论用神",
+            "content_bytes": 603,
+            "content_sha256": "9b3a50016a30a9f378b493e67b3347ab93f2f8b4e68a35a5a6ce9df417cce44d",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Text Project Wiki resource ctp:wb631975, chapter 974137; base edition unspecified",
+            "license": "Public-domain classical work; local normalized excerpt with verification link to the CTP Wiki transcription",
+            "method": "month-command-useful-god",
+            "provenance": "Verified on 2026-07-28 against Chinese Text Project resource ctp:wb631975, chapter 974137. CTP reports the electronic base edition as unspecified, so this release pins the local text by SHA256 and does not claim edition completeness.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern",
+            "source_url": "https://ctext.org/wiki.pl?if=gb&chapter=974137&remap=gb",
+            "verification_status": "verified_against_public_transcription_snapshot_with_edition_limitation",
+            "work": "子平真诠评注"
+          },
+          "score": 0.4726732497658785,
+          "score_parts": {
+            "rerank": 0.2769201993942261,
+            "vector": 0.5069620185271276
+          },
+          "source_id": "ksrc_bazi_classics_ziping_v1",
+          "source_title": "子平真诠评注：论用神",
+          "text": "本条说明用神判断先从月令与日干关系进入，再按财、官、印、食、煞、伤、劫、刃的结构决定顺用或逆用。它不是只取一个五行名称，而是要求检查成格、破格、救应与配置是否得宜。调候、扶抑、病药等方法需要在同一原局中分层说明，不能互相替代。"
+        },
+        {
+          "chunk_id": "kchk_b84044c87768",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论用神",
+            "content_bytes": 603,
+            "content_sha256": "9b3a50016a30a9f378b493e67b3347ab93f2f8b4e68a35a5a6ce9df417cce44d",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Text Project Wiki resource ctp:wb631975, chapter 974137; base edition unspecified",
+            "license": "Public-domain classical work; local normalized excerpt with verification link to the CTP Wiki transcription",
+            "method": "month-command-useful-god",
+            "provenance": "Verified on 2026-07-28 against Chinese Text Project resource ctp:wb631975, chapter 974137. CTP reports the electronic base edition as unspecified, so this release pins the local text by SHA256 and does not claim edition completeness.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern",
+            "source_url": "https://ctext.org/wiki.pl?if=gb&chapter=974137&remap=gb",
+            "verification_status": "verified_against_public_transcription_snapshot_with_edition_limitation",
+            "work": "子平真诠评注"
+          },
+          "score": 0.45908492637475046,
+          "score_parts": {
+            "rerank": 0.26026904582977295,
+            "vector": 0.5034483532616534
+          },
+          "source_id": "ksrc_bazi_classics_ziping_v1",
+          "source_title": "子平真诠评注：论用神",
+          "text": "八字用神，专求月令，以日干配月令地支，而生克不同，格局分焉。财官印食，此用神之善而顺用之者也；煞伤劫刃，用神之不善而逆用之者也。"
+        },
+        {
+          "chunk_id": "kchk_4cce9519ac46",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 0.4267993595530952,
+          "score_parts": {
+            "rerank": 0.22204792499542236,
+            "vector": 0.49339238555690834
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "本条强调先以日干为主、月令为提纲，再检查财官印食煞伤等结构以及年时的配合。它规定的是观察顺序，不是允许只凭月支或单一十神作结论。原局成败、干支生克制化和岁运引动仍须逐层核对。"
+        }
+      ],
+      "retrieval_mode": "hybrid_rerank",
+      "vector_status": "available"
+    },
+    {
+      "actual_rank": 1,
+      "actual_source_ids": [
+        "ksrc_bazi_classics_shenfeng_v1",
+        "ksrc_bazi_classics_shenfeng_v1",
+        "ksrc_bazi_classics_ditiansui_v1",
+        "ksrc_bazi_classics_ziping_v1",
+        "ksrc_bazi_classics_qiongtong_v1"
+      ],
+      "case_id": "shenfeng_disease_remedy",
+      "citation_complete": true,
+      "degraded_reason": "",
+      "expected_headings": [
+        "古籍原文"
+      ],
+      "expected_source_ids": [
+        "ksrc_bazi_classics_shenfeng_v1"
+      ],
+      "forbidden_hits": [],
+      "heading_match": true,
+      "query": "有病方为贵格中去病",
+      "rerank_status": "available",
+      "results": [
+        {
+          "chunk_id": "kchk_8ec0f6a2509d",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "病药说类",
+            "content_bytes": 489,
+            "content_sha256": "d60cca2be5219b7294e66254955744902f168cac807f3a9e7f5d580296b2176f",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 1378606 (2018-03-02)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "disease-remedy",
+            "provenance": "Verified against Chinese Wikisource revision 1378606; local file contains a selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-disease-remedy",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=神峰通考&oldid=1378606#病药说类",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "神峰通考"
+          },
+          "score": 1.02613402070842,
+          "score_parts": {
+            "rerank": 0.9980682730674744,
+            "vector": 0.595429508293069
+          },
+          "source_id": "ksrc_bazi_classics_shenfeng_v1",
+          "source_title": "神峰通考：病药说类",
+          "text": "有病方为贵，无伤不是奇；格中如去病，财禄两相随。"
+        },
+        {
+          "chunk_id": "kchk_03b268e65c18",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "病药说类",
+            "content_bytes": 489,
+            "content_sha256": "d60cca2be5219b7294e66254955744902f168cac807f3a9e7f5d580296b2176f",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 1378606 (2018-03-02)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "disease-remedy",
+            "provenance": "Verified against Chinese Wikisource revision 1378606; local file contains a selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-disease-remedy",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=神峰通考&oldid=1378606#病药说类",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "神峰通考"
+          },
+          "score": 0.5276505644497416,
+          "score_parts": {
+            "rerank": 0.3415411710739136,
+            "vector": 0.5246758994509128
+          },
+          "source_id": "ksrc_bazi_classics_shenfeng_v1",
+          "source_title": "神峰通考：病药说类",
+          "text": "同篇把“病”解释为原局中造成妨害的因素，把“药”解释为能够解除该妨害的因素。本条用于建立病、药与去病的分析顺序；其中病药属于命理结构术语，不对应医学诊断，财禄措辞也不直接转换成现实财富结论。分析必须写明受损对象、作用关系与解除条件。"
+        },
+        {
+          "chunk_id": "kchk_8508866b6eb1",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "格局论；贵贱贫富吉凶寿夭论",
+            "content_bytes": 509,
+            "content_sha256": "7ea4ba2d98437c465f549d7df4e9942a842e764f6235b3e60c03f84c3759244b",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcriptions, revisions 844363 (2017-03-23) and 844408 (2017-03-24)",
+            "license": "Public-domain classical work; Wikisource transcriptions under CC-BY-SA-4.0",
+            "method": "pattern-and-wealth-flow",
+            "provenance": "Verified against Chinese Wikisource revisions 844363 and 844408; local file combines two short excerpts with Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern-and-flow",
+            "secondary_source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/41&oldid=844408",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/06&oldid=844363",
+            "verification_status": "verified_against_fixed_public_transcriptions",
+            "work": "滴天髓"
+          },
+          "score": 0.35171631140340626,
+          "score_parts": {
+            "rerank": 0.10174012184143066,
+            "vector": 0.5099967747534632
+          },
+          "source_id": "ksrc_bazi_classics_ditiansui_v1",
+          "source_title": "滴天髓：格局与财气流通",
+          "text": "財官印綬分偏正，兼論食傷格局定。\n\n何知其人富，財氣通門戶。"
+        },
+        {
+          "chunk_id": "kchk_84c04c3444d3",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论用神",
+            "content_bytes": 603,
+            "content_sha256": "9b3a50016a30a9f378b493e67b3347ab93f2f8b4e68a35a5a6ce9df417cce44d",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Text Project Wiki resource ctp:wb631975, chapter 974137; base edition unspecified",
+            "license": "Public-domain classical work; local normalized excerpt with verification link to the CTP Wiki transcription",
+            "method": "month-command-useful-god",
+            "provenance": "Verified on 2026-07-28 against Chinese Text Project resource ctp:wb631975, chapter 974137. CTP reports the electronic base edition as unspecified, so this release pins the local text by SHA256 and does not claim edition completeness.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern",
+            "source_url": "https://ctext.org/wiki.pl?if=gb&chapter=974137&remap=gb",
+            "verification_status": "verified_against_public_transcription_snapshot_with_edition_limitation",
+            "work": "子平真诠评注"
+          },
+          "score": 0.35107699818624044,
+          "score_parts": {
+            "rerank": 0.10464576631784439,
+            "vector": 0.5051362941159079
+          },
+          "source_id": "ksrc_bazi_classics_ziping_v1",
+          "source_title": "子平真诠评注：论用神",
+          "text": "本条说明用神判断先从月令与日干关系进入，再按财、官、印、食、煞、伤、劫、刃的结构决定顺用或逆用。它不是只取一个五行名称，而是要求检查成格、破格、救应与配置是否得宜。调候、扶抑、病药等方法需要在同一原局中分层说明，不能互相替代。"
+        },
+        {
+          "chunk_id": "kchk_a3f866eac8c2",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论甲木·三春甲木",
+            "content_bytes": 398,
+            "content_sha256": "a4e5a99aa05dd921c6102664ace26401b972e33710a30ae434b9147385c16a10",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 2294674 (2023-06-14)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "tiaohou",
+            "provenance": "Verified against Chinese Wikisource revision 2294674; local file contains a selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-tiaohou",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=穷通宝鉴&oldid=2294674#三春甲木",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "穷通宝鉴"
+          },
+          "score": 0.31659634298626216,
+          "score_parts": {
+            "rerank": 0.0631062239408493,
+            "vector": 0.49531270223212304
+          },
+          "source_id": "ksrc_bazi_classics_qiongtong_v1",
+          "source_title": "穷通宝鉴：论甲木·三春甲木",
+          "text": "正月甲木，初春尚有余寒，得丙癸逢，富贵双全。"
+        }
+      ],
+      "retrieval_mode": "hybrid_rerank",
+      "vector_status": "available"
+    },
+    {
+      "actual_rank": 1,
+      "actual_source_ids": [
+        "ksrc_bazi_classics_shenfeng_v1",
+        "ksrc_bazi_classics_ziping_v1",
+        "ksrc_bazi_classics_sanming_v1",
+        "ksrc_bazi_classics_shenfeng_v1",
+        "ksrc_bazi_classics_sanming_v1"
+      ],
+      "case_id": "shenfeng_medical_boundary",
+      "citation_complete": true,
+      "degraded_reason": "",
+      "expected_headings": [
+        "Marten 释义"
+      ],
+      "expected_source_ids": [
+        "ksrc_bazi_classics_shenfeng_v1"
+      ],
+      "forbidden_hits": [],
+      "heading_match": true,
+      "query": "病药属于命理结构术语不对应医学诊断",
+      "rerank_status": "available",
+      "results": [
+        {
+          "chunk_id": "kchk_03b268e65c18",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "病药说类",
+            "content_bytes": 489,
+            "content_sha256": "d60cca2be5219b7294e66254955744902f168cac807f3a9e7f5d580296b2176f",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 1378606 (2018-03-02)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "disease-remedy",
+            "provenance": "Verified against Chinese Wikisource revision 1378606; local file contains a selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-disease-remedy",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=神峰通考&oldid=1378606#病药说类",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "神峰通考"
+          },
+          "score": 1.0212144426166478,
+          "score_parts": {
+            "rerank": 0.9990493655204773,
+            "vector": 0.5852361577314799
+          },
+          "source_id": "ksrc_bazi_classics_shenfeng_v1",
+          "source_title": "神峰通考：病药说类",
+          "text": "同篇把“病”解释为原局中造成妨害的因素，把“药”解释为能够解除该妨害的因素。本条用于建立病、药与去病的分析顺序；其中病药属于命理结构术语，不对应医学诊断，财禄措辞也不直接转换成现实财富结论。分析必须写明受损对象、作用关系与解除条件。"
+        },
+        {
+          "chunk_id": "kchk_84c04c3444d3",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论用神",
+            "content_bytes": 603,
+            "content_sha256": "9b3a50016a30a9f378b493e67b3347ab93f2f8b4e68a35a5a6ce9df417cce44d",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Text Project Wiki resource ctp:wb631975, chapter 974137; base edition unspecified",
+            "license": "Public-domain classical work; local normalized excerpt with verification link to the CTP Wiki transcription",
+            "method": "month-command-useful-god",
+            "provenance": "Verified on 2026-07-28 against Chinese Text Project resource ctp:wb631975, chapter 974137. CTP reports the electronic base edition as unspecified, so this release pins the local text by SHA256 and does not claim edition completeness.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern",
+            "source_url": "https://ctext.org/wiki.pl?if=gb&chapter=974137&remap=gb",
+            "verification_status": "verified_against_public_transcription_snapshot_with_edition_limitation",
+            "work": "子平真诠评注"
+          },
+          "score": 0.6236699580813752,
+          "score_parts": {
+            "rerank": 0.48372069001197815,
+            "vector": 0.5183008637690736
+          },
+          "source_id": "ksrc_bazi_classics_ziping_v1",
+          "source_title": "子平真诠评注：论用神",
+          "text": "本条说明用神判断先从月令与日干关系进入，再按财、官、印、食、煞、伤、劫、刃的结构决定顺用或逆用。它不是只取一个五行名称，而是要求检查成格、破格、救应与配置是否得宜。调候、扶抑、病药等方法需要在同一原局中分层说明，不能互相替代。"
+        },
+        {
+          "chunk_id": "kchk_367698c6e103",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 0.3264382191468188,
+          "score_parts": {
+            "rerank": 0.06261661648750305,
+            "vector": 0.5138301592828485
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "大凡看命，先看月支有无财官，方看其他；月令为命也。年为本，日为主。凡看命专以日干为主，取提纲所用之物为命。"
+        },
+        {
+          "chunk_id": "kchk_8ec0f6a2509d",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "病药说类",
+            "content_bytes": 489,
+            "content_sha256": "d60cca2be5219b7294e66254955744902f168cac807f3a9e7f5d580296b2176f",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 1378606 (2018-03-02)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "disease-remedy",
+            "provenance": "Verified against Chinese Wikisource revision 1378606; local file contains a selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-disease-remedy",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=神峰通考&oldid=1378606#病药说类",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "神峰通考"
+          },
+          "score": 0.30665551214469516,
+          "score_parts": {
+            "rerank": 0.02266255021095276,
+            "vector": 0.5287122309036876
+          },
+          "source_id": "ksrc_bazi_classics_shenfeng_v1",
+          "source_title": "神峰通考：病药说类",
+          "text": "有病方为贵，无伤不是奇；格中如去病，财禄两相随。"
+        },
+        {
+          "chunk_id": "kchk_4cce9519ac46",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 0.30022812988702935,
+          "score_parts": {
+            "rerank": 0.026201458647847176,
+            "vector": 0.5125220160609751
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "本条强调先以日干为主、月令为提纲，再检查财官印食煞伤等结构以及年时的配合。它规定的是观察顺序，不是允许只凭月支或单一十神作结论。原局成败、干支生克制化和岁运引动仍须逐层核对。"
+        }
+      ],
+      "retrieval_mode": "hybrid_rerank",
+      "vector_status": "available"
+    },
+    {
+      "actual_rank": 1,
+      "actual_source_ids": [
+        "ksrc_bazi_classics_yuanhai_v1",
+        "ksrc_bazi_classics_sanming_v1",
+        "ksrc_bazi_classics_sanming_v1",
+        "ksrc_bazi_classics_yuanhai_v1",
+        "ksrc_bazi_classics_ziping_v1"
+      ],
+      "case_id": "yuanhai_day_month",
+      "citation_complete": true,
+      "degraded_reason": "",
+      "expected_headings": [
+        "古籍原文"
+      ],
+      "expected_source_ids": [
+        "ksrc_bazi_classics_yuanhai_v1"
+      ],
+      "forbidden_hits": [],
+      "heading_match": true,
+      "query": "以日为主月为提纲时为辅佐",
+      "rerank_status": "available",
+      "results": [
+        {
+          "chunk_id": "kchk_a96c93c2ee17",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论日为主；论月令",
+            "content_bytes": 566,
+            "content_sha256": "52ea0062de43f72cbaa4a1093accca5d6ab7d6b5d67ec45a325bde42544e374a",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 2593607 (2025-08-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "day-master-and-month-command",
+            "provenance": "Verified against Chinese Wikisource revision 2593607; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-foundation",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=淵海子平&oldid=2593607#论日为主",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "渊海子平"
+          },
+          "score": 1.0216394332940515,
+          "score_parts": {
+            "rerank": 0.9993864297866821,
+            "vector": 0.5855798771697711
+          },
+          "source_id": "ksrc_bazi_classics_yuanhai_v1",
+          "source_title": "渊海子平：论日为主与月令",
+          "text": "以日为主，年为本，月为提纲，时为辅佐。\n\n以日为主，大要看日加临于甚度，或身旺，或身弱；又看地支有何格局，后看月令中五行何者旺，再看岁运，逐次消详。"
+        },
+        {
+          "chunk_id": "kchk_4cce9519ac46",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 0.9776487818312024,
+          "score_parts": {
+            "rerank": 0.969794750213623,
+            "vector": 0.5432590121484842
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "本条强调先以日干为主、月令为提纲，再检查财官印食煞伤等结构以及年时的配合。它规定的是观察顺序，不是允许只凭月支或单一十神作结论。原局成败、干支生克制化和岁运引动仍须逐层核对。"
+        },
+        {
+          "chunk_id": "kchk_367698c6e103",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 0.9714221890465098,
+          "score_parts": {
+            "rerank": 0.9651857614517212,
+            "vector": 0.5378039200550998
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "大凡看命，先看月支有无财官，方看其他；月令为命也。年为本，日为主。凡看命专以日干为主，取提纲所用之物为命。"
+        },
+        {
+          "chunk_id": "kchk_9b7716550519",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论日为主；论月令",
+            "content_bytes": 566,
+            "content_sha256": "52ea0062de43f72cbaa4a1093accca5d6ab7d6b5d67ec45a325bde42544e374a",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 2593607 (2025-08-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "day-master-and-month-command",
+            "provenance": "Verified against Chinese Wikisource revision 2593607; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-foundation",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=淵海子平&oldid=2593607#论日为主",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "渊海子平"
+          },
+          "score": 0.9040968159194159,
+          "score_parts": {
+            "rerank": 0.8642511963844299,
+            "vector": 0.5438563244551182
+          },
+          "source_id": "ksrc_bazi_classics_yuanhai_v1",
+          "source_title": "渊海子平：论日为主与月令",
+          "text": "本条确立日主、月令与岁运的观察顺序。月令是提纲，但不能脱离四柱根气、格局损益和岁运变化单独下结论；旺衰也不能只按五行数量判断。用于回答时应区分原局结构、行运触发与现实核验三层证据。"
+        },
+        {
+          "chunk_id": "kchk_b84044c87768",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论用神",
+            "content_bytes": 603,
+            "content_sha256": "9b3a50016a30a9f378b493e67b3347ab93f2f8b4e68a35a5a6ce9df417cce44d",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Text Project Wiki resource ctp:wb631975, chapter 974137; base edition unspecified",
+            "license": "Public-domain classical work; local normalized excerpt with verification link to the CTP Wiki transcription",
+            "method": "month-command-useful-god",
+            "provenance": "Verified on 2026-07-28 against Chinese Text Project resource ctp:wb631975, chapter 974137. CTP reports the electronic base edition as unspecified, so this release pins the local text by SHA256 and does not claim edition completeness.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern",
+            "source_url": "https://ctext.org/wiki.pl?if=gb&chapter=974137&remap=gb",
+            "verification_status": "verified_against_public_transcription_snapshot_with_edition_limitation",
+            "work": "子平真诠评注"
+          },
+          "score": 0.5414254043400869,
+          "score_parts": {
+            "rerank": 0.3711007833480835,
+            "vector": 0.5120997381753245
+          },
+          "source_id": "ksrc_bazi_classics_ziping_v1",
+          "source_title": "子平真诠评注：论用神",
+          "text": "八字用神，专求月令，以日干配月令地支，而生克不同，格局分焉。财官印食，此用神之善而顺用之者也；煞伤劫刃，用神之不善而逆用之者也。"
+        }
+      ],
+      "retrieval_mode": "hybrid_rerank",
+      "vector_status": "available"
+    },
+    {
+      "actual_rank": 1,
+      "actual_source_ids": [
+        "ksrc_bazi_classics_yuanhai_v1",
+        "ksrc_bazi_classics_ziping_v1",
+        "ksrc_bazi_classics_yuanhai_v1",
+        "ksrc_bazi_classics_sanming_v1",
+        "ksrc_bazi_classics_sanming_v1"
+      ],
+      "case_id": "yuanhai_strength_boundary",
+      "citation_complete": true,
+      "degraded_reason": "",
+      "expected_headings": [
+        "Marten 释义"
+      ],
+      "expected_source_ids": [
+        "ksrc_bazi_classics_yuanhai_v1"
+      ],
+      "forbidden_hits": [],
+      "heading_match": true,
+      "query": "旺衰不能只按五行数量判断",
+      "rerank_status": "available",
+      "results": [
+        {
+          "chunk_id": "kchk_9b7716550519",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论日为主；论月令",
+            "content_bytes": 566,
+            "content_sha256": "52ea0062de43f72cbaa4a1093accca5d6ab7d6b5d67ec45a325bde42544e374a",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 2593607 (2025-08-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "day-master-and-month-command",
+            "provenance": "Verified against Chinese Wikisource revision 2593607; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-foundation",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=淵海子平&oldid=2593607#论日为主",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "渊海子平"
+          },
+          "score": 1.0102594624235848,
+          "score_parts": {
+            "rerank": 0.9987120628356934,
+            "vector": 0.5657473062519989
+          },
+          "source_id": "ksrc_bazi_classics_yuanhai_v1",
+          "source_title": "渊海子平：论日为主与月令",
+          "text": "本条确立日主、月令与岁运的观察顺序。月令是提纲，但不能脱离四柱根气、格局损益和岁运变化单独下结论；旺衰也不能只按五行数量判断。用于回答时应区分原局结构、行运触发与现实核验三层证据。"
+        },
+        {
+          "chunk_id": "kchk_84c04c3444d3",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论用神",
+            "content_bytes": 603,
+            "content_sha256": "9b3a50016a30a9f378b493e67b3347ab93f2f8b4e68a35a5a6ce9df417cce44d",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Text Project Wiki resource ctp:wb631975, chapter 974137; base edition unspecified",
+            "license": "Public-domain classical work; local normalized excerpt with verification link to the CTP Wiki transcription",
+            "method": "month-command-useful-god",
+            "provenance": "Verified on 2026-07-28 against Chinese Text Project resource ctp:wb631975, chapter 974137. CTP reports the electronic base edition as unspecified, so this release pins the local text by SHA256 and does not claim edition completeness.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern",
+            "source_url": "https://ctext.org/wiki.pl?if=gb&chapter=974137&remap=gb",
+            "verification_status": "verified_against_public_transcription_snapshot_with_edition_limitation",
+            "work": "子平真诠评注"
+          },
+          "score": 0.9486357161526682,
+          "score_parts": {
+            "rerank": 0.9314029216766357,
+            "vector": 0.5393703108709511
+          },
+          "source_id": "ksrc_bazi_classics_ziping_v1",
+          "source_title": "子平真诠评注：论用神",
+          "text": "本条说明用神判断先从月令与日干关系进入，再按财、官、印、食、煞、伤、劫、刃的结构决定顺用或逆用。它不是只取一个五行名称，而是要求检查成格、破格、救应与配置是否得宜。调候、扶抑、病药等方法需要在同一原局中分层说明，不能互相替代。"
+        },
+        {
+          "chunk_id": "kchk_a96c93c2ee17",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论日为主；论月令",
+            "content_bytes": 566,
+            "content_sha256": "52ea0062de43f72cbaa4a1093accca5d6ab7d6b5d67ec45a325bde42544e374a",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 2593607 (2025-08-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "day-master-and-month-command",
+            "provenance": "Verified against Chinese Wikisource revision 2593607; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-foundation",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=淵海子平&oldid=2593607#论日为主",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "渊海子平"
+          },
+          "score": 0.8635825954729321,
+          "score_parts": {
+            "rerank": 0.809245228767395,
+            "vector": 0.5402017006104648
+          },
+          "source_id": "ksrc_bazi_classics_yuanhai_v1",
+          "source_title": "渊海子平：论日为主与月令",
+          "text": "以日为主，年为本，月为提纲，时为辅佐。\n\n以日为主，大要看日加临于甚度，或身旺，或身弱；又看地支有何格局，后看月令中五行何者旺，再看岁运，逐次消详。"
+        },
+        {
+          "chunk_id": "kchk_4cce9519ac46",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 0.5735189455650402,
+          "score_parts": {
+            "rerank": 0.40541258454322815,
+            "vector": 0.5267820661541464
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "本条强调先以日干为主、月令为提纲，再检查财官印食煞伤等结构以及年时的配合。它规定的是观察顺序，不是允许只凭月支或单一十神作结论。原局成败、干支生克制化和岁运引动仍须逐层核对。"
+        },
+        {
+          "chunk_id": "kchk_367698c6e103",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 0.4001505998623643,
+          "score_parts": {
+            "rerank": 0.1648402065038681,
+            "vector": 0.5177499187448301
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "大凡看命，先看月支有无财官，方看其他；月令为命也。年为本，日为主。凡看命专以日干为主，取提纲所用之物为命。"
+        }
+      ],
+      "retrieval_mode": "hybrid_rerank",
+      "vector_status": "available"
+    },
+    {
+      "actual_rank": 1,
+      "actual_source_ids": [
+        "ksrc_bazi_classics_ziping_v1",
+        "ksrc_bazi_classics_ziping_v1",
+        "ksrc_bazi_classics_sanming_v1",
+        "ksrc_bazi_classics_sanming_v1",
+        "ksrc_bazi_classics_ditiansui_v1"
+      ],
+      "case_id": "ziping_useful_god",
+      "citation_complete": true,
+      "degraded_reason": "",
+      "expected_headings": [
+        "古籍原文"
+      ],
+      "expected_source_ids": [
+        "ksrc_bazi_classics_ziping_v1"
+      ],
+      "forbidden_hits": [],
+      "heading_match": true,
+      "query": "八字用神专求月令财官印食顺用",
+      "rerank_status": "available",
+      "results": [
+        {
+          "chunk_id": "kchk_b84044c87768",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论用神",
+            "content_bytes": 603,
+            "content_sha256": "9b3a50016a30a9f378b493e67b3347ab93f2f8b4e68a35a5a6ce9df417cce44d",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Text Project Wiki resource ctp:wb631975, chapter 974137; base edition unspecified",
+            "license": "Public-domain classical work; local normalized excerpt with verification link to the CTP Wiki transcription",
+            "method": "month-command-useful-god",
+            "provenance": "Verified on 2026-07-28 against Chinese Text Project resource ctp:wb631975, chapter 974137. CTP reports the electronic base edition as unspecified, so this release pins the local text by SHA256 and does not claim edition completeness.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern",
+            "source_url": "https://ctext.org/wiki.pl?if=gb&chapter=974137&remap=gb",
+            "verification_status": "verified_against_public_transcription_snapshot_with_edition_limitation",
+            "work": "子平真诠评注"
+          },
+          "score": 1.0439807437480986,
+          "score_parts": {
+            "rerank": 0.9988977909088135,
+            "vector": 0.626822345658053
+          },
+          "source_id": "ksrc_bazi_classics_ziping_v1",
+          "source_title": "子平真诠评注：论用神",
+          "text": "八字用神，专求月令，以日干配月令地支，而生克不同，格局分焉。财官印食，此用神之善而顺用之者也；煞伤劫刃，用神之不善而逆用之者也。"
+        },
+        {
+          "chunk_id": "kchk_84c04c3444d3",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论用神",
+            "content_bytes": 603,
+            "content_sha256": "9b3a50016a30a9f378b493e67b3347ab93f2f8b4e68a35a5a6ce9df417cce44d",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Text Project Wiki resource ctp:wb631975, chapter 974137; base edition unspecified",
+            "license": "Public-domain classical work; local normalized excerpt with verification link to the CTP Wiki transcription",
+            "method": "month-command-useful-god",
+            "provenance": "Verified on 2026-07-28 against Chinese Text Project resource ctp:wb631975, chapter 974137. CTP reports the electronic base edition as unspecified, so this release pins the local text by SHA256 and does not claim edition completeness.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern",
+            "source_url": "https://ctext.org/wiki.pl?if=gb&chapter=974137&remap=gb",
+            "verification_status": "verified_against_public_transcription_snapshot_with_edition_limitation",
+            "work": "子平真诠评注"
+          },
+          "score": 1.0055653334855952,
+          "score_parts": {
+            "rerank": 0.9952772855758667,
+            "vector": 0.5615840610590702
+          },
+          "source_id": "ksrc_bazi_classics_ziping_v1",
+          "source_title": "子平真诠评注：论用神",
+          "text": "本条说明用神判断先从月令与日干关系进入，再按财、官、印、食、煞、伤、劫、刃的结构决定顺用或逆用。它不是只取一个五行名称，而是要求检查成格、破格、救应与配置是否得宜。调候、扶抑、病药等方法需要在同一原局中分层说明，不能互相替代。"
+        },
+        {
+          "chunk_id": "kchk_4cce9519ac46",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 0.9777778747703525,
+          "score_parts": {
+            "rerank": 0.9653800129890442,
+            "vector": 0.5491124830509484
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "本条强调先以日干为主、月令为提纲，再检查财官印食煞伤等结构以及年时的配合。它规定的是观察顺序，不是允许只凭月支或单一十神作结论。原局成败、干支生克制化和岁运引动仍须逐层核对。"
+        },
+        {
+          "chunk_id": "kchk_367698c6e103",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 0.8221415278807304,
+          "score_parts": {
+            "rerank": 0.7384346723556519,
+            "vector": 0.5549768313304982
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "大凡看命，先看月支有无财官，方看其他；月令为命也。年为本，日为主。凡看命专以日干为主，取提纲所用之物为命。"
+        },
+        {
+          "chunk_id": "kchk_8508866b6eb1",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "格局论；贵贱贫富吉凶寿夭论",
+            "content_bytes": 509,
+            "content_sha256": "7ea4ba2d98437c465f549d7df4e9942a842e764f6235b3e60c03f84c3759244b",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcriptions, revisions 844363 (2017-03-23) and 844408 (2017-03-24)",
+            "license": "Public-domain classical work; Wikisource transcriptions under CC-BY-SA-4.0",
+            "method": "pattern-and-wealth-flow",
+            "provenance": "Verified against Chinese Wikisource revisions 844363 and 844408; local file combines two short excerpts with Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern-and-flow",
+            "secondary_source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/41&oldid=844408",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/06&oldid=844363",
+            "verification_status": "verified_against_fixed_public_transcriptions",
+            "work": "滴天髓"
+          },
+          "score": 0.8027425138149317,
+          "score_parts": {
+            "rerank": 0.7252600789070129,
+            "vector": 0.5364735610545865
+          },
+          "source_id": "ksrc_bazi_classics_ditiansui_v1",
+          "source_title": "滴天髓：格局与财气流通",
+          "text": "財官印綬分偏正，兼論食傷格局定。\n\n何知其人富，財氣通門戶。"
+        }
+      ],
+      "retrieval_mode": "hybrid_rerank",
+      "vector_status": "available"
+    },
+    {
+      "actual_rank": 1,
+      "actual_source_ids": [
+        "ksrc_bazi_classics_ziping_v1",
+        "ksrc_bazi_classics_ziping_v1",
+        "ksrc_bazi_classics_yuanhai_v1",
+        "ksrc_bazi_classics_sanming_v1",
+        "ksrc_bazi_classics_yuanhai_v1"
+      ],
+      "case_id": "ziping_structure",
+      "citation_complete": true,
+      "degraded_reason": "",
+      "expected_headings": [
+        "Marten 释义"
+      ],
+      "expected_source_ids": [
+        "ksrc_bazi_classics_ziping_v1"
+      ],
+      "forbidden_hits": [],
+      "heading_match": true,
+      "query": "用神不是只取一个五行名称成格破格救应",
+      "rerank_status": "available",
+      "results": [
+        {
+          "chunk_id": "kchk_84c04c3444d3",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论用神",
+            "content_bytes": 603,
+            "content_sha256": "9b3a50016a30a9f378b493e67b3347ab93f2f8b4e68a35a5a6ce9df417cce44d",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Text Project Wiki resource ctp:wb631975, chapter 974137; base edition unspecified",
+            "license": "Public-domain classical work; local normalized excerpt with verification link to the CTP Wiki transcription",
+            "method": "month-command-useful-god",
+            "provenance": "Verified on 2026-07-28 against Chinese Text Project resource ctp:wb631975, chapter 974137. CTP reports the electronic base edition as unspecified, so this release pins the local text by SHA256 and does not claim edition completeness.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern",
+            "source_url": "https://ctext.org/wiki.pl?if=gb&chapter=974137&remap=gb",
+            "verification_status": "verified_against_public_transcription_snapshot_with_edition_limitation",
+            "work": "子平真诠评注"
+          },
+          "score": 1.0137387933070574,
+          "score_parts": {
+            "rerank": 0.9992129802703857,
+            "vector": 0.5714358311232501
+          },
+          "source_id": "ksrc_bazi_classics_ziping_v1",
+          "source_title": "子平真诠评注：论用神",
+          "text": "本条说明用神判断先从月令与日干关系进入，再按财、官、印、食、煞、伤、劫、刃的结构决定顺用或逆用。它不是只取一个五行名称，而是要求检查成格、破格、救应与配置是否得宜。调候、扶抑、病药等方法需要在同一原局中分层说明，不能互相替代。"
+        },
+        {
+          "chunk_id": "kchk_b84044c87768",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论用神",
+            "content_bytes": 603,
+            "content_sha256": "9b3a50016a30a9f378b493e67b3347ab93f2f8b4e68a35a5a6ce9df417cce44d",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Text Project Wiki resource ctp:wb631975, chapter 974137; base edition unspecified",
+            "license": "Public-domain classical work; local normalized excerpt with verification link to the CTP Wiki transcription",
+            "method": "month-command-useful-god",
+            "provenance": "Verified on 2026-07-28 against Chinese Text Project resource ctp:wb631975, chapter 974137. CTP reports the electronic base edition as unspecified, so this release pins the local text by SHA256 and does not claim edition completeness.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern",
+            "source_url": "https://ctext.org/wiki.pl?if=gb&chapter=974137&remap=gb",
+            "verification_status": "verified_against_public_transcription_snapshot_with_edition_limitation",
+            "work": "子平真诠评注"
+          },
+          "score": 0.6956785593586077,
+          "score_parts": {
+            "rerank": 0.573849618434906,
+            "vector": 0.5345160480984973
+          },
+          "source_id": "ksrc_bazi_classics_ziping_v1",
+          "source_title": "子平真诠评注：论用神",
+          "text": "八字用神，专求月令，以日干配月令地支，而生克不同，格局分焉。财官印食，此用神之善而顺用之者也；煞伤劫刃，用神之不善而逆用之者也。"
+        },
+        {
+          "chunk_id": "kchk_9b7716550519",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论日为主；论月令",
+            "content_bytes": 566,
+            "content_sha256": "52ea0062de43f72cbaa4a1093accca5d6ab7d6b5d67ec45a325bde42544e374a",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 2593607 (2025-08-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "day-master-and-month-command",
+            "provenance": "Verified against Chinese Wikisource revision 2593607; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-foundation",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=淵海子平&oldid=2593607#论日为主",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "渊海子平"
+          },
+          "score": 0.6242029726455665,
+          "score_parts": {
+            "rerank": 0.503711998462677,
+            "vector": 0.4938264976758046
+          },
+          "source_id": "ksrc_bazi_classics_yuanhai_v1",
+          "source_title": "渊海子平：论日为主与月令",
+          "text": "本条确立日主、月令与岁运的观察顺序。月令是提纲，但不能脱离四柱根气、格局损益和岁运变化单独下结论；旺衰也不能只按五行数量判断。用于回答时应区分原局结构、行运触发与现实核验三层证据。"
+        },
+        {
+          "chunk_id": "kchk_4cce9519ac46",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 0.504912210694055,
+          "score_parts": {
+            "rerank": 0.3202178478240967,
+            "vector": 0.5104722131221587
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "本条强调先以日干为主、月令为提纲，再检查财官印食煞伤等结构以及年时的配合。它规定的是观察顺序，不是允许只凭月支或单一十神作结论。原局成败、干支生克制化和岁运引动仍须逐层核对。"
+        },
+        {
+          "chunk_id": "kchk_a96c93c2ee17",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论日为主；论月令",
+            "content_bytes": 566,
+            "content_sha256": "52ea0062de43f72cbaa4a1093accca5d6ab7d6b5d67ec45a325bde42544e374a",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 2593607 (2025-08-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "day-master-and-month-command",
+            "provenance": "Verified against Chinese Wikisource revision 2593607; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-foundation",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=淵海子平&oldid=2593607#论日为主",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "渊海子平"
+          },
+          "score": 0.4579457963398177,
+          "score_parts": {
+            "rerank": 0.2584511339664459,
+            "vector": 0.5036909137514646
+          },
+          "source_id": "ksrc_bazi_classics_yuanhai_v1",
+          "source_title": "渊海子平：论日为主与月令",
+          "text": "以日为主，年为本，月为提纲，时为辅佐。\n\n以日为主，大要看日加临于甚度，或身旺，或身弱；又看地支有何格局，后看月令中五行何者旺，再看岁运，逐次消详。"
+        }
+      ],
+      "retrieval_mode": "hybrid_rerank",
+      "vector_status": "available"
+    },
+    {
+      "actual_rank": 1,
+      "actual_source_ids": [
+        "ksrc_bazi_classics_sanming_v1",
+        "ksrc_bazi_classics_sanming_v1",
+        "ksrc_bazi_classics_yuanhai_v1",
+        "ksrc_bazi_classics_ziping_v1",
+        "ksrc_bazi_classics_ziping_v1"
+      ],
+      "case_id": "sanming_reading_order",
+      "citation_complete": true,
+      "degraded_reason": "",
+      "expected_headings": [
+        "古籍原文"
+      ],
+      "expected_source_ids": [
+        "ksrc_bazi_classics_sanming_v1"
+      ],
+      "forbidden_hits": [],
+      "heading_match": true,
+      "query": "看命先看月支有无财官月令为命",
+      "rerank_status": "available",
+      "results": [
+        {
+          "chunk_id": "kchk_367698c6e103",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 1.0592868699955365,
+          "score_parts": {
+            "rerank": 0.9995740056037903,
+            "vector": 0.6537910292234241
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "大凡看命，先看月支有无财官，方看其他；月令为命也。年为本，日为主。凡看命专以日干为主，取提纲所用之物为命。"
+        },
+        {
+          "chunk_id": "kchk_4cce9519ac46",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 1.0052371567766571,
+          "score_parts": {
+            "rerank": 0.9879565834999084,
+            "vector": 0.5703046333213112
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "本条强调先以日干为主、月令为提纲，再检查财官印食煞伤等结构以及年时的配合。它规定的是观察顺序，不是允许只凭月支或单一十神作结论。原局成败、干支生克制化和岁运引动仍须逐层核对。"
+        },
+        {
+          "chunk_id": "kchk_a96c93c2ee17",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论日为主；论月令",
+            "content_bytes": 566,
+            "content_sha256": "52ea0062de43f72cbaa4a1093accca5d6ab7d6b5d67ec45a325bde42544e374a",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 2593607 (2025-08-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "day-master-and-month-command",
+            "provenance": "Verified against Chinese Wikisource revision 2593607; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-foundation",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=淵海子平&oldid=2593607#论日为主",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "渊海子平"
+          },
+          "score": 0.9534335203745177,
+          "score_parts": {
+            "rerank": 0.9079867601394653,
+            "vector": 0.5778959786852579
+          },
+          "source_id": "ksrc_bazi_classics_yuanhai_v1",
+          "source_title": "渊海子平：论日为主与月令",
+          "text": "以日为主，年为本，月为提纲，时为辅佐。\n\n以日为主，大要看日加临于甚度，或身旺，或身弱；又看地支有何格局，后看月令中五行何者旺，再看岁运，逐次消详。"
+        },
+        {
+          "chunk_id": "kchk_84c04c3444d3",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论用神",
+            "content_bytes": 603,
+            "content_sha256": "9b3a50016a30a9f378b493e67b3347ab93f2f8b4e68a35a5a6ce9df417cce44d",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Text Project Wiki resource ctp:wb631975, chapter 974137; base edition unspecified",
+            "license": "Public-domain classical work; local normalized excerpt with verification link to the CTP Wiki transcription",
+            "method": "month-command-useful-god",
+            "provenance": "Verified on 2026-07-28 against Chinese Text Project resource ctp:wb631975, chapter 974137. CTP reports the electronic base edition as unspecified, so this release pins the local text by SHA256 and does not claim edition completeness.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern",
+            "source_url": "https://ctext.org/wiki.pl?if=gb&chapter=974137&remap=gb",
+            "verification_status": "verified_against_public_transcription_snapshot_with_edition_limitation",
+            "work": "子平真诠评注"
+          },
+          "score": 0.9203618055788412,
+          "score_parts": {
+            "rerank": 0.8762322068214417,
+            "vector": 0.5581804741887856
+          },
+          "source_id": "ksrc_bazi_classics_ziping_v1",
+          "source_title": "子平真诠评注：论用神",
+          "text": "本条说明用神判断先从月令与日干关系进入，再按财、官、印、食、煞、伤、劫、刃的结构决定顺用或逆用。它不是只取一个五行名称，而是要求检查成格、破格、救应与配置是否得宜。调候、扶抑、病药等方法需要在同一原局中分层说明，不能互相替代。"
+        },
+        {
+          "chunk_id": "kchk_b84044c87768",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论用神",
+            "content_bytes": 603,
+            "content_sha256": "9b3a50016a30a9f378b493e67b3347ab93f2f8b4e68a35a5a6ce9df417cce44d",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Text Project Wiki resource ctp:wb631975, chapter 974137; base edition unspecified",
+            "license": "Public-domain classical work; local normalized excerpt with verification link to the CTP Wiki transcription",
+            "method": "month-command-useful-god",
+            "provenance": "Verified on 2026-07-28 against Chinese Text Project resource ctp:wb631975, chapter 974137. CTP reports the electronic base edition as unspecified, so this release pins the local text by SHA256 and does not claim edition completeness.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern",
+            "source_url": "https://ctext.org/wiki.pl?if=gb&chapter=974137&remap=gb",
+            "verification_status": "verified_against_public_transcription_snapshot_with_edition_limitation",
+            "work": "子平真诠评注"
+          },
+          "score": 0.9150764131346197,
+          "score_parts": {
+            "rerank": 0.8653295636177063,
+            "vector": 0.5624467610949552
+          },
+          "source_id": "ksrc_bazi_classics_ziping_v1",
+          "source_title": "子平真诠评注：论用神",
+          "text": "八字用神，专求月令，以日干配月令地支，而生克不同，格局分焉。财官印食，此用神之善而顺用之者也；煞伤劫刃，用神之不善而逆用之者也。"
+        }
+      ],
+      "retrieval_mode": "hybrid_rerank",
+      "vector_status": "available"
+    },
+    {
+      "actual_rank": 1,
+      "actual_source_ids": [
+        "ksrc_bazi_classics_sanming_v1",
+        "ksrc_bazi_classics_yuanhai_v1",
+        "ksrc_bazi_classics_sanming_v1",
+        "ksrc_bazi_classics_ziping_v1",
+        "ksrc_bazi_classics_yuanhai_v1"
+      ],
+      "case_id": "sanming_evidence_layers",
+      "citation_complete": true,
+      "degraded_reason": "",
+      "expected_headings": [
+        "Marten 释义"
+      ],
+      "expected_source_ids": [
+        "ksrc_bazi_classics_sanming_v1"
+      ],
+      "forbidden_hits": [],
+      "heading_match": true,
+      "query": "观察顺序不能只凭月支或单一十神作结论",
+      "rerank_status": "available",
+      "results": [
+        {
+          "chunk_id": "kchk_4cce9519ac46",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 1.0372646975530544,
+          "score_parts": {
+            "rerank": 0.9992641806602478,
+            "vector": 0.6141450383470564
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "本条强调先以日干为主、月令为提纲，再检查财官印食煞伤等结构以及年时的配合。它规定的是观察顺序，不是允许只凭月支或单一十神作结论。原局成败、干支生克制化和岁运引动仍须逐层核对。"
+        },
+        {
+          "chunk_id": "kchk_9b7716550519",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论日为主；论月令",
+            "content_bytes": 566,
+            "content_sha256": "52ea0062de43f72cbaa4a1093accca5d6ab7d6b5d67ec45a325bde42544e374a",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 2593607 (2025-08-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "day-master-and-month-command",
+            "provenance": "Verified against Chinese Wikisource revision 2593607; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-foundation",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=淵海子平&oldid=2593607#论日为主",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "渊海子平"
+          },
+          "score": 0.9908871047951685,
+          "score_parts": {
+            "rerank": 0.977588415145874,
+            "vector": 0.5574094803510122
+          },
+          "source_id": "ksrc_bazi_classics_yuanhai_v1",
+          "source_title": "渊海子平：论日为主与月令",
+          "text": "本条确立日主、月令与岁运的观察顺序。月令是提纲，但不能脱离四柱根气、格局损益和岁运变化单独下结论；旺衰也不能只按五行数量判断。用于回答时应区分原局结构、行运触发与现实核验三层证据。"
+        },
+        {
+          "chunk_id": "kchk_367698c6e103",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "卷十·看命口诀",
+            "content_bytes": 489,
+            "content_sha256": "d231a68b07c2db9da112c4d869edd1bf04b11be3eeabe0f3afa6cc89abecc397",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource Siku Quanshu transcription, revision 761703 (2016-10-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "reading-order",
+            "provenance": "Verified against Chinese Wikisource revision 761703 from the Siku Quanshu transcription; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-synthesis",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=三命通會_(四庫全書本)/卷10&oldid=761703",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "三命通会"
+          },
+          "score": 0.6848886168291948,
+          "score_parts": {
+            "rerank": 0.5459408164024353,
+            "vector": 0.5504182642681639
+          },
+          "source_id": "ksrc_bazi_classics_sanming_v1",
+          "source_title": "三命通会：看命口诀",
+          "text": "大凡看命，先看月支有无财官，方看其他；月令为命也。年为本，日为主。凡看命专以日干为主，取提纲所用之物为命。"
+        },
+        {
+          "chunk_id": "kchk_84c04c3444d3",
+          "heading": "Marten 释义",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论用神",
+            "content_bytes": 603,
+            "content_sha256": "9b3a50016a30a9f378b493e67b3347ab93f2f8b4e68a35a5a6ce9df417cce44d",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Text Project Wiki resource ctp:wb631975, chapter 974137; base edition unspecified",
+            "license": "Public-domain classical work; local normalized excerpt with verification link to the CTP Wiki transcription",
+            "method": "month-command-useful-god",
+            "provenance": "Verified on 2026-07-28 against Chinese Text Project resource ctp:wb631975, chapter 974137. CTP reports the electronic base edition as unspecified, so this release pins the local text by SHA256 and does not claim edition completeness.",
+            "review_status": "reviewed",
+            "school": "ziping-pattern",
+            "source_url": "https://ctext.org/wiki.pl?if=gb&chapter=974137&remap=gb",
+            "verification_status": "verified_against_public_transcription_snapshot_with_edition_limitation",
+            "work": "子平真诠评注"
+          },
+          "score": 0.5452612164548116,
+          "score_parts": {
+            "rerank": 0.3388095796108246,
+            "vector": 0.5601718376858807
+          },
+          "source_id": "ksrc_bazi_classics_ziping_v1",
+          "source_title": "子平真诠评注：论用神",
+          "text": "本条说明用神判断先从月令与日干关系进入，再按财、官、印、食、煞、伤、劫、刃的结构决定顺用或逆用。它不是只取一个五行名称，而是要求检查成格、破格、救应与配置是否得宜。调候、扶抑、病药等方法需要在同一原局中分层说明，不能互相替代。"
+        },
+        {
+          "chunk_id": "kchk_a96c93c2ee17",
+          "heading": "古籍原文",
+          "metadata": {
+            "calculation_scope": "theory_interpretation",
+            "chapter": "论日为主；论月令",
+            "content_bytes": 566,
+            "content_sha256": "52ea0062de43f72cbaa4a1093accca5d6ab7d6b5d67ec45a325bde42544e374a",
+            "content_type": "classical_excerpt_with_marten_commentary",
+            "corpus_release_id": "bazi-theory-classics-selected-v1",
+            "corpus_type": "theory",
+            "edition_or_source": "Chinese Wikisource transcription, revision 2593607 (2025-08-24)",
+            "license": "Public-domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+            "method": "day-master-and-month-command",
+            "provenance": "Verified against Chinese Wikisource revision 2593607; local file contains a normalized selected excerpt plus Marten-authored interpretation boundary.",
+            "review_status": "reviewed",
+            "school": "ziping-foundation",
+            "source_url": "https://zh.wikisource.org/w/index.php?title=淵海子平&oldid=2593607#论日为主",
+            "verification_status": "verified_against_fixed_public_transcription",
+            "work": "渊海子平"
+          },
+          "score": 0.5390127341440144,
+          "score_parts": {
+            "rerank": 0.3432546555995941,
+            "vector": 0.5431535913169063
+          },
+          "source_id": "ksrc_bazi_classics_yuanhai_v1",
+          "source_title": "渊海子平：论日为主与月令",
+          "text": "以日为主，年为本，月为提纲，时为辅佐。\n\n以日为主，大要看日加临于甚度，或身旺，或身弱；又看地支有何格局，后看月令中五行何者旺，再看岁运，逐次消详。"
+        }
+      ],
+      "retrieval_mode": "hybrid_rerank",
+      "vector_status": "available"
+    }
+  ],
+  "code_commit": "f8701aa0a417648c38d8ab57743ffd2f929bf85d",
+  "code_tree_file_count": 600,
+  "code_tree_sha256": "d5965d663385b8dd31a56c570e2e6c7366f763f4303f9e240e08ebefec513d16",
+  "embedding_config_hash": "d39e826c953842cf",
+  "embedding_model_id": "BAAI/bge-small-zh-v1.5",
+  "gold_sha256": "06cb24c778f15c36ccc34cfce75505504869b68bbbc63045527ac0ce2444b04c",
+  "knowledge_config": {
+    "chunking": {
+      "batch_size": 64,
+      "max_chars": 1600,
+      "overlap_chars": 150,
+      "target_chars": 1000
+    },
+    "embedding": {
+      "dimension": 512,
+      "enabled": true,
+      "model": "BAAI/bge-small-zh-v1.5",
+      "provider": "flag_embedding",
+      "use_fp16": false
+    },
+    "evaluation_top_k": 5,
+    "file_encoding": "auto",
+    "reranker": {
+      "enabled": true,
+      "model": "BAAI/bge-reranker-base",
+      "provider": "flag_embedding",
+      "top_n": 10,
+      "use_fp16": false
+    },
+    "search": {
+      "candidate_pool": 30,
+      "default_top_k": 5,
+      "fts_weight": 0.35,
+      "metadata_weight": 0.1,
+      "reranker_weight": 0.7,
+      "vector_weight": 0.55
+    },
+    "vector_store": {
+      "backend": "sqlite_vec",
+      "enabled": true
+    }
+  },
+  "knowledge_config_sha256": "3d423f3137790987467c41f2b20675c6df00ed57506c14bb6b8a4aa8291ea0ba",
+  "knowledge_snapshot": {
+    "chunk_count": 12,
+    "current_embedding_count": 12,
+    "sha256": "95fddb0004953f9115560dc84bcd8aa0091933bffe76b92717e491fa67e2923a",
+    "source_count": 6
+  },
+  "manifest_sha256": "3f75ddf27af6f5e6ef0b2356218af4f5cfd8ed6394e36ca6dbed429707811d30",
+  "metrics": {
+    "case_count": 12,
+    "citation_metadata_complete_rate": 1.0,
+    "empty_result_count": 0,
+    "expected_source_first_rate": 1.0,
+    "false_positive_case_count": 0,
+    "heading_match_rate": 1.0,
+    "mrr": 1.0,
+    "recall_at_1": 1.0,
+    "recall_at_3": 1.0,
+    "recall_at_5": 1.0
+  },
+  "namespace": "bazi-theory",
+  "release_id": "bazi-theory-classics-selected-v1",
+  "reranker_model_id": "BAAI/bge-reranker-base",
+  "schema_version": "knowledge.corpus.report.v1",
+  "vector_store_backend": "sqlite_vec"
+}

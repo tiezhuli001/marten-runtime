@@ -2,13 +2,13 @@
 
 ## 结论
 
-仓库里的旧 design、plan、checklist 与 EasySDD feature 文档仍有追溯价值。CodeStable 接入采用“当前真相进入 Project Spec，历史过程留在原文档，稳定决策继续由 ADR 与 architecture changelog 提供证据”的组织方式。
+仓库里的旧 design、plan 与 checklist 按证据职责分类。CodeStable 接入采用“当前真相进入 Project Spec，稳定决策由 ADR 与 architecture changelog 提供证据，重复执行材料在完整吸收后删除”的组织方式。
 
 本次已经吸收：
 
 - Runtime 主链、thin harness、LLM-first、agent-owned assets、连续性、能力面、运维与质量约束进入 `.cs/spec/`。
 - Knowledge/RAG 迭代中仍成立的能力、数据边界、模型策略、降级、reindex 与验证进入 `.cs/spec/knowledge-runtime.md`。
-- 原有文档保持原路径，供设计推理、历史命令和技术选型追溯。
+- 仍有独立证据职责的文档保留原路径；已完整吸收且重复的材料删除。
 
 ## 触发场景
 
@@ -47,19 +47,11 @@ Archive 保存少量仍有审计价值的旧设计、审计和执行计划。`do
 
 这些计划继续承担证据职责。CodeStable 无需为已完成计划补建 open issue 或 epic，也无需复制逐步执行清单。
 
-### EasySDD Knowledge/RAG feature
+### 原 EasySDD Knowledge/RAG feature
 
-目录：`easysdd/features/2026-05-19-knowledge-rag-runtime/`
+`easysdd/features/2026-05-19-knowledge-rag-runtime/` 的三份材料曾记录第一版接口、执行计划和技术选型。当前接口与行为由代码、测试和 `.cs/spec/knowledge-runtime.md` 负责；仍有价值的模型、向量库、资源成本、降级与演进依据已压缩到 `.cs/notes/005-knowledge-runtime-selection-history.md`。
 
-三份材料分别承担：
-
-- `knowledge-rag-runtime-design.md`：接口、数据、边界与实现方案。
-- `knowledge-rag-runtime-execution-plan.md`：按 chunk 推进和退出信号。
-- `knowledge-rag-runtime-selection-research.md`：embedding、reranker 与 vector store 选型依据。
-
-当前代码已经包含 `src/marten_runtime/knowledge/`、builtin `knowledge`、skill、配置、测试与 `knowledge_retrieval` eval。`docs/ARCHITECTURE_CHANGELOG.md` 的 2026-05-19 条目记录了该能力进入基线。原文 frontmatter 的 `status: draft` 已经落后于实现状态。
-
-长期结论已进入 `.cs/spec/knowledge-runtime.md`。三份原文继续作为技术证据，后续可以在专门的文档清理任务中统一修正元数据或迁移目录。
+旧目录已于 2026-07-28 删除，避免已完成计划与当前规格形成重复入口。
 
 ## 后续 CodeStable 归属
 
@@ -73,6 +65,7 @@ Archive 保存少量仍有审计价值的旧设计、审计和执行计划。`do
 ## 相关位置
 
 - `.cs/notes/002-docs-lifecycle-inventory.md`
+- `.cs/notes/005-knowledge-runtime-selection-history.md`
 - `.cs/spec/index.md`
 - `.cs/spec/runtime-main-chain.md`
 - `.cs/spec/continuity-and-capabilities.md`
@@ -80,4 +73,3 @@ Archive 保存少量仍有审计价值的旧设计、审计和执行计划。`do
 - `.cs/spec/operations-and-verification.md`
 - `docs/archive/README.md`
 - `docs/ARCHITECTURE_CHANGELOG.md`
-- `easysdd/features/2026-05-19-knowledge-rag-runtime/`

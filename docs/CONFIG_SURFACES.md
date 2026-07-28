@@ -72,13 +72,18 @@ Local config lives in `config/knowledge.toml`; the committed template is `config
 
 Key operator fields:
 
+- `[knowledge] model_idle_ttl_seconds = 0` keeps loaded Knowledge models resident; `prewarm_on_start = true` loads embedding and reranker before Knowledge readiness succeeds.
 - `[knowledge.chunking] target_chars`, `overlap_chars`, `max_chars`, `batch_size` tune chunking.
 - `[knowledge.embedding] model`, `local_path`, `dimension`, `allow_remote_download` define the vector space.
 - `[knowledge.reranker] model`, `local_path`, `top_n` define query-time reranking.
 - `[knowledge.vector_store] backend = "sqlite_vec"` uses sqlite-vec when the Python extension is installed; missing extension produces `vector_status=disabled` and search continues through FTS.
 - `[knowledge.search] default_top_k`, `candidate_pool`, and weights define retrieval ranking behavior.
 
-`KNOWLEDGE_OPERATOR_TOKEN` enables the authenticated `/knowledge/**` management API. The API lists namespaces, sources, chunks and ingest jobs; accepts reviewed `.txt` and `.md` files up to `10 MiB`; and exposes source delete, stats and reindex operations. The route set stays unregistered while the secret is empty. Upload staging is runtime-owned under `data/knowledge/uploads/`.
+Search diagnostics report `embedding_ms`, `fts_ms`, `vector_ms`, `rerank_ms` and `total_ms`. Console AI explanation reports retrieval, generation and total time, model request count and provider usage.
+
+`KNOWLEDGE_OPERATOR_TOKEN` enables the authenticated `/knowledge/**` management API and `/knowledge/console`. The API lists namespaces, sources, chunks and ingest jobs; accepts `.txt` and `.md` files up to `10 MiB`; and exposes preview, draft publish, approval, delete, stats and reindex operations. The route set stays unregistered while the secret is empty. Upload staging is runtime-owned under `data/knowledge/uploads/`.
+
+Upload-level chunk values (`target_chars`, `overlap_chars`, `max_chars`) are stored in source metadata. Optional namespace-level embedding profiles are declared under `[knowledge.embedding_profiles.<profile_id>]`; Console selects only configured profiles. Changing a namespace profile requires a confirmed full reindex and does not publish partial vectors.
 
 Switching embedding config requires manual reindex with the current config:
 

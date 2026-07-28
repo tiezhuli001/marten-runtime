@@ -24,6 +24,35 @@
 
 ## 条目
 
+### 2026-07-28: Knowledge/RAG Added Reviewed Corpora, Index Profiles And An Operator Console
+
+- Change:
+  - added versioned corpus manifests, digest validation, idempotent publish planning, drift reporting and release-bound retrieval evaluation
+  - added the authenticated `/knowledge/console` for upload preview, complete chunk inspection, ingest jobs, source review, formal publication, search diagnostics, delete and reindex
+  - defined `bazi-theory-sandbox` as the draft state and `bazi-theory` as the only Bazi Agent theory-search namespace
+  - added upload-level chunk profiles and namespace-level named embedding profiles without allowing mixed vector spaces
+  - made namespace profile changes generate all replacement vectors before atomically replacing the active index
+  - added one-query search tuning for top K, candidate pool and normalized ranking weights
+  - published the six-classic structured v2 corpus with original, commentary and case evidence separated, then explicitly removed the seven replaced legacy sources
+  - added a 24-case concept retrieval evaluation, source-diverse ranking, and default exclusion of course notes and case records from theory search
+  - added a one-request Console AI explanation path using at most three evidence items without entering the Bazi Agent
+  - added startup prewarming, persistent local Knowledge models and embedding/FTS/vector/rerank/generation timing fields
+  - compressed the completed EasySDD Knowledge design, plan and selection research into CodeStable and removed the duplicate directory
+- Why:
+  - production corpus management required a visible review path rather than hand-built multipart requests
+  - retrieval changes need repeatable corpus evidence and explicit index identity
+  - draft material must remain outside Bazi answers until an Operator approves it
+- Source of truth:
+  - [Knowledge/RAG Runtime](../.cs/spec/knowledge-runtime.md)
+  - [Knowledge Corpus Epic](../.cs/epics/002-o-knowledge-corpus-quality/spec.md)
+  - [Knowledge Selection History](../.cs/notes/005-knowledge-runtime-selection-history.md)
+  - `src/marten_runtime/interfaces/http/knowledge_console.py`
+  - `src/marten_runtime/knowledge/`
+- Verification:
+  - Knowledge tests cover corpus release, upload preview, chunk profiles, embedding profile migration, failure preservation, draft approval and formal retrieval
+  - real local BGE corpus baselines record Recall@K, MRR, source rank, citation completeness and duplicate checks
+  - browser acceptance verifies the draft dashboard, review action, 9-source/402-chunk formal library and AI explanation with one model request
+
 ### 2026-07-23: CodeStable Became The Current Project-Truth Entry And Historical Docs Were Consolidated
 
 - Change:

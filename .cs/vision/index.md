@@ -12,6 +12,8 @@
 - 发起 agent 任务：用户从 HTTP 或实时聊天入口发送请求，binding 选择 agent，LLM 组合 builtin、MCP、skill、Knowledge 或 subagent 完成任务。
 - 扩展能力：开发者用声明式配置、MCP server、文件型 skill 或 bounded builtin capability 接入新能力，保持首轮能力面紧凑。
 - 延续上下文：用户在 session 中连续工作，通过 memory 保存跨会话稳定事实，通过 Knowledge 使用可检索资料。
+- 管理知识：Operator 通过受保护的 Knowledge Console 导入、预览、审核、发布、reindex 和回滚经典书籍语料，不需要手工调用 HTTP API。
+- 沉淀案例：用户在完成一次 Bazi 分析后可以直接说“把这个盘保存为案例”，系统默认保存为用户私有结构化案例；共享前必须匿名化、审核并再次确认。
 - 观察与改进：维护者从 diagnostics、tracing、测试和 eval 找到真实执行证据，判断一次变化对主链与用户结果的影响。
 
 ## 能力版图
@@ -19,6 +21,7 @@
 - Channel 与 binding：承接 HTTP、Feishu 等入口，并把请求路由到 selected agent。
 - Agent runtime：组装 agent-owned assets、上下文、model profile 与 capability surface，驱动 LLM 和工具往返。
 - 能力生态：builtin family、MCP、skills、Knowledge、automation 与 lightweight subagents。
+- 双层 Bazi Knowledge：经典书籍层提供高信任规则与出处，结构化案例层提供中等信任的相似性、差异与事后验证证据；最终回答必须分别展示两类依据。
 - 连续性：session persistence、bounded replay、compaction、memory 与 tool outcome continuity。
 - 运维证明：health、ready、runtime / session / run / trace diagnostics、可选 tracing 与离线 eval。
 
@@ -45,11 +48,15 @@
 
 新的跨 Epic 产品方向需要用户确认后进入本 Vision，并说明它服务的用户旅程、与现有能力区域的关系和进入基线的条件。
 
+已确认的 Knowledge 产品方向分两阶段推进：第一阶段交付经典书籍层和 Knowledge Console；第二阶段交付结构化案例库、对话保存与 theory/case 双层检索。案例层不以未经验证的个案覆盖经典规则，公共案例也不接受未授权或未匿名化内容。
+
 ## 演化地图
 
 - Runtime 主链：实现状态 `已实现`；当前现实见 [Project Spec](../spec/index.md) 与 [运行主链](../spec/runtime-main-chain.md)。
 - 连续性与能力面：实现状态 `已实现`；当前现实见 [连续性与能力面](../spec/continuity-and-capabilities.md)。
 - Knowledge/RAG：实现状态 `已实现`；当前现实见 [Knowledge/RAG Runtime](../spec/knowledge-runtime.md)。
+- 经典书籍层与 Knowledge Console：实现状态 `已实现，治理收尾中`；release contract、Console、真实检索基线和发布演练已完成，由 [Knowledge 经典书籍层与管理入口](../epics/002-o-knowledge-corpus-quality/spec.md) 继续管理 production 审批、遗留语料迁移和延期性能基准。
+- 结构化案例库与双层推理：实现状态 `已规划`；由 [Bazi 结构化案例库与双层知识推理](../epics/003-o-bazi-case-library/spec.md) 管理，待第一阶段基础稳定后实施。
 - 运维、诊断与评测：实现状态 `已实现`；当前现实见 [运维与验证](../spec/operations-and-verification.md)。
 - 新产品区域：实现状态 `未切片`；由后续用户确认的 Vision 分支与 Epic 承接。
 
