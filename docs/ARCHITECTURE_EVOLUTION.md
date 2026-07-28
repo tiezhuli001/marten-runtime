@@ -185,7 +185,7 @@ flowchart LR
 ### 关键引用
 
 - [`README.md`](../README.md)
-- [`Agent Runtime Harness Design`](./2026-03-29-private-agent-harness-design.md)
+- [`Agent Runtime Harness Design`](./archive/2026-03-29-private-agent-harness-design.md)
 
 ## 第 2 阶段：Agent Runtime Harness 成为第一层正式基线
 
@@ -232,7 +232,7 @@ flowchart LR
 
 ### 关键引用
 
-- [`Agent Runtime Harness Design`](./2026-03-29-private-agent-harness-design.md)
+- [`Agent Runtime Harness Design`](./archive/2026-03-29-private-agent-harness-design.md)
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 
 ## 第 3 阶段：会话治理与 Runtime Learning 在不改变主链的前提下加入
@@ -337,7 +337,7 @@ flowchart LR
 
 ### 关键引用
 
-- [`2026-03-31-progressive-disclosure-llm-first-capability-design.md`](./2026-03-31-progressive-disclosure-llm-first-capability-design.md)
+- [`2026-03-31-progressive-disclosure-llm-first-capability-design.md`](./archive/2026-03-31-progressive-disclosure-llm-first-capability-design.md)
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 - [`architecture/adr/README.md`](./architecture/adr/README.md)
 
@@ -388,7 +388,7 @@ flowchart LR
 
 ### 关键引用
 
-- [`2026-04-01-feishu-generic-card-protocol-design.md`](./2026-04-01-feishu-generic-card-protocol-design.md)
+- [`2026-04-01-feishu-generic-card-protocol-design.md`](./archive/2026-04-01-feishu-generic-card-protocol-design.md)
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 
 ## 第 6 阶段：长对话治理成为 runtime 基线的一部分
@@ -442,7 +442,6 @@ flowchart LR
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 - [`archive/2026-04-06-thin-llm-context-compaction-design.md`](./archive/2026-04-06-thin-llm-context-compaction-design.md)
 - [`archive/2026-04-07-context-usage-accuracy-design.md`](./archive/2026-04-07-context-usage-accuracy-design.md)
-- [`archive/plans/2026-04-07-thin-llm-context-compaction-plan.md`](./archive/plans/2026-04-07-thin-llm-context-compaction-plan.md)
 
 ## 第 7 阶段：跨轮工具连续性与窄扩展能力被加入，但系统中心没有改变
 
@@ -511,8 +510,6 @@ Narrow Adapters"] -.-> F
 
 - [`ARCHITECTURE_CHANGELOG.md`](./ARCHITECTURE_CHANGELOG.md)
 - [`archive/2026-04-07-llm-tool-episode-summary-design.md`](./archive/2026-04-07-llm-tool-episode-summary-design.md)
-- [`archive/plans/2026-04-07-llm-tool-episode-summary-plan.md`](./archive/plans/2026-04-07-llm-tool-episode-summary-plan.md)
-- [`archive/plans/2026-04-05-github-trending-mcp-plan.md`](./archive/plans/2026-04-05-github-trending-mcp-plan.md)
 - [`2026-04-09-fast-path-inventory-and-exit-strategy.md`](./archive/branch-evolution/2026-04-09-fast-path-inventory-and-exit-strategy.md)
 
 ## 第 8 阶段：默认运行时表面转向执行型 Agent

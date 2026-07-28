@@ -1,8 +1,11 @@
+import logging
+import re
 import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 
 from marten_runtime.agents.specs import AgentSpec
@@ -11,12 +14,24 @@ from marten_runtime.observability.langfuse import (
     build_langfuse_observer,
 )
 from marten_runtime.runtime.context import assemble_runtime_context
+from marten_runtime.runtime.bazi_output_contract import (
+    bazi_repair_source_text,
+    bazi_timing_contract_violations,
+    bazi_violation_sections,
+    merge_bazi_repaired_sections,
+    missing_bazi_sections,
+    normalize_bazi_timing_contract_text,
+)
 from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.finalization_contract_prompt import (
     FinalizationContractDraft,
     SessionSwitchClaimDraft,
 )
 from marten_runtime.runtime.history import CompactionDiagnostics, InMemoryRunHistory
+from marten_runtime.runtime.observation_policy import (
+    project_text,
+    resolve_observation_policy,
+)
 from marten_runtime.runtime.run_outcome_flow import (
     elapsed_ms,
     finish_run_error,
@@ -87,6 +102,7 @@ from marten_runtime.runtime.tool_episode_summary_prompt import (
 )
 from marten_runtime.runtime.tool_followup_support import (
     append_tool_exchange,
+    build_bazi_output_repair_request,
     build_finalization_retry_request,
     build_tool_followup_request,
     normalize_tool_result_for_followup,
@@ -105,6 +121,9 @@ from marten_runtime.session.store import SessionStore
 from marten_runtime.self_improve.recorder import SelfImproveRecorder
 from marten_runtime.skills.snapshot import SkillSnapshot
 from marten_runtime.tools.registry import ToolRegistry, ToolSnapshot
+
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_ALLOWED_TOOLS = [
@@ -305,6 +324,10 @@ class RuntimeLoop:
             role="general_assistant",
             allowed_tools=list(DEFAULT_ALLOWED_TOOLS),
         )
+        observation_policy = resolve_observation_policy(
+            getattr(resolved_agent, "observation_policy", "standard")
+        )
+        observed_message = str(project_text(message, observation_policy) or "")
         resolved_llm = llm_client or self.llm
         provider_state = build_provider_failover_state(
             llm=resolved_llm,
@@ -318,6 +341,14 @@ class RuntimeLoop:
         )
         resolved_compact_settings = compact_settings or CompactionSettings()
         tool_snapshot = self.tools.build_snapshot(resolved_agent.allowed_tools)
+        def tool_observation_policy(tool_name: str) -> str:
+            metadata = tool_snapshot.tool_metadata.get(tool_name, {})
+            return resolve_observation_policy(
+                observation_policy,
+                str(metadata.get("observation_policy") or "standard"),
+            )
+
+        turn_tool_state: dict[str, object] = {}
         resolved_compacted_context = compacted_context
         active_context_session_id = session_id
         active_session_messages = list(session_messages or [])
@@ -437,6 +468,7 @@ class RuntimeLoop:
             skill_snapshot_id=resolved_skill_snapshot_id,
             tool_snapshot_id=tool_snapshot.tool_snapshot_id,
             parent_run_id=parent_run_id,
+            observation_policy=observation_policy,
         )
         if on_run_started is not None:
             on_run_started(run.run_id, run.started_at)
@@ -455,6 +487,7 @@ class RuntimeLoop:
                 "parent_run_id": parent_run_id,
             },
             tags=[request_kind],
+            observation_policy=observation_policy,
         )
         self.history.set_external_observability_refs(
             run.run_id,
@@ -517,7 +550,7 @@ class RuntimeLoop:
                 agent_id=resolved_agent.agent_id,
                 run_id=run.run_id,
                 trace_id=trace_id,
-                message=message,
+                message=observed_message,
                 estimated_tokens_before=compaction_before_estimate,
                 estimated_tokens_after=first_request_estimate,
                 channel_id=channel_id,
@@ -565,6 +598,7 @@ class RuntimeLoop:
             request_kind=request_kind,
             agent_id=resolved_agent.agent_id,
             channel_id=channel_id,
+            observation_policy=observation_policy,
         )
 
         def finalize_success(*, final_text: str) -> None:
@@ -633,6 +667,12 @@ class RuntimeLoop:
         latest_actual_usage = None
         finalization_retry_used = False
         contract_repair_used = False
+        bazi_chart_repair_used = False
+        bazi_dayun_repair_used = False
+        bazi_knowledge_repair_used = False
+        bazi_analysis_repair_used = False
+        bazi_analysis_repair_source_text: str | None = None
+        bazi_analysis_repair_sections: list[str] = []
 
         def rebind_same_turn_session_context(target_session_id: str) -> None:
             nonlocal active_context_session_id
@@ -709,6 +749,7 @@ class RuntimeLoop:
                     }
                 )
                 reply = resolved_llm.complete(current_request)
+                reply = _enforce_bazi_repair_reply(current_request, reply)
                 self.langfuse_observer.observe_generation(
                     trace_handle,
                     name=generation_name,
@@ -724,6 +765,7 @@ class RuntimeLoop:
                         "request_kind": current_request.request_kind,
                         "model_profile": provider_state.active_profile_name,
                     },
+                    observation_policy=observation_policy,
                 )
                 generation_observed = True
                 provider_diagnostics = getattr(
@@ -810,6 +852,33 @@ class RuntimeLoop:
                         agent_id=resolved_agent.agent_id,
                         post_commit_callback=self.self_improve_post_commit_callback,
                     )
+                if (
+                    reply.tool_name
+                    and resolved_agent.agent_id == "bazi"
+                    and _bazi_required_analysis_complete(message, tool_history)
+                    and not finalization_retry_used
+                ):
+                    finalization_evidence_ledger = build_current_turn_evidence_ledger(
+                        user_message=message,
+                        tool_history=tool_history,
+                        model_request_count=llm_request_count,
+                        base_ledger=current_request.finalization_evidence_ledger,
+                    )
+                    finalization_retry_used = True
+                    current_request = build_finalization_retry_request(
+                        first_request,
+                        tool_history=tool_history,
+                        finalization_evidence_ledger=finalization_evidence_ledger,
+                    ).model_copy(
+                        update={
+                            "timeout_seconds_override": timeout_seconds_override
+                            if timeout_seconds_override is not None
+                            else remaining_timeout_seconds(deadline_monotonic),
+                            "cooperative_stop_event": stop_event,
+                            "cooperative_deadline_monotonic": deadline_monotonic,
+                        }
+                    )
+                    continue
                 if is_duplicate_spawn_subagent_followup(
                     current_request,
                     reply,
@@ -903,7 +972,17 @@ class RuntimeLoop:
                             "user_id": user_id,
                             "source_transport": source_transport,
                             "agent_id": resolved_agent.agent_id,
-                                        "allowed_tools": list(resolved_agent.allowed_tools),
+                            "allowed_tools": list(resolved_agent.allowed_tools),
+                            "allowed_knowledge_namespaces": (
+                                list(resolved_agent.allowed_knowledge_namespaces)
+                                if resolved_agent.allowed_knowledge_namespaces is not None
+                                else None
+                            ),
+                            "allowed_knowledge_actions": (
+                                list(resolved_agent.allowed_knowledge_actions)
+                                if resolved_agent.allowed_knowledge_actions is not None
+                                else None
+                            ),
                             "model_profile": provider_state.active_profile_name,
                             "llm_client": resolved_llm,
                             "session_replay_user_turns": session_replay_user_turns,
@@ -916,6 +995,7 @@ class RuntimeLoop:
                             "timeout_seconds_override": timeout_seconds_override
                             if timeout_seconds_override is not None
                             else remaining_timeout_seconds(deadline_monotonic),
+                            "turn_tool_state": turn_tool_state,
                         },
                     )
                     if tool_result is not None:
@@ -935,6 +1015,9 @@ class RuntimeLoop:
                                 "source_kind": tool_metadata.get("source_kind"),
                                 "server_id": tool_metadata.get("server_id"),
                             },
+                            observation_policy=tool_observation_policy(
+                                reply.tool_name or ""
+                            ),
                         )
                         self.history.set_stage_timing(
                             run.run_id,
@@ -959,6 +1042,9 @@ class RuntimeLoop:
                             "server_id": tool_metadata.get("server_id"),
                         },
                         error_code=exc.error_code,
+                        observation_policy=tool_observation_policy(
+                            reply.tool_name or ""
+                        ),
                     )
                     self.history.record_tool_call(
                         run.run_id,
@@ -970,6 +1056,9 @@ class RuntimeLoop:
                             "error_code": exc.error_code,
                             "error_text": tool_rejection_text(exc.error_code),
                         },
+                        observation_policy=tool_observation_policy(
+                            reply.tool_name or ""
+                        ),
                     )
                     if tool_history:
                         recovered_text = recover_successful_tool_followup_text_with_meta(
@@ -1029,6 +1118,9 @@ class RuntimeLoop:
                             "server_id": tool_metadata.get("server_id"),
                         },
                         error_code=exc.error_code,
+                        observation_policy=tool_observation_policy(
+                            reply.tool_name or ""
+                        ),
                     )
                     record_failure(self.self_improve_recorder, 
                         agent_id=resolved_agent.agent_id,
@@ -1038,8 +1130,11 @@ class RuntimeLoop:
                         channel_id=channel_id,
                         error_code=exc.error_code,
                         error_stage="tool",
-                        message=message,
+                        message=observed_message,
                         summary=str(exc),
+                        observation_policy=tool_observation_policy(
+                            reply.tool_name or ""
+                        ),
                     )
                     failed_tool_result = {
                         "ok": False,
@@ -1052,6 +1147,9 @@ class RuntimeLoop:
                         tool_name=reply.tool_name or "",
                         tool_payload=reply.tool_payload,
                         tool_result=failed_tool_result,
+                        observation_policy=tool_observation_policy(
+                            reply.tool_name or ""
+                        ),
                     )
                     self.history.set_stage_timing(
                         run.run_id,
@@ -1164,6 +1262,7 @@ class RuntimeLoop:
                             "model_profile": provider_state.active_profile_name,
                         },
                         error_code=error_code,
+                        observation_policy=observation_policy,
                     )
                 normalized = normalize_provider_error(exc) if is_provider_failure(exc) else None
                 provider_diagnostics = getattr(
@@ -1350,9 +1449,10 @@ class RuntimeLoop:
                         channel_id=channel_id,
                         error_code=normalized.error_code,
                         error_stage="llm",
-                        message=message,
+                        message=observed_message,
                         summary=str(exc),
                         provider_name=getattr(resolved_llm, "provider_name", None),
+                        observation_policy=observation_policy,
                     )
                     finalize_error(error_code=normalized.error_code)
                     return finish_run_error(history=self.history, 
@@ -1375,8 +1475,9 @@ class RuntimeLoop:
                     channel_id=channel_id,
                     error_code="RUNTIME_LOOP_FAILED",
                     error_stage="runtime",
-                    message=message,
+                    message=observed_message,
                     summary=str(exc),
+                    observation_policy=observation_policy,
                 )
                 finalize_error(error_code="RUNTIME_LOOP_FAILED")
                 return finish_run_error(history=self.history, 
@@ -1393,6 +1494,168 @@ class RuntimeLoop:
                 )
             if tool_result is None:
                 final_text = (reply.final_text or "").strip()
+                if resolved_agent.agent_id == "bazi":
+                    if (
+                        current_request.request_kind == "bazi_output_repair"
+                        and bazi_analysis_repair_source_text is not None
+                    ):
+                        repaired_final_text = merge_bazi_repaired_sections(
+                            bazi_analysis_repair_source_text,
+                            final_text,
+                            bazi_analysis_repair_sections,
+                        )
+                        normalized_repaired_final_text = (
+                            normalize_bazi_timing_contract_text(repaired_final_text)
+                        )
+                        if missing_bazi_sections(normalized_repaired_final_text):
+                            logger.warning(
+                                "bazi output repair discarded run_id=%s reason=missing_sections sections=%s",
+                                run.run_id,
+                                "、".join(
+                                    missing_bazi_sections(normalized_repaired_final_text)
+                                ),
+                            )
+                            final_text = normalize_bazi_timing_contract_text(
+                                bazi_analysis_repair_source_text
+                            )
+                        else:
+                            final_text = normalized_repaired_final_text
+                    else:
+                        final_text = normalize_bazi_timing_contract_text(final_text)
+                if (
+                    resolved_agent.agent_id == "bazi"
+                    and not _bazi_has_chart_facts(tool_history)
+                    and _bazi_has_actionable_birth_input(message)
+                    and "bazi" in first_request.available_tools
+                    and not bazi_chart_repair_used
+                ):
+                    bazi_chart_repair_used = True
+                    current_request = first_request.model_copy(
+                        update={
+                            "tool_history": list(tool_history),
+                            "tool_result": None,
+                            "requested_tool_name": "bazi",
+                            "requested_tool_payload": {},
+                            "request_kind": "bazi_chart_repair",
+                            "invalid_final_text": final_text,
+                            "timeout_seconds_override": timeout_seconds_override
+                            if timeout_seconds_override is not None
+                            else remaining_timeout_seconds(deadline_monotonic),
+                            "cooperative_stop_event": stop_event,
+                            "cooperative_deadline_monotonic": deadline_monotonic,
+                        }
+                    )
+                    continue
+                if (
+                    resolved_agent.agent_id == "bazi"
+                    and _bazi_dayun_requested(message)
+                    and _bazi_has_dayun_seed(tool_history, message)
+                    and not _bazi_has_dayun(tool_history)
+                    and "bazi" in first_request.available_tools
+                    and not bazi_dayun_repair_used
+                ):
+                    dayun_payload = _bazi_dayun_payload(tool_history, message)
+                    if dayun_payload is not None:
+                        bazi_dayun_repair_used = True
+                        current_request = first_request.model_copy(
+                            update={
+                                "tool_history": list(tool_history),
+                                "tool_result": None,
+                                "requested_tool_name": "bazi",
+                                "requested_tool_payload": dayun_payload,
+                                "request_kind": "bazi_dayun_repair",
+                                "invalid_final_text": final_text,
+                                "timeout_seconds_override": timeout_seconds_override
+                                if timeout_seconds_override is not None
+                                else remaining_timeout_seconds(deadline_monotonic),
+                                "cooperative_stop_event": stop_event,
+                                "cooperative_deadline_monotonic": deadline_monotonic,
+                            }
+                        )
+                        continue
+                if (
+                    resolved_agent.agent_id == "bazi"
+                    and _bazi_has_chart_facts(tool_history)
+                    and _bazi_chart_dayun_fingerprints_match(tool_history)
+                    and not _bazi_has_knowledge_search(tool_history)
+                    and "knowledge" in first_request.available_tools
+                    and not bazi_knowledge_repair_used
+                ):
+                    bazi_knowledge_repair_used = True
+                    current_request = first_request.model_copy(
+                        update={
+                            "tool_history": list(tool_history),
+                            "tool_result": None,
+                            "requested_tool_name": "knowledge",
+                            "requested_tool_payload": {
+                                "action": "search",
+                                "namespace": "bazi-theory",
+                            },
+                            "request_kind": "bazi_knowledge_search",
+                            "invalid_final_text": final_text,
+                            "timeout_seconds_override": timeout_seconds_override
+                            if timeout_seconds_override is not None
+                            else remaining_timeout_seconds(deadline_monotonic),
+                            "cooperative_stop_event": stop_event,
+                            "cooperative_deadline_monotonic": deadline_monotonic,
+                        }
+                    )
+                    continue
+                bazi_timing_violations = (
+                    bazi_timing_contract_violations(final_text)
+                    if resolved_agent.agent_id == "bazi"
+                    and _bazi_has_dayun(tool_history)
+                    and _bazi_has_knowledge_search(tool_history)
+                    else []
+                )
+                if bazi_timing_violations and not bazi_analysis_repair_used:
+                    logger.info(
+                        "bazi output contract repair required run_id=%s violations=%s",
+                        run.run_id,
+                        "；".join(bazi_timing_violations),
+                    )
+                    bazi_analysis_repair_used = True
+                    missing_sections = missing_bazi_sections(final_text)
+                    if missing_sections:
+                        bazi_analysis_repair_source_text = None
+                        bazi_analysis_repair_sections = []
+                        finalization_evidence_ledger = build_current_turn_evidence_ledger(
+                            user_message=message,
+                            tool_history=tool_history,
+                            model_request_count=llm_request_count,
+                            base_ledger=current_request.finalization_evidence_ledger,
+                        )
+                        current_request = build_finalization_retry_request(
+                            first_request,
+                            tool_history=tool_history,
+                            finalization_evidence_ledger=finalization_evidence_ledger,
+                            invalid_final_text=(
+                                f"八字完整答案缺少栏目：{'、'.join(missing_sections)}；"
+                                f"输出契约问题：{'；'.join(bazi_timing_violations)}。"
+                                f"请基于工具事实完整重写十一栏：{final_text}"
+                            ),
+                        )
+                    else:
+                        bazi_analysis_repair_sections = bazi_violation_sections(
+                            bazi_timing_violations
+                        )
+                        bazi_analysis_repair_source_text = final_text
+                        current_request = build_bazi_output_repair_request(
+                            first_request,
+                            invalid_final_text=bazi_repair_source_text(
+                                final_text,
+                                bazi_analysis_repair_sections,
+                            ),
+                            violations=bazi_timing_violations,
+                        )
+                    current_request = current_request.model_copy(
+                        update={
+                            "timeout_seconds_override": timeout_seconds_override
+                            if timeout_seconds_override is not None
+                            else remaining_timeout_seconds(deadline_monotonic)
+                        }
+                    )
+                    continue
                 effective_finalization_contract_draft = (
                     _infer_required_first_turn_contract_from_text(
                         final_text,
@@ -1747,6 +2010,7 @@ class RuntimeLoop:
                 tool_name=reply.tool_name or "",
                 tool_payload=reply.tool_payload,
                 tool_result=tool_result,
+                observation_policy=tool_observation_policy(reply.tool_name or ""),
             )
             if current_request.request_kind == "contract_repair":
                 self.history.set_contract_repair_state(
@@ -1852,6 +2116,87 @@ class RuntimeLoop:
                         ).strip()
                         if target_session_id:
                             rebind_same_turn_session_context(target_session_id)
+            if (
+                resolved_agent.agent_id == "bazi"
+                and _bazi_dayun_requested(message)
+                and _bazi_has_dayun_seed(tool_history, message)
+                and not _bazi_has_dayun(tool_history)
+                and "bazi" in first_request.available_tools
+                and not bazi_dayun_repair_used
+            ):
+                dayun_payload = _bazi_dayun_payload(tool_history, message)
+                if dayun_payload is not None:
+                    bazi_dayun_repair_used = True
+                    current_request = first_request.model_copy(
+                        update={
+                            "tool_history": list(tool_history),
+                            "tool_result": None,
+                            "requested_tool_name": "bazi",
+                            "requested_tool_payload": dayun_payload,
+                            "request_kind": "bazi_dayun_repair",
+                            "invalid_final_text": None,
+                            "timeout_seconds_override": timeout_seconds_override
+                            if timeout_seconds_override is not None
+                            else remaining_timeout_seconds(deadline_monotonic),
+                            "cooperative_stop_event": stop_event,
+                            "cooperative_deadline_monotonic": deadline_monotonic,
+                        }
+                    )
+                    continue
+            if (
+                resolved_agent.agent_id == "bazi"
+                and _bazi_has_chart_facts(tool_history)
+                and _bazi_chart_dayun_fingerprints_match(tool_history)
+                and not _bazi_has_knowledge_search(tool_history)
+                and "knowledge" in first_request.available_tools
+                and not bazi_knowledge_repair_used
+            ):
+                bazi_knowledge_repair_used = True
+                current_request = first_request.model_copy(
+                    update={
+                        "tool_history": list(tool_history),
+                        "tool_result": None,
+                        "requested_tool_name": "knowledge",
+                        "requested_tool_payload": {
+                            "action": "search",
+                            "namespace": "bazi-theory",
+                        },
+                        "request_kind": "bazi_knowledge_search",
+                        "invalid_final_text": None,
+                        "timeout_seconds_override": timeout_seconds_override
+                        if timeout_seconds_override is not None
+                        else remaining_timeout_seconds(deadline_monotonic),
+                        "cooperative_stop_event": stop_event,
+                        "cooperative_deadline_monotonic": deadline_monotonic,
+                    }
+                )
+                continue
+            if (
+                resolved_agent.agent_id == "bazi"
+                and _bazi_required_analysis_complete(message, tool_history)
+                and not finalization_retry_used
+            ):
+                finalization_evidence_ledger = build_current_turn_evidence_ledger(
+                    user_message=message,
+                    tool_history=tool_history,
+                    model_request_count=llm_request_count,
+                    base_ledger=current_request.finalization_evidence_ledger,
+                )
+                finalization_retry_used = True
+                current_request = build_finalization_retry_request(
+                    first_request,
+                    tool_history=tool_history,
+                    finalization_evidence_ledger=finalization_evidence_ledger,
+                ).model_copy(
+                    update={
+                        "timeout_seconds_override": timeout_seconds_override
+                        if timeout_seconds_override is not None
+                        else remaining_timeout_seconds(deadline_monotonic),
+                        "cooperative_stop_event": stop_event,
+                        "cooperative_deadline_monotonic": deadline_monotonic,
+                    }
+                )
+                continue
             provisional_request = build_tool_followup_request(
                 first_request,
                 tool_history=tool_history,
@@ -1898,8 +2243,9 @@ class RuntimeLoop:
             channel_id=channel_id,
             error_code="TOOL_LOOP_LIMIT_EXCEEDED",
             error_stage="tool_loop",
-            message=message,
+            message=observed_message,
             summary="tool loop limit exceeded",
+            observation_policy=observation_policy,
         )
         finalize_error(error_code="TOOL_LOOP_LIMIT_EXCEEDED")
         return finish_run_error(history=self.history, 
@@ -1924,3 +2270,265 @@ def _is_repairable_memory_schema_failure(tool_name: str | None, exc: ToolExecuti
         "MEMORY_WRITE_SCOPE_REQUIRED",
         "MEMORY_WRITE_TYPE_REQUIRED",
     }
+
+
+def _bazi_analysis_evidence_complete(tool_history: list[ToolExchange]) -> bool:
+    has_chart_facts = _bazi_has_chart_facts(tool_history)
+    has_theory = False
+    for exchange in tool_history:
+        result = exchange.tool_result
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            continue
+        action = str(exchange.tool_payload.get("action") or result.get("action") or "").strip()
+        if exchange.tool_name == "knowledge" and action == "search":
+            results = result.get("results")
+            if isinstance(results, list) and any(
+                isinstance(item, dict)
+                and str(item.get("text") or "").strip()
+                and str(item.get("source_id") or "").strip()
+                and str(item.get("chunk_id") or "").strip()
+                for item in results
+            ):
+                has_theory = True
+    return has_chart_facts and has_theory
+
+
+def _bazi_required_analysis_complete(
+    user_message: str,
+    tool_history: list[ToolExchange],
+) -> bool:
+    if (
+        _bazi_dayun_requested(user_message)
+        and _bazi_has_dayun_seed(tool_history, user_message)
+        and not _bazi_has_dayun(tool_history)
+    ):
+        return False
+    return _bazi_analysis_evidence_complete(tool_history)
+
+
+def _bazi_dayun_requested(user_message: str) -> bool:
+    normalized = " ".join(str(user_message or "").lower().split())
+    return _bazi_has_actionable_birth_input(user_message) or any(
+        marker in normalized
+        for marker in (
+            "大运",
+            "起运",
+            "阶段趋势",
+            "完整解盘",
+            "过三关",
+            "子平",
+            "盲派",
+            "分析",
+            "解盘",
+            "dayun",
+            "fortune cycle",
+        )
+    )
+
+
+def _bazi_has_actionable_birth_input(user_message: str) -> bool:
+    text = str(user_message or "").strip()
+    pillars = re.findall(r"[甲乙丙丁戊己庚辛壬癸][子丑寅卯辰巳午未申酉戌亥]", text)
+    if _explicit_bazi_gender(text) is not None and len(pillars) >= 4:
+        return True
+    has_birth_date = bool(
+        re.search(r"(?:19|20)\d{2}\s*年", text)
+        and re.search(r"(?:农历|公历|阳历)", text)
+        and re.search(r"[一二三四五六七八九十冬腊\d]+\s*月", text)
+        and re.search(r"[初一二三四五六七八九十廿卅\d]+\s*(?:日|号)", text)
+    )
+    has_birth_time = bool(re.search(r"\d{1,2}\s*(?::|点|时)", text))
+    has_birth_place = bool(re.search(r"(?:省|自治区|市).*(?:市|县|区|旗)", text))
+    return (
+        _explicit_bazi_gender(text) is not None
+        and has_birth_date
+        and has_birth_time
+        and has_birth_place
+    )
+
+
+def _bazi_dayun_payload(
+    tool_history: list[ToolExchange],
+    user_message: str = "",
+) -> dict[str, object] | None:
+    for exchange in tool_history:
+        if exchange.tool_name != "bazi":
+            continue
+        action = str(
+            exchange.tool_payload.get("action")
+            or exchange.tool_result.get("action")
+            or ""
+        ).strip()
+        if exchange.tool_result.get("ok") is not True:
+            continue
+        if action == "chart":
+            return {
+                **exchange.tool_payload,
+                "action": "dayun",
+                "detailLevel": "full",
+            }
+        if action == "resolve_pillars":
+            return _bazi_dayun_payload_from_resolve(
+                exchange,
+                fallback_gender=_explicit_bazi_gender(user_message),
+            )
+    return None
+
+
+def _bazi_dayun_payload_from_resolve(
+    exchange: ToolExchange,
+    *,
+    fallback_gender: str | None = None,
+) -> dict[str, object] | None:
+    gender = str(exchange.tool_payload.get("gender") or fallback_gender or "").strip()
+    if gender not in {"male", "female"}:
+        return None
+    result = exchange.tool_result.get("result")
+    candidates = result.get("候选列表") if isinstance(result, dict) else None
+    if not isinstance(candidates, list):
+        return None
+    current_date = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    past_candidates: list[datetime] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        solar_text = str(candidate.get("公历") or "").strip()
+        try:
+            solar_time = datetime.strptime(solar_text, "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        if 1901 <= solar_time.year <= 2100 and solar_time.date() <= current_date:
+            past_candidates.append(solar_time)
+    if len(past_candidates) != 1:
+        return None
+    selected = past_candidates[0]
+    return {
+        "action": "dayun",
+        "gender": gender,
+        "birthYear": selected.year,
+        "birthMonth": selected.month,
+        "birthDay": selected.day,
+        "birthHour": selected.hour,
+        "birthMinute": selected.minute,
+        "calendarType": "solar",
+        "isLeapMonth": False,
+        "timeBasis": "clock",
+        "timezone": "Asia/Shanghai",
+        "sourceTimeStandard": "beijing_standard",
+        "detailLevel": "full",
+    }
+
+
+def _bazi_has_dayun(tool_history: list[ToolExchange]) -> bool:
+    return any(
+        exchange.tool_name == "bazi"
+        and str(
+            exchange.tool_payload.get("action")
+            or exchange.tool_result.get("action")
+            or ""
+        ).strip()
+        == "dayun"
+        and isinstance(exchange.tool_result, dict)
+        and exchange.tool_result.get("ok") is True
+        for exchange in tool_history
+    )
+
+
+def _bazi_has_birth_chart(tool_history: list[ToolExchange]) -> bool:
+    return any(
+        exchange.tool_name == "bazi"
+        and str(
+            exchange.tool_payload.get("action")
+            or exchange.tool_result.get("action")
+            or ""
+        ).strip()
+        == "chart"
+        and isinstance(exchange.tool_result, dict)
+        and exchange.tool_result.get("ok") is True
+        for exchange in tool_history
+    )
+
+
+def _bazi_has_dayun_seed(
+    tool_history: list[ToolExchange],
+    user_message: str = "",
+) -> bool:
+    return (
+        _bazi_has_birth_chart(tool_history)
+        or _bazi_dayun_payload(tool_history, user_message) is not None
+    )
+
+
+def _explicit_bazi_gender(user_message: str) -> str | None:
+    text = str(user_message or "").strip()
+    male = re.search(r"(?:^|[\s,，;；:：])男(?:命)?(?=$|[\s,，。;；:：])", text)
+    female = re.search(r"(?:^|[\s,，;；:：])女(?:命)?(?=$|[\s,，。;；:：])", text)
+    if bool(male) == bool(female):
+        return None
+    return "male" if male else "female"
+
+
+def _bazi_has_chart_facts(tool_history: list[ToolExchange]) -> bool:
+    return any(
+        exchange.tool_name == "bazi"
+        and str(
+            exchange.tool_payload.get("action")
+            or exchange.tool_result.get("action")
+            or ""
+        ).strip()
+        in {"chart", "resolve_pillars"}
+        and isinstance(exchange.tool_result, dict)
+        and exchange.tool_result.get("ok") is True
+        for exchange in tool_history
+    )
+
+
+def _bazi_has_knowledge_search(tool_history: list[ToolExchange]) -> bool:
+    return any(
+        exchange.tool_name == "knowledge"
+        and str(
+            exchange.tool_payload.get("action")
+            or exchange.tool_result.get("action")
+            or ""
+        ).strip()
+        == "search"
+        for exchange in tool_history
+    )
+
+
+def _bazi_chart_dayun_fingerprints_match(
+    tool_history: list[ToolExchange],
+) -> bool:
+    fingerprints: dict[str, str] = {}
+    for exchange in tool_history:
+        if exchange.tool_name != "bazi" or exchange.tool_result.get("ok") is not True:
+            continue
+        action = str(
+            exchange.tool_payload.get("action")
+            or exchange.tool_result.get("action")
+            or ""
+        ).strip()
+        if action not in {"chart", "dayun"}:
+            continue
+        fingerprint = str(exchange.tool_result.get("inputFingerprint") or "").strip()
+        if fingerprint:
+            fingerprints[action] = fingerprint
+    if "chart" not in fingerprints or "dayun" not in fingerprints:
+        return True
+    return fingerprints["chart"] == fingerprints["dayun"]
+
+
+def _enforce_bazi_repair_reply(request, reply):  # noqa: ANN001, ANN202
+    if request.request_kind != "bazi_dayun_repair":
+        return reply
+    requested_name = str(request.requested_tool_name or "").strip()
+    requested_payload = dict(request.requested_tool_payload or {})
+    if requested_name != "bazi" or requested_payload.get("action") != "dayun":
+        return reply
+    return reply.model_copy(
+        update={
+            "final_text": None,
+            "tool_name": "bazi",
+            "tool_payload": requested_payload,
+        }
+    )

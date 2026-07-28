@@ -37,19 +37,21 @@ def _cleanup_test_app(runtime, temp_dir: TemporaryDirectory) -> None:  # noqa: A
     temp_dir.cleanup()
 
 
-def build_test_app(*, emit_explicit_empty_contract: bool = False):
+def build_test_app(*, emit_explicit_empty_contract: bool = False, env_overrides: dict[str, str] | None = None):
     temp_dir = TemporaryDirectory()
     repo_root = Path(temp_dir.name)
     _write_test_repo(repo_root)
+    runtime_env = {
+        "OPENAI_API_KEY": "test-key",
+        "MINIMAX_API_KEY": "test-key",
+        "MARTEN_REPO_SLUG": "tiezhuli001/marten-runtime",
+        "MARTEN_REPO_URL": "https://github.com/tiezhuli001/marten-runtime",
+        "MARTEN_REPO_BRANCH": "main",
+    }
+    runtime_env.update(env_overrides or {})
     app = create_app(
         repo_root=repo_root,
-        env={
-            "OPENAI_API_KEY": "test-key",
-            "MINIMAX_API_KEY": "test-key",
-            "MARTEN_REPO_SLUG": "tiezhuli001/marten-runtime",
-            "MARTEN_REPO_URL": "https://github.com/tiezhuli001/marten-runtime",
-            "MARTEN_REPO_BRANCH": "main",
-        },
+        env=runtime_env,
         load_env_file=False,
     )
     app.state._temp_dir = temp_dir

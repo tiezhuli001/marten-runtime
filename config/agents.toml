@@ -3,6 +3,10 @@ enabled = true
 role = "general_assistant"
 asset_root = "agents/main"
 allowed_tools = ["automation", "mcp", "runtime", "self_improve", "session", "memory", "knowledge", "skill", "time", "spawn_subagent", "cancel_subagent"]
+routing_description = "通用问答、任务管理、会话操作、代码与未匹配到专业领域的请求"
+allowed_handoff_agents = ["bazi"]
+allowed_knowledge_namespaces = ["personal", "fanqie"]
+allowed_knowledge_actions = ["ingest_text", "ingest_file", "ingest_status", "cancel_ingest", "search", "get_chunk", "delete_source", "reindex", "stats", "model_status", "unload_models"]
 prompt_mode = "full"
 model_profile = "openai_gpt_5_4"
 
@@ -20,3 +24,15 @@ role = "ops_agent"
 asset_root = "agents/main"
 allowed_tools = ["runtime", "time"]
 prompt_mode = "full"
+
+[agents.bazi]
+enabled = true
+role = "bazi_consultant"
+asset_root = "agents/bazi"
+routing_description = "八字排盘、四柱、子平格局法、盲派、大运与相关文化分析"
+allowed_tools = ["bazi", "knowledge", "time"]
+allowed_knowledge_namespaces = ["bazi-theory", "bazi-cases"]
+allowed_knowledge_actions = ["search", "get_chunk", "model_status"]
+observation_policy = "sensitive_bazi"
+prompt_mode = "full"
+model_profile = "openai_gpt_5_4"

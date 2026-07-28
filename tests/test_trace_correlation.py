@@ -44,7 +44,7 @@ class TraceCorrelationTests(unittest.TestCase):
             diagnostics = client.get(f"/diagnostics/trace/{trace_id}").json()
 
         self.assertEqual(diagnostics["trace_id"], trace_id)
-        self.assertEqual(len(diagnostics["run_ids"]), 1)
+        self.assertEqual(len(diagnostics["run_ids"]), 2)
         self.assertEqual(len(diagnostics["event_ids"]), 2)
 
     def test_trace_endpoint_preserves_run_and_event_lists_when_langfuse_refs_are_present(self) -> None:
@@ -76,7 +76,7 @@ class TraceCorrelationTests(unittest.TestCase):
 
         self.assertEqual(diagnostics["trace_id"], trace_id)
         self.assertEqual(diagnostics["external_refs"]["langfuse_trace_id"], trace_id)
-        self.assertEqual(len(diagnostics["run_ids"]), 1)
+        self.assertEqual(len(diagnostics["run_ids"]), 2)
         self.assertEqual(len(diagnostics["event_ids"]), 2)
 
 

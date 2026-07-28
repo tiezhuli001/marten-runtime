@@ -21,6 +21,11 @@ class SessionRestartIntegrationTests(unittest.TestCase):
             _write_test_repo(repo_root)
 
             app_one = _build_repo_backed_test_app(repo_root)
+            route_llm = ScriptedLLMClient([])
+            app_one.state.runtime.llm_client_factory.cache_client(
+                "minimax_m2_7_highspeed", route_llm
+            )
+            app_one.state.runtime.runtime_loop.llm = route_llm
 
             def fake_run(session_id, message, trace_id=None, **kwargs):  # noqa: ANN001
                 return [

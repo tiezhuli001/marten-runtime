@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+import json
 import random
 from typing import TypeVar
 from urllib.parse import unquote
@@ -93,6 +94,12 @@ def with_retry(
 def normalize_provider_error(exc: Exception) -> ProviderTransportError:
     if isinstance(exc, ProviderTransportError):
         return exc
+    if isinstance(exc, json.JSONDecodeError):
+        return ProviderTransportError(
+            "PROVIDER_RESPONSE_INVALID",
+            f"provider_response_invalid:{exc}",
+            retryable=True,
+        )
     if isinstance(exc, httpx.HTTPStatusError):
         status_code = int(exc.response.status_code) if exc.response is not None else 0
         detail = str(exc) or f"http status {status_code}"

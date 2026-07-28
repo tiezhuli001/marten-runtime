@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from marten_runtime.automation.dispatch import AutomationDispatch, build_dispatch
 from marten_runtime.automation.skill_ids import resolve_automation_runtime_skill_id
+from marten_runtime.agents.dispatch import AgentDispatchError
 from marten_runtime.channels.feishu.delivery import FeishuDeliveryPayload
 from marten_runtime.channels.feishu.usage import build_usage_summary_from_history
 from marten_runtime.channels.feishu.rendering import (
@@ -15,6 +16,12 @@ from marten_runtime.channels.output_normalization import normalize_terminal_outp
 from marten_runtime.config.models_loader import resolve_model_profile
 from marten_runtime.gateway.models import InboundEnvelope
 from marten_runtime.runtime.direct_rendering import render_direct_tool_text
+from marten_runtime.runtime.events import OutboundEvent
+from marten_runtime.runtime.run_outcome_flow import provider_failure_text
+from marten_runtime.runtime.capabilities import (
+    get_capability_declarations,
+    render_capability_catalog_for_request,
+)
 from marten_runtime.session.compaction_trigger import build_compaction_settings
 from marten_runtime.session.models import SessionMessage
 from marten_runtime.session.title_summary import (
@@ -28,6 +35,7 @@ from marten_runtime.tools.builtins.automation_tool import (
     pop_registration_context,
     push_registration_context,
 )
+from marten_runtime.tools.builtins.mcp_tool import build_mcp_capability_catalog
 
 from marten_runtime.interfaces.http.bootstrap_runtime import HTTPRuntimeState
 from marten_runtime.interfaces.http.channel_event_serialization import (
@@ -67,21 +75,9 @@ def _process_inbound_envelope(
         active_agent_id=session.active_agent_id,
         requested_agent_id=envelope.requested_agent_id,
     )
+    entry_agent = routed_agent
     app_runtime = state.agent_runtimes.get(
         routed_agent.agent_id, state.agent_runtimes[state.default_agent.agent_id]
-    )
-    state.session_store.set_active_agent(session.session_id, routed_agent.agent_id)
-    _ensure_session_catalog_metadata(
-        state=state,
-        session_id=session.session_id,
-        trace_id=envelope.trace_id,
-        agent_id=routed_agent.agent_id,
-        model_profile_name=getattr(routed_agent, "model_profile", None),
-        user_id=envelope.user_id,
-        user_message=envelope.body,
-    )
-    state.session_store.set_bootstrap_manifest(
-        session.session_id, app_runtime.prompt_manifest_id
     )
     source_before_message = state.session_store.get(session.session_id)
     source_updated_at_before_message = source_before_message.updated_at
@@ -96,6 +92,79 @@ def _process_inbound_envelope(
     session = state.session_store.append_message(
         session.session_id,
         inbound_message,
+    )
+    related_run_ids: list[str] = []
+    parent_run_id = None
+    if _should_run_main_dispatch(state, envelope, routed_agent):
+        main_profile_name = getattr(routed_agent, "model_profile", None)
+        route_llm = state.llm_client_factory.get(
+            main_profile_name,
+            default_client=state.runtime_loop.llm,
+        )
+        _, route_profile = resolve_model_profile(
+            state.models_config, main_profile_name
+        )
+        try:
+            dispatch = state.agent_dispatch_service.dispatch(
+                source_agent_id=routed_agent.agent_id,
+                session_id=session.session_id,
+                trace_id=envelope.trace_id,
+                message=envelope.body,
+                recent_messages=session.history[:-1],
+                llm_client=route_llm,
+                model_profile_name=main_profile_name,
+                tokenizer_family=route_profile.tokenizer_family,
+                config_snapshot_id=state.config_snapshot.config_snapshot_id,
+            )
+        except AgentDispatchError as exc:
+            events = [
+                OutboundEvent(
+                    session_id=session.session_id,
+                    run_id=exc.route_run_id,
+                    event_id=f"evt_{uuid4().hex[:8]}",
+                    event_type="error",
+                    sequence=1,
+                    trace_id=envelope.trace_id,
+                    payload={
+                        "code": exc.error_code,
+                        "text": provider_failure_text(exc.error_code),
+                    },
+                    created_at=datetime.now(timezone.utc),
+                )
+            ]
+            return _finalize_session_turn(
+                state=state,
+                session_id=session.session_id,
+                active_session_id=session.session_id,
+                trace_id=envelope.trace_id,
+                events=events,
+                job_ids=[],
+                channel_id=envelope.channel_id,
+                agent_id=routed_agent.agent_id,
+                model_profile_name=main_profile_name,
+            )
+        related_run_ids.append(dispatch.route_run_id)
+        parent_run_id = dispatch.route_run_id
+        routed_agent = state.agent_registry.get(dispatch.target_agent_id)
+        app_runtime = state.agent_runtimes.get(
+            routed_agent.agent_id,
+            state.agent_runtimes[state.default_agent.agent_id],
+        )
+    state.session_store.set_active_agent(
+        session.session_id,
+        entry_agent.agent_id if parent_run_id is not None else routed_agent.agent_id,
+    )
+    _ensure_session_catalog_metadata(
+        state=state,
+        session_id=session.session_id,
+        trace_id=envelope.trace_id,
+        agent_id=routed_agent.agent_id,
+        model_profile_name=getattr(routed_agent, "model_profile", None),
+        user_id=envelope.user_id,
+        user_message=envelope.body,
+    )
+    state.session_store.set_bootstrap_manifest(
+        session.session_id, app_runtime.prompt_manifest_id
     )
     skill_runtime = state.skill_service.build_runtime(
         agent_id=routed_agent.agent_id,
@@ -126,6 +195,7 @@ def _process_inbound_envelope(
             user_id=envelope.user_id,
             source_transport=envelope.source_transport,
             request_kind="interactive",
+            parent_run_id=parent_run_id,
         )
     finally:
         pop_registration_context(token)
@@ -161,6 +231,7 @@ def _process_inbound_envelope(
         agent_id=routed_agent.agent_id,
         model_profile_name=getattr(routed_agent, "model_profile", None),
         suppress_assistant_history=same_session_resume_noop,
+        related_run_ids=related_run_ids,
     )
 
 
@@ -310,6 +381,7 @@ def _run_turn(
     user_id: str | None = None,
     source_transport: str | None = None,
     request_kind: str = "interactive",
+    parent_run_id: str | None = None,
 ):
     resolved_profile_name = getattr(agent, "model_profile", None)
     resolved_llm = state.llm_client_factory.get(
@@ -343,7 +415,13 @@ def _run_turn(
         ),
         skill_snapshot=skill_runtime.snapshot,
         skill_heads_text=skill_runtime.skill_heads_text,
-        capability_catalog_text=state.capability_catalog_text,
+        capability_catalog_text=render_capability_catalog_for_request(
+            get_capability_declarations(),
+            available_tools=list(agent.allowed_tools),
+            mcp_catalog_text=build_mcp_capability_catalog(
+                state.mcp_servers, state.mcp_discovery
+            ),
+        ),
         always_on_skill_text=skill_runtime.always_on_text,
         activated_skill_ids=[item.meta.skill_id for item in activated_skills],
         activated_skill_bodies=[item.body for item in activated_skills if item.body],
@@ -361,6 +439,7 @@ def _run_turn(
         compact_settings=build_compaction_settings(profile),
         session_replay_user_turns=state.platform_config.runtime.session_replay_user_turns,
         request_kind=request_kind,
+        parent_run_id=parent_run_id,
         channel_id=channel_id,
         conversation_id=conversation_id,
         user_id=user_id,
@@ -382,6 +461,7 @@ def _finalize_session_turn(
     agent_id: str,
     model_profile_name: str | None,
     suppress_assistant_history: bool = False,
+    related_run_ids: list[str] | None = None,
 ) -> dict[str, object]:
     persisted_session_id = active_session_id or session_id
     terminal_event = events[-1]
@@ -436,7 +516,10 @@ def _finalize_session_turn(
         ),
     }
     state.trace_index[trace_id] = {
-        "run_ids": [terminal_event.run_id],
+        "run_ids": [
+            *list(related_run_ids or []),
+            terminal_event.run_id,
+        ],
         "job_ids": job_ids,
         "event_ids": [event.event_id for event in events],
         "external_refs": external_refs,
@@ -453,6 +536,16 @@ def _finalize_session_turn(
         "session_id": session_id,
         "active_session_id": active_session_id,
         "trace_id": trace_id,
+        "routed_agent_id": agent_id,
+        "route_run_id": (
+            (related_run_ids or [None])[0]
+            or (
+                terminal_event.run_id
+                if run is not None
+                and run.bootstrap_manifest_id == "agent_main_routing"
+                else None
+            )
+        ),
         "result": terminal_text,
         "final_text": terminal_text,
         "text": terminal_text,
@@ -474,6 +567,19 @@ def _finalize_session_turn(
             for event in events
         ],
     }
+
+
+def _should_run_main_dispatch(
+    state: HTTPRuntimeState,
+    envelope: InboundEnvelope,
+    routed_agent,
+) -> bool:  # noqa: ANN001
+    if routed_agent.agent_id != state.default_agent.agent_id:
+        return False
+    if envelope.requested_agent_id:
+        return False
+    binding = state.binding_registry.match(envelope)
+    return binding is None or bool(binding.default)
 
 
 def _is_same_session_resume_noop(run) -> bool:  # noqa: ANN001

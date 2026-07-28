@@ -12,6 +12,10 @@ It now also covers the verified lightweight subagent live path:
 
 `Feishu -> main agent -> spawn_subagent -> child agent -> GitHub MCP -> parent summary -> Feishu completion notice`
 
+For the Bazi production slice it also covers:
+
+`HTTP/Feishu -> bazi agent -> bundled bridge -> Knowledge -> cited answer`
+
 It separates three things clearly:
 
 - what is already verified in code and tests
@@ -123,6 +127,19 @@ Before running the real Feishu conversation:
 - [ ] confirm GitHub MCP shows `discovery.state = "discovered"`
 - [ ] confirm Feishu websocket shows `connected = true`
 
+For a Bazi image smoke, also confirm:
+
+- [ ] container startup self-check reports `ok = true`
+- [ ] diagnostics report Node major `22`, engine patch `sect1-v1`, and Knowledge schema available
+- [ ] diagnostics expose only redacted Amap and Knowledge Operator configuration state
+- [ ] `/app/sbom/taibu-bridge.cdx.json`, `/app/sbom/python.cdx.json`, third-party licenses and the npm lockfile exist
+- [ ] `/app/data` is mounted on persistent storage
+- [ ] outbound policy permits HTTPS access to `restapi.amap.com`
+
+With `AMAP_WEB_SERVICE_KEY` empty, verify `clock` chart succeeds and `true_solar` returns `bazi_place_resolver_unavailable` with `reason = credential_missing`. With `KNOWLEDGE_OPERATOR_TOKEN` empty, verify `/knowledge/**` returns `404`.
+
+With a test Operator token, verify Bearer authentication and one `upload -> terminal job -> search` path. With a real Amap Web Service Key, verify one mainland-China `true_solar` request and confirm logs and diagnostics contain no key, raw birth place, exact coordinates, birth time, or chart payload.
+
 Suggested commands:
 
 ```bash
@@ -211,7 +228,7 @@ Latest product-usability smoke after the spawn-policy hardening:
 
 Latest direct Feishu main-chain proof on the current runtime:
 
-- conversation/chat: `oc_5091efbdd295f49cad9bdeed9d92b7ae`
+- conversation/chat: `[redacted]`
 - session: `sess_3072ef1d`
 - run: `run_3624374a`
 - trace: `trace_a579ef70`

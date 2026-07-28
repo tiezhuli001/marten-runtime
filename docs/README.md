@@ -1,36 +1,53 @@
 # 文档索引
 
-这个目录保存 `marten-runtime` 的公开设计与运维文档。
+这个目录保存 `marten-runtime` 的公开设计、运维文档和历史证据。CodeStable 提供目标世界、当前项目真相和文档生命周期入口。
 
 ## 从这里开始
 
-1. [../README.md](../README.md)
-2. [DEPLOYMENT.md](./DEPLOYMENT.md)
-3. [ARCHITECTURE_EVOLUTION.md](./ARCHITECTURE_EVOLUTION.md)
-4. [ARCHITECTURE_CHANGELOG.md](./ARCHITECTURE_CHANGELOG.md)
-5. [architecture/adr/README.md](./architecture/adr/README.md)
-6. [CONFIG_SURFACES.md](./CONFIG_SURFACES.md)
-7. [LIVE_VERIFICATION_CHECKLIST.md](./LIVE_VERIFICATION_CHECKLIST.md)
-8. [archive/README.md](./archive/README.md)
+1. [Project Spec](../.cs/spec/index.md)
+   - 当前能力、主链、边界、质量约束和开发阅读路径
+2. [Vision](../.cs/vision/index.md)
+   - 目标用户旅程、能力版图和长期方向
+3. [项目 README](../README.md)
+   - 公开概览、快速开始和常用入口
+4. [部署指南](./DEPLOYMENT.md)
+   - 最短部署路径、配置、启动与排障
+5. [架构演进](./ARCHITECTURE_EVOLUTION.md)
+   - 当前架构快照与阶段叙事
+6. [架构变更日志](./ARCHITECTURE_CHANGELOG.md)
+   - 追加式时间线和验证证据
+7. [ADR 索引](./architecture/adr/README.md)
+   - 稳定架构决策
+8. [配置面说明](./CONFIG_SURFACES.md)
+9. [实链验证清单](./LIVE_VERIFICATION_CHECKLIST.md)
+10. [文档生命周期台账](../.cs/notes/002-docs-lifecycle-inventory.md)
+11. [归档索引](./archive/README.md)
+
+## 文档职责层级
+
+- `.cs/vision/`：目标产品世界、用户旅程与跨 Epic 方向。
+- `.cs/spec/`：当前项目真相、能力边界、质量约束与修改入口。
+- `docs/architecture/adr/`：长期稳定的架构决策。
+- `ARCHITECTURE_CHANGELOG.md`：架构进入基线的时间线与验证证据。
+- `DEPLOYMENT.md`、`CONFIG_SURFACES.md`、`LIVE_VERIFICATION_CHECKLIST.md`：公开运维契约。
+- 日期型 design：某次变化的完整设计推理与阶段证据。
+- `archive/`：已完成阶段的设计、审计、计划与压缩摘要。
 
 ## 推荐阅读顺序
 
-按这个顺序阅读最容易理解当前基线：
+- 理解当前系统：`Project Spec -> runtime main chain -> capability / operations 子规格 -> 相关 ADR`。
+- 部署与排障：`Project Spec -> DEPLOYMENT -> CONFIG_SURFACES -> LIVE_VERIFICATION_CHECKLIST`。
+- 追溯架构原因：`Project Spec -> ADR -> ARCHITECTURE_CHANGELOG -> 日期型 design / archive`。
+- 规划长期方向：`Vision -> Project Spec -> 相关 Epic`。
 
-1. `README.md`
-   - 当前范围、runtime 主链、部署入口
-2. `DEPLOYMENT.md`
-   - 最短部署路径、最小配置、启动方式、健康检查、可选集成
-3. `ARCHITECTURE_EVOLUTION.md`
-   - 读者友好的阶段叙事，解释架构为什么会变成今天这样
-4. `ARCHITECTURE_CHANGELOG.md`
-   - 追加式架构时间线、变化原因与验证证据
-5. `architecture/adr/`
-   - 稳定边界与长期决策
-6. `CONFIG_SURFACES.md`
-   - 配置归属与覆盖面说明
-7. `LIVE_VERIFICATION_CHECKLIST.md`
-   - 实链验证与运维检查
+## 文档生命周期
+
+- 当前能力和边界变化同步进入 `.cs/spec/`，公开操作契约同步更新对应 `docs/` 主文档。
+- 跨模块、多批推进且规格持续演化的需求进入 `.cs/epics/`。
+- 可关闭行动与验证进入 `.cs/issues/`。
+- 日期型 design 在变化完成后转为证据角色，长期结论进入 spec、ADR 或 changelog。
+- 归档与清理前先完成结论吸收、引用检查和链接更新。
+- 28 份 Markdown 的逐文件状态见 [文档生命周期台账](../.cs/notes/002-docs-lifecycle-inventory.md)。
 
 ## 每份文档的职责
 
@@ -46,19 +63,21 @@
   - 说明每类配置应该放在哪个文件
 - `LIVE_VERIFICATION_CHECKLIST.md`
   - 提供真实 `Feishu -> LLM -> MCP -> Feishu` 链路的检查清单
+- `2026-07-23-bazi-agent-design.md`
+  - Bazi Agent、builtin Bazi、bundled `taibu-core`、Knowledge/RAG 与领域 Skill 组合方案
 - `archive/`
   - 保留少量仍有追溯价值的历史设计、审计和计划
 
 ## 说明
 
-- 主文档路径现在统一为中文单语：`README -> docs/README -> DEPLOYMENT -> ARCHITECTURE_EVOLUTION -> ARCHITECTURE_CHANGELOG -> ADR -> CONFIG_SURFACES`
-- 架构文档需要让读者快速看懂两件事：当前 runtime 主链，以及这些边界为何成为基线
-- 历史设计和执行文档仍然是次级材料；长期结论优先沉淀到 `ARCHITECTURE_CHANGELOG.md`
-- archive 应保持克制，不要变成所有旧计划的堆放区
+- 当前项目理解从 `.cs/spec/index.md` 开始，目标方向从 `.cs/vision/index.md` 开始。
+- ADR 保存稳定决策，architecture changelog 保存进入基线的时间线，日期型 design 保存完整推理。
+- Archive 保持精简，压缩摘要优先承接重复执行历史。
 - 2026-04-09 branch-evolution 现在只保留一份归档说明：`docs/archive/branch-evolution/2026-04-09-fast-path-inventory-and-exit-strategy.md`
 - 2026-04-11 repo slimming 工作已压缩到 `docs/archive/plans/2026-04-11-repo-slimming-summary.md`
 - 2026-04-17 Langfuse observability design 保留在 `docs/2026-04-17-langfuse-observability-design.md`
 - 2026-04-30 主链评测基础能力设计保留在 `docs/2026-04-30-main-chain-eval-foundation-design.md`
+- 2026-07-23 Bazi Agent 方案设计见 `docs/2026-07-23-bazi-agent-design.md`
 - 已完成的评测执行计划已压缩到 `docs/archive/plans/2026-05-01-eval-foundation-summary.md`
 - 本地忽略的 `STATUS.md` 继续只承担分支执行看板角色
 
@@ -123,17 +142,4 @@ PYTHONPATH=src .venv/bin/python scripts/run_eval.py \
 
 ## 当前状态
 
-- 离线评测已经进入当前运维基线，当前可稳定回放 `main_chain_core`、`memory_long_horizon`、`subagent_task_progress` 并生成 compare / stability 报告
-- 真实 MCP 效果评估使用 live-only 套件：`main_chain_mcp`、`subagent_external_mcp_completion`
-- 默认 runtime agent 已经是 `main`
-- Milestone A 的 agent runtime harness 已经落地
-- HTTP `/messages` 与 Feishu interactive ingress 已具备 same-conversation FIFO queueing
-- durable SQLite session persistence 已成为当前基线
-- `requested_agent_id` 已能真实切换 agent 资产、allowed tool surface 和 model profile
-- `session.new` / `session.resume` 已成为显式会话目录与切换控制面
-- thin `memory` builtin 已作为一条受控 continuity slice 接入
-- narrow self-improve loop 已实现并进入 runtime 基线
-- `automation` family tool 已直接面向 automation store 提供 CRUD
-- provider 配置已拆分到 `config/providers.toml` 与 `config/models.toml`
-- Langfuse tracing 已作为可选 observability slice 接入
-- 稳定架构真相以 `docs/architecture/adr/` 与 `docs/ARCHITECTURE_CHANGELOG.md` 为准
+当前项目能力、架构边界和质量约束由 [Project Spec](../.cs/spec/index.md) 统领。公开运行概览继续由 [项目 README](../README.md) 提供，稳定决策由 [ADR](./architecture/adr/README.md) 提供，架构时间线与验证证据由 [Architecture Changelog](./ARCHITECTURE_CHANGELOG.md) 提供。

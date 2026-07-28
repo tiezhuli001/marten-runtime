@@ -488,6 +488,126 @@ class SQLiteSessionStore(SessionStore):
             row = conn.execute("SELECT COUNT(*) FROM session_bindings").fetchone()
         return int(row[0] if row is not None else 0)
 
+    def delete_session(self, session_id: str) -> dict[str, object]:
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            session_ids = self._session_lineage(conn, session_id)
+            if not session_ids:
+                raise KeyError(session_id)
+            return self._delete_sessions(conn, session_ids)
+
+    def prune_sessions(self, *, inactive_before: datetime, apply: bool = False) -> dict[str, object]:
+        cutoff = inactive_before.astimezone(timezone.utc).isoformat()
+        with self._connect() as conn:
+            if apply:
+                conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                """
+                SELECT session_id, parent_session_id,
+                       COALESCE(last_event_at, updated_at) < ? AS inactive
+                FROM sessions
+                ORDER BY session_id
+                """,
+                (cutoff,),
+            ).fetchall()
+            parents = {
+                str(row[0]): str(row[1]) if row[1] is not None else None
+                for row in rows
+            }
+            candidates = {str(row[0]) for row in rows if bool(row[2])}
+            protected_ancestors: set[str] = set()
+            for row in rows:
+                if bool(row[2]):
+                    continue
+                parent_id = str(row[1]) if row[1] is not None else None
+                visited: set[str] = set()
+                while parent_id is not None and parent_id not in visited:
+                    visited.add(parent_id)
+                    protected_ancestors.add(parent_id)
+                    parent_id = parents.get(parent_id)
+            session_ids = sorted(candidates - protected_ancestors)
+            if not apply:
+                return {
+                    "ok": True,
+                    "applied": False,
+                    "inactive_before": cutoff,
+                    "session_ids": session_ids,
+                    "session_count": len(session_ids),
+                }
+            result = self._delete_sessions(conn, session_ids)
+            return {**result, "applied": True, "inactive_before": cutoff}
+
+    def _session_lineage(self, conn: sqlite3.Connection, session_id: str) -> list[str]:
+        rows = conn.execute(
+            """
+            WITH RECURSIVE lineage(session_id) AS (
+                SELECT session_id FROM sessions WHERE session_id = ?
+                UNION ALL
+                SELECT child.session_id
+                FROM sessions child
+                JOIN lineage parent ON child.parent_session_id = parent.session_id
+            )
+            SELECT session_id FROM lineage
+            """,
+            (session_id,),
+        ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def _delete_sessions(
+        self,
+        conn: sqlite3.Connection,
+        session_ids: list[str],
+    ) -> dict[str, object]:
+        unique_ids = sorted(set(session_ids))
+        if not unique_ids:
+            return {
+                "ok": True,
+                "deleted_session_ids": [],
+                "session_count": 0,
+                "message_count": 0,
+                "tool_outcome_count": 0,
+                "binding_count": 0,
+                "compaction_job_count": 0,
+            }
+        placeholders = ",".join("?" for _ in unique_ids)
+        counts = {
+            "message_count": self._count_where(conn, "session_messages", "session_id", placeholders, unique_ids),
+            "tool_outcome_count": self._count_where(conn, "session_tool_outcome_summaries", "session_id", placeholders, unique_ids),
+            "binding_count": self._count_where(conn, "session_bindings", "session_id", placeholders, unique_ids),
+            "compaction_job_count": self._count_where(conn, "session_compaction_jobs", "source_session_id", placeholders, unique_ids),
+        }
+        for table, column in (
+            ("session_compaction_jobs", "source_session_id"),
+            ("session_bindings", "session_id"),
+            ("session_tool_outcome_summaries", "session_id"),
+            ("session_messages", "session_id"),
+            ("sessions", "session_id"),
+        ):
+            conn.execute(
+                f"DELETE FROM {table} WHERE {column} IN ({placeholders})",
+                unique_ids,
+            )
+        return {
+            "ok": True,
+            "deleted_session_ids": unique_ids,
+            "session_count": len(unique_ids),
+            **counts,
+        }
+
+    @staticmethod
+    def _count_where(
+        conn: sqlite3.Connection,
+        table: str,
+        column: str,
+        placeholders: str,
+        values: list[str],
+    ) -> int:
+        row = conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE {column} IN ({placeholders})",
+            values,
+        ).fetchone()
+        return int(row[0] if row is not None else 0)
+
     def enqueue_compaction_job(self, **payload) -> dict[str, object]:  # noqa: ANN003
         job = SessionCompactionJob(**payload)
         with self._connect() as conn:
@@ -919,6 +1039,51 @@ class SQLiteSessionStore(SessionStore):
         )
         SQLiteSessionStore._ensure_session_binding_columns(conn)
         SQLiteSessionStore._ensure_compaction_job_table(conn)
+        SQLiteSessionStore._ensure_lineage_integrity_triggers(conn)
+
+    @staticmethod
+    def _ensure_lineage_integrity_triggers(conn: sqlite3.Connection) -> None:
+        conn.executescript(
+            """
+            CREATE TRIGGER IF NOT EXISTS sessions_parent_exists_before_insert
+            BEFORE INSERT ON sessions
+            WHEN NEW.parent_session_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM sessions WHERE session_id = NEW.parent_session_id
+              )
+            BEGIN
+                SELECT RAISE(ABORT, 'parent session does not exist');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS sessions_parent_exists_before_update
+            BEFORE UPDATE OF parent_session_id ON sessions
+            WHEN NEW.parent_session_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM sessions WHERE session_id = NEW.parent_session_id
+              )
+            BEGIN
+                SELECT RAISE(ABORT, 'parent session does not exist');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS session_binding_session_exists_before_insert
+            BEFORE INSERT ON session_bindings
+            WHEN NOT EXISTS (
+                SELECT 1 FROM sessions WHERE session_id = NEW.session_id
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'bound session does not exist');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS session_binding_session_exists_before_update
+            BEFORE UPDATE OF session_id ON session_bindings
+            WHEN NOT EXISTS (
+                SELECT 1 FROM sessions WHERE session_id = NEW.session_id
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'bound session does not exist');
+            END;
+            """
+        )
 
     @staticmethod
     def _ensure_session_binding_columns(conn: sqlite3.Connection) -> None:

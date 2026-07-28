@@ -1,3 +1,4 @@
+import json
 import threading
 import unittest
 from unittest import mock
@@ -130,6 +131,23 @@ class ProviderRetryTests(unittest.TestCase):
 
         self.assertEqual(ctx.exception.error_code, "PROVIDER_RESPONSE_INVALID")
         self.assertEqual(attempts["count"], 1)
+
+    def test_retry_retries_json_decode_failures_from_empty_provider_body(self) -> None:
+        attempts = {"count": 0}
+
+        def flaky_json() -> str:
+            attempts["count"] += 1
+            if attempts["count"] < 3:
+                raise json.JSONDecodeError("Expecting value", "", 0)
+            return "ok"
+
+        result = with_retry(
+            flaky_json,
+            policy=RetryPolicy(max_attempts=3, base_backoff_seconds=0),
+        )
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(attempts["count"], 3)
 
     def test_retry_stops_during_backoff_when_stop_event_is_set(self) -> None:
         attempts = {"count": 0}

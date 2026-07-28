@@ -1,0 +1,46 @@
+diff --git a/node_modules/taibu-core/dist/domains/bazi/calculate.js b/node_modules/taibu-core/dist/domains/bazi/calculate.js
+--- a/node_modules/taibu-core/dist/domains/bazi/calculate.js
++++ b/node_modules/taibu-core/dist/domains/bazi/calculate.js
+@@ -670,6 +670,7 @@ export function calculateBaziData(input) {
+     const { gender, birthPlace, } = input;
+     const { lunar, trueSolarTimeInfo } = resolveBaziCalendarContext(input);
+     const eightChar = lunar.getEightChar();
++    eightChar.setSect(1);
+     const yearStem = eightChar.getYearGan();
+     const yearBranch = eightChar.getYearZhi();
+     const monthStem = eightChar.getMonthGan();
+diff --git a/node_modules/taibu-core/dist/domains/bazi-dayun/calculate.js b/node_modules/taibu-core/dist/domains/bazi-dayun/calculate.js
+--- a/node_modules/taibu-core/dist/domains/bazi-dayun/calculate.js
++++ b/node_modules/taibu-core/dist/domains/bazi-dayun/calculate.js
+@@ -234,6 +234,7 @@ export function calculateDayunData(input) {
+         lunar = Solar.fromYmdHms(birthYear, birthMonth, birthDay, birthHour, birthMinute, 0).getLunar();
+     }
+     const eightChar = lunar.getEightChar();
++    eightChar.setSect(1);
+     const dayStem = eightChar.getDayGan();
+     const yearStem = eightChar.getYearGan();
+     const yearBranch = eightChar.getYearZhi();
+diff --git a/node_modules/taibu-core/dist/domains/bazi-pillars-resolve/calculate.js b/node_modules/taibu-core/dist/domains/bazi-pillars-resolve/calculate.js
+--- a/node_modules/taibu-core/dist/domains/bazi-pillars-resolve/calculate.js
++++ b/node_modules/taibu-core/dist/domains/bazi-pillars-resolve/calculate.js
+@@ -128,7 +128,11 @@ function reversePillarsToCandidates(pillars) {
+                 for (const hour of HOUR_BRANCH_MAP[pillars.hour.branch]) {
+                     try {
+-                        const solar = Solar.fromYmdHms(year, month, day, hour, 0, 0);
++                        const candidateDate = pillars.hour.branch === '子' && hour === 23
++                            ? Solar.fromYmd(year, month, day).next(-1)
++                            : Solar.fromYmd(year, month, day);
++                        const solar = Solar.fromYmdHms(candidateDate.getYear(), candidateDate.getMonth(), candidateDate.getDay(), hour, 0, 0);
+                         const ec = solar.getLunar().getEightChar();
++                        ec.setSect(1);
+                         // 最终强校验：年/月/日/时干支必须全部匹配
+                         const matches = ec.getYearGan() === pillars.year.stem &&
+                             ec.getYearZhi() === pillars.year.branch &&
+@@ -169,6 +173,6 @@ function reversePillarsToCandidates(pillars) {
+                             birthHour: hour,
+                             birthMinute: 0,
+-                            solarText: toSolarText(year, month, day, hour, 0),
++                            solarText: toSolarText(solar.getYear(), solar.getMonth(), solar.getDay(), hour, 0),
+                             lunarText: toLunarText(solar, pillars.hour.branch),
+                             nextCall: buildNextCallArgs(nextArgs),
+                         });

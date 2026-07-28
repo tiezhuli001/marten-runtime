@@ -132,20 +132,70 @@ def build_finalization_retry_request(
     finalization_evidence_ledger: FinalizationEvidenceLedger | None = None,
     invalid_final_text: str | None = None,
 ) -> LLMRequest:
+    updates: dict[str, object] = {
+        "conversation_messages": [],
+        "tool_outcome_summary_text": None,
+        "memory_text": None,
+        "tool_history": list(tool_history),
+        "tool_result": None,
+        "requested_tool_name": None,
+        "requested_tool_payload": {},
+        "available_tools": [],
+        "request_kind": "finalization_retry",
+        "finalization_evidence_ledger": finalization_evidence_ledger,
+        "invalid_final_text": " ".join(str(invalid_final_text or "").split()).strip()
+        or None,
+    }
+    if base_request.agent_id == "bazi":
+        updates.update(
+            {
+                "compact_summary_text": None,
+                "working_context": {},
+                "working_context_text": None,
+                "skill_heads_text": None,
+                "capability_catalog_text": None,
+                "always_on_skill_text": None,
+                "channel_protocol_instruction_text": None,
+                "repository_context_text": None,
+                "activated_skill_ids": [],
+                "activated_skill_bodies": [],
+            }
+        )
+    return base_request.model_copy(update=updates)
+
+
+def build_bazi_output_repair_request(
+    base_request: LLMRequest,
+    *,
+    invalid_final_text: str,
+    violations: list[str],
+) -> LLMRequest:
+    violation_text = "；".join(str(item or "").strip() for item in violations if str(item or "").strip())
+    repair_text = (
+        f"违规项：{violation_text}。\n原回复：{str(invalid_final_text or '').strip()}"
+    ).strip()
     return base_request.model_copy(
         update={
             "conversation_messages": [],
+            "compact_summary_text": None,
             "tool_outcome_summary_text": None,
             "memory_text": None,
-            "tool_history": list(tool_history),
+            "working_context": {},
+            "working_context_text": None,
+            "skill_heads_text": None,
+            "capability_catalog_text": None,
+            "always_on_skill_text": None,
+            "repository_context_text": None,
+            "activated_skill_ids": [],
+            "activated_skill_bodies": [],
+            "tool_history": [],
             "tool_result": None,
             "requested_tool_name": None,
             "requested_tool_payload": {},
             "available_tools": [],
-            "request_kind": "finalization_retry",
-            "finalization_evidence_ledger": finalization_evidence_ledger,
-            "invalid_final_text": " ".join(str(invalid_final_text or "").split()).strip()
-            or None,
+            "request_kind": "bazi_output_repair",
+            "finalization_evidence_ledger": None,
+            "invalid_final_text": repair_text or None,
         }
     )
 

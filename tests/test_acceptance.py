@@ -186,6 +186,11 @@ class PromptTooLongThenCompactThenFinalLLMClient:
 
     def complete(self, request):  # noqa: ANN001
         self.requests.append(request)
+        if request.request_kind == "agent_routing":
+            return LLMReply(
+                tool_name="agent_route",
+                tool_payload={"target_agent_id": "main"},
+            )
         self._calls += 1
         if self._calls == 1:
             raise RuntimeError("provider_http_error:400:prompt too long")
@@ -771,6 +776,11 @@ class AcceptanceTests(unittest.TestCase):
 
                 def complete(self, request):  # noqa: ANN001
                     self.requests.append(request)
+                    if request.request_kind == "agent_routing":
+                        return LLMReply(
+                            tool_name="agent_route",
+                            tool_payload={"target_agent_id": "main"},
+                        )
                     if request.request_kind == "session_summary":
                         return _normalize_reply_contract_metadata(
                             request,
@@ -1081,7 +1091,11 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(third.json()["events"][-1]["payload"]["text"], "proactive compact final")
         self.assertIsNotNone(session.latest_compacted_context)
         self.assertIn("当前进展", session.latest_compacted_context.summary_text)
-        active_requests = self._non_summary_requests(compacting_llm)
+        active_requests = [
+            request
+            for request in self._non_summary_requests(compacting_llm)
+            if request.request_kind != "agent_routing"
+        ]
         self.assertGreaterEqual(len(active_requests), 2)
         self.assertEqual(active_requests[0].agent_id, "compaction")
         self.assertIn("当前进展", active_requests[-1].compact_summary_text or "")
@@ -1137,7 +1151,11 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["events"][-1]["payload"]["text"], "reactive compact final")
-        active_requests = self._non_summary_requests(llm)
+        active_requests = [
+            request
+            for request in self._non_summary_requests(llm)
+            if request.request_kind != "agent_routing"
+        ]
         self.assertEqual(len(active_requests), 3)
         self.assertEqual(active_requests[1].agent_id, "compaction")
         self.assertIn("当前进展", active_requests[-1].compact_summary_text or "")

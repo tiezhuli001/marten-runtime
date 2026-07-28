@@ -76,6 +76,11 @@ def copy_repo_scaffold(
         fixtures_target = workspace_root / "evals" / "fixtures"
         fixtures_target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(fixtures_source, fixtures_target)
+    bridge_source = source_repo_root / "third_party" / "taibu_bridge"
+    if bridge_source.exists():
+        bridge_target = workspace_root / "third_party" / "taibu_bridge"
+        bridge_target.parent.mkdir(parents=True, exist_ok=True)
+        bridge_target.symlink_to(bridge_source.resolve(), target_is_directory=True)
     config_target = workspace_root / "config"
     config_target.mkdir(parents=True, exist_ok=True)
     (config_target / "knowledge.toml").write_text(_EVAL_KNOWLEDGE_CONFIG, encoding="utf-8")

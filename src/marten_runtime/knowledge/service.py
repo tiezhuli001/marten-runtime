@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Thread
+from threading import Lock, RLock, Thread
 
 from marten_runtime.knowledge.chunking import chunk_text
 from marten_runtime.knowledge.config import KnowledgeRuntimeConfig, embedding_config_hash
@@ -22,11 +23,23 @@ class _EmbedChunksResult:
     message: str = ""
 
 
+@dataclass(frozen=True)
+class _PreparedEmbeddings:
+    status: EmbeddingStatus
+    vectors: tuple[tuple[float, ...], ...] = ()
+    message: str = ""
+
+
 class KnowledgeService:
     def __init__(self, config: KnowledgeRuntimeConfig) -> None:
         self.config = config
         self.store = SQLiteKnowledgeStore(config.db_path)
-        self.jobs = KnowledgeIngestJobStore(self.store)
+        self.jobs = KnowledgeIngestJobStore(self.store, staging_root=_knowledge_staging_root(config))
+        self._job_recovery_status = self.jobs.reconcile_startup()
+        self._source_locks_guard = Lock()
+        self._source_locks: dict[tuple[str, str], tuple[Lock, int]] = {}
+        # Local embedding and reranker models are large and their lazy loaders are not thread-safe.
+        self._model_runtime_lock = RLock()
         self.embedding_config_hash = embedding_config_hash(config.embedding)
         self.embedding_adapter = (
             FakeEmbeddingAdapter(dimension=config.embedding.dimension, model_id=config.embedding.model)
@@ -67,12 +80,25 @@ class KnowledgeService:
             "vector_store_status": "indexed" if embedding_status == EmbeddingStatus.AVAILABLE else "disabled",
         }
 
-    def ingest_file(self, *, namespace: str, file_path: str, source: dict[str, object]) -> dict[str, object]:
+    def ingest_file(
+        self,
+        *,
+        namespace: str,
+        file_path: str,
+        source: dict[str, object],
+        staged_file_path: str = "",
+    ) -> dict[str, object]:
         self.unload_idle_models()
         namespace = _namespace(namespace, self.config.default_namespace)
         path = self._resolve_file_path(file_path)
+        if staged_file_path:
+            self.jobs.validate_staged_file(staged_file_path=staged_file_path, file_path=path)
         source_title = str(source.get("title") or path.name)
-        job_id = self.jobs.create_job(namespace=namespace, source_title=source_title)
+        job_id = self.jobs.create_job(
+            namespace=namespace,
+            source_title=source_title,
+            staged_file_path=staged_file_path,
+        )
         thread = Thread(
             target=self._run_file_ingest_job,
             kwargs={
@@ -102,8 +128,14 @@ class KnowledgeService:
             return {"ok": False, "error_code": "KNOWLEDGE_JOB_NOT_FOUND", "job_id": job_id}
         return {"ok": True, **job}
 
+    @property
+    def job_recovery_status(self) -> dict[str, object]:
+        return {
+            **self._job_recovery_status,
+            "cleanup_failures": list(self.jobs.cleanup_failures),
+        }
+
     def cancel_ingest(self, *, namespace: str, job_id: str) -> dict[str, object]:
-        self.unload_idle_models()
         return self.jobs.cancel(namespace=_namespace(namespace, self.config.default_namespace), job_id=job_id)
 
     def search(
@@ -127,24 +159,25 @@ class KnowledgeService:
                 "top_k": resolved_top_k,
                 "message": "top_k must be >= 1",
             }
-        query_result = self.embedding_adapter.embed_texts([query])
-        if query_result.status == EmbeddingStatus.MISSING_MODEL:
-            return {
-                "ok": False,
-                "error_code": "KNOWLEDGE_QUERY_EMBEDDING_UNAVAILABLE",
-                "embedding_status": _public_embedding_status(query_result.status),
-                "message": query_result.message or "query embedding is unavailable",
-            }
-        query_vector = query_result.vectors[0] if query_result.vectors else []
-        result = self.retriever.search(
-            namespace=namespace,
-            query=query,
-            embedding_config_hash=self.embedding_config_hash,
-            query_vector=query_vector,
-            top_k=resolved_top_k,
-            filters=filters,
-        )
-        self.unload_idle_models()
+        with self._model_runtime_lock:
+            query_result = self.embedding_adapter.embed_texts([query])
+            if query_result.status == EmbeddingStatus.MISSING_MODEL:
+                return {
+                    "ok": False,
+                    "error_code": "KNOWLEDGE_QUERY_EMBEDDING_UNAVAILABLE",
+                    "embedding_status": _public_embedding_status(query_result.status),
+                    "message": query_result.message or "query embedding is unavailable",
+                }
+            query_vector = query_result.vectors[0] if query_result.vectors else []
+            result = self.retriever.search(
+                namespace=namespace,
+                query=query,
+                embedding_config_hash=self.embedding_config_hash,
+                query_vector=query_vector,
+                top_k=resolved_top_k,
+                filters=filters,
+            )
+            self.unload_idle_models()
         return {"ok": True, **result.model_dump(mode="json")}
 
     def get_chunk(self, *, namespace: str, chunk_id: str) -> dict[str, object]:
@@ -157,7 +190,8 @@ class KnowledgeService:
     def delete_source(self, *, namespace: str, source_id: str) -> dict[str, object]:
         self.unload_idle_models()
         namespace = _namespace(namespace, self.config.default_namespace)
-        result = self.store.delete_source(namespace, source_id)
+        with self._source_lock(namespace, source_id):
+            result = self.store.delete_source(namespace, source_id)
         return {"ok": True, "namespace": namespace, **result.model_dump(mode="json")}
 
     def reindex(self, *, namespace: str, source_id: str | None = None) -> dict[str, object]:
@@ -228,26 +262,28 @@ class KnowledgeService:
         }
 
     def unload_models(self) -> dict[str, object]:
-        embedding_unloaded = self.embedding_adapter.unload()
-        reranker_unloaded = self.reranker_adapter.unload()
-        ttl = self.config.model_idle_ttl_seconds
-        return {
-            "ok": True,
-            "action": "unload_models",
-            "embedding_unloaded": embedding_unloaded,
-            "reranker_unloaded": reranker_unloaded,
-            "embedding": self.embedding_adapter.model_status(idle_ttl_seconds=ttl),
-            "reranker": self.reranker_adapter.model_status(idle_ttl_seconds=ttl),
-        }
+        with self._model_runtime_lock:
+            embedding_unloaded = self.embedding_adapter.unload()
+            reranker_unloaded = self.reranker_adapter.unload()
+            ttl = self.config.model_idle_ttl_seconds
+            return {
+                "ok": True,
+                "action": "unload_models",
+                "embedding_unloaded": embedding_unloaded,
+                "reranker_unloaded": reranker_unloaded,
+                "embedding": self.embedding_adapter.model_status(idle_ttl_seconds=ttl),
+                "reranker": self.reranker_adapter.model_status(idle_ttl_seconds=ttl),
+            }
 
     def unload_idle_models(self) -> dict[str, object]:
-        ttl = self.config.model_idle_ttl_seconds
-        if ttl <= 0:
-            return {"embedding_unloaded": False, "reranker_unloaded": False}
-        return {
-            "embedding_unloaded": _unload_if_idle(self.embedding_adapter, ttl),
-            "reranker_unloaded": _unload_if_idle(self.reranker_adapter, ttl),
-        }
+        with self._model_runtime_lock:
+            ttl = self.config.model_idle_ttl_seconds
+            if ttl <= 0:
+                return {"embedding_unloaded": False, "reranker_unloaded": False}
+            return {
+                "embedding_unloaded": _unload_if_idle(self.embedding_adapter, ttl),
+                "reranker_unloaded": _unload_if_idle(self.reranker_adapter, ttl),
+            }
 
     def _run_file_ingest_job(self, *, namespace: str, job_id: str, path: Path, source: dict[str, object]) -> None:
         title = str(source.get("title") or path.name)
@@ -268,35 +304,65 @@ class KnowledgeService:
                 source={**source, "kind": str(source.get("kind") or "txt"), "uri": str(source.get("uri") or path.as_uri())},
                 text=text,
             )
-            total = len(chunks)
-            self.store.upsert_source(source_model)
-            self.store.replace_chunks(namespace, source_model.source_id, chunks)
-            self.jobs.update(namespace=namespace, job_id=job_id, source_title=title, status="embedding", chunks_total=total, chunks_embedded=0, message="embedding")
-            if self.jobs.is_cancelled(namespace=namespace, job_id=job_id):
-                return
-            embedded = self._embed_chunks(namespace, chunks, job_id=job_id, source_title=title)
-            if isinstance(embedded, _EmbedChunksResult):
-                embedded_count = embedded.embedded_count
-                embedding_status = embedded.status
-            else:
-                embedding_status = embedded
-            if embedding_status != EmbeddingStatus.AVAILABLE:
-                self.jobs.update(
+            with self._source_lock(namespace, source_model.source_id):
+                if self.jobs.is_cancelled(namespace=namespace, job_id=job_id):
+                    return
+                total = len(chunks)
+                self.jobs.update(namespace=namespace, job_id=job_id, source_title=title, status="embedding", chunks_total=total, chunks_embedded=0, message="embedding")
+                if self.jobs.is_cancelled(namespace=namespace, job_id=job_id):
+                    return
+                prepared = self._prepare_file_embeddings(
+                    namespace=namespace,
+                    chunks=chunks,
+                    job_id=job_id,
+                    source_title=title,
+                )
+                embedded_count = len(prepared.vectors)
+                if prepared.status != EmbeddingStatus.AVAILABLE:
+                    self.jobs.update(
+                        namespace=namespace,
+                        job_id=job_id,
+                        source_title=title,
+                        status="failed",
+                        chunks_total=total,
+                        chunks_embedded=embedded_count,
+                        message="embedding_failed",
+                        error=(
+                            f"embedding_status={_public_embedding_status(prepared.status)}"
+                            + (f"; {prepared.message}" if prepared.message else "")
+                        ),
+                        error_code="KNOWLEDGE_INGEST_EMBEDDING_UNAVAILABLE",
+                        retryable=True,
+                    )
+                    return
+                if self.jobs.is_cancelled(namespace=namespace, job_id=job_id):
+                    return
+                published = self.store.complete_ingest_job_with_source_bundle(
                     namespace=namespace,
                     job_id=job_id,
                     source_title=title,
-                    status="failed",
-                    chunks_total=total,
-                    chunks_embedded=embedded_count,
-                    message="embedding_failed",
-                    error=f"embedding_status={_public_embedding_status(embedding_status)}",
+                    source=source_model,
+                    chunks=chunks,
+                    vectors=[list(vector) for vector in prepared.vectors],
+                    model_id=self.config.embedding.model,
+                    dimension=self.config.embedding.dimension,
+                    embedding_config_hash=self.embedding_config_hash,
                 )
-                return
-            if self.jobs.is_cancelled(namespace=namespace, job_id=job_id):
-                return
-            self.jobs.update(namespace=namespace, job_id=job_id, source_title=title, status="completed", chunks_total=total, chunks_embedded=embedded_count, message="completed")
+                if published:
+                    self.jobs.cleanup_terminal(namespace=namespace, job_id=job_id)
         except Exception as exc:  # noqa: BLE001
-            self.jobs.update(namespace=namespace, job_id=job_id, source_title=title, status="failed", chunks_total=total, chunks_embedded=embedded_count, message="failed", error=str(exc))
+            self.jobs.update(
+                namespace=namespace,
+                job_id=job_id,
+                source_title=title,
+                status="failed",
+                chunks_total=total,
+                chunks_embedded=embedded_count,
+                message="failed",
+                error=str(exc),
+                error_code="KNOWLEDGE_INGEST_FAILED",
+                retryable=True,
+            )
 
     def _prepare_source_chunks(self, *, namespace: str, source: dict[str, object], text: str) -> tuple[KnowledgeSource, list[KnowledgeChunk]]:
         source_id = str(source.get("source_id") or "").strip()
@@ -331,31 +397,103 @@ class KnowledgeService:
             return repo_root / path
         return path.resolve()
 
+    @contextmanager
+    def _source_lock(self, namespace: str, source_id: str):  # noqa: ANN202
+        key = (namespace, source_id)
+        with self._source_locks_guard:
+            entry = self._source_locks.get(key)
+            if entry is None:
+                lock = Lock()
+                users = 1
+            else:
+                lock, users = entry
+                users += 1
+            self._source_locks[key] = (lock, users)
+        try:
+            with lock:
+                yield
+        finally:
+            with self._source_locks_guard:
+                current_lock, current_users = self._source_locks[key]
+                if current_users == 1:
+                    del self._source_locks[key]
+                else:
+                    self._source_locks[key] = (current_lock, current_users - 1)
+
     def _embed_chunks(self, namespace: str, chunks: list, *, job_id: str | None = None, source_title: str = "") -> EmbeddingStatus | _EmbedChunksResult:
-        embedded = 0
-        total = len(chunks)
-        for start in range(0, total, self.config.chunking.batch_size):
-            batch = chunks[start : start + self.config.chunking.batch_size]
-            embedding_result = self.embedding_adapter.embed_texts([chunk.text for chunk in batch])
-            if embedding_result.status != EmbeddingStatus.AVAILABLE:
+        with self._model_runtime_lock:
+            embedded = 0
+            total = len(chunks)
+            for start in range(0, total, self.config.chunking.batch_size):
+                batch = chunks[start : start + self.config.chunking.batch_size]
+                embedding_result = self.embedding_adapter.embed_texts([chunk.text for chunk in batch])
+                if embedding_result.status != EmbeddingStatus.AVAILABLE:
+                    if job_id:
+                        return _EmbedChunksResult(status=embedding_result.status, embedded_count=embedded, message=embedding_result.message)
+                    return embedding_result.status
+                for chunk, vector in zip(batch, embedding_result.vectors, strict=True):
+                    self.store.upsert_embedding(
+                        namespace=namespace,
+                        chunk_id=chunk.chunk_id,
+                        model_id=self.config.embedding.model,
+                        dimension=self.config.embedding.dimension,
+                        embedding_config_hash=self.embedding_config_hash,
+                        vector=vector,
+                    )
+                    embedded += 1
                 if job_id:
-                    return _EmbedChunksResult(status=embedding_result.status, embedded_count=embedded, message=embedding_result.message)
-                return embedding_result.status
-            for chunk, vector in zip(batch, embedding_result.vectors, strict=True):
-                self.store.upsert_embedding(
+                    self.jobs.update(namespace=namespace, job_id=job_id, source_title=source_title, status="embedding", chunks_total=total, chunks_embedded=embedded, message="embedding")
+            self.store.set_namespace_config_hash(namespace, self.embedding_config_hash)
+            self.unload_idle_models()
+            return _EmbedChunksResult(status=EmbeddingStatus.AVAILABLE, embedded_count=embedded) if job_id else EmbeddingStatus.AVAILABLE
+
+    def _prepare_file_embeddings(
+        self,
+        *,
+        namespace: str,
+        chunks: list[KnowledgeChunk],
+        job_id: str,
+        source_title: str,
+    ) -> _PreparedEmbeddings:
+        with self._model_runtime_lock:
+            vectors: list[tuple[float, ...]] = []
+            total = len(chunks)
+            for start in range(0, total, self.config.chunking.batch_size):
+                if self.jobs.is_cancelled(namespace=namespace, job_id=job_id):
+                    return _PreparedEmbeddings(
+                        status=EmbeddingStatus.DISABLED,
+                        message="ingest was cancelled",
+                    )
+                batch = chunks[start : start + self.config.chunking.batch_size]
+                result = self.embedding_adapter.embed_texts([chunk.text for chunk in batch])
+                if result.status != EmbeddingStatus.AVAILABLE:
+                    return _PreparedEmbeddings(
+                        status=result.status,
+                        vectors=tuple(vectors),
+                        message=result.message,
+                    )
+                vectors.extend(tuple(float(value) for value in vector) for vector in result.vectors)
+                self.jobs.update(
                     namespace=namespace,
-                    chunk_id=chunk.chunk_id,
-                    model_id=self.config.embedding.model,
-                    dimension=self.config.embedding.dimension,
-                    embedding_config_hash=self.embedding_config_hash,
-                    vector=vector,
+                    job_id=job_id,
+                    source_title=source_title,
+                    status="embedding",
+                    chunks_total=total,
+                    chunks_embedded=len(vectors),
+                    message="embedding",
                 )
-                embedded += 1
-            if job_id:
-                self.jobs.update(namespace=namespace, job_id=job_id, source_title=source_title, status="embedding", chunks_total=total, chunks_embedded=embedded, message="embedding")
-        self.store.set_namespace_config_hash(namespace, self.embedding_config_hash)
-        self.unload_idle_models()
-        return _EmbedChunksResult(status=EmbeddingStatus.AVAILABLE, embedded_count=embedded) if job_id else EmbeddingStatus.AVAILABLE
+            self.unload_idle_models()
+            return _PreparedEmbeddings(
+                status=EmbeddingStatus.AVAILABLE,
+                vectors=tuple(vectors),
+            )
+
+
+def _knowledge_staging_root(config: KnowledgeRuntimeConfig) -> Path:
+    repo_root = str(config.repo_root or "").strip()
+    if repo_root:
+        return Path(repo_root) / "data" / "knowledge" / "uploads"
+    return Path(config.db_path).parent / "uploads"
 
 
 def _namespace(value: str, default: str) -> str:
@@ -386,7 +524,7 @@ def _unload_if_idle(adapter: object, ttl_seconds: float) -> bool:
 
 def _read_text_file(path: Path, *, encoding: str) -> str:
     configured = str(encoding or "auto").strip().lower()
-    encodings = [configured] if configured and configured != "auto" else ["utf-8", "utf-8-sig", "gb18030"]
+    encodings = [configured] if configured and configured != "auto" else ["utf-8-sig", "utf-8", "gb18030"]
     last_error: UnicodeDecodeError | None = None
     for candidate in encodings:
         try:

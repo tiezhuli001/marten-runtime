@@ -93,6 +93,23 @@ class KnowledgeDeleteResult(BaseModel):
     deleted_chunk_count: int
 
 
+class KnowledgeIngestJob(BaseModel):
+    namespace: str
+    job_id: str
+    source_title: str = ""
+    status: str
+    chunks_total: int = 0
+    chunks_embedded: int = 0
+    percent: float = 0.0
+    message: str = ""
+    error: str = ""
+    error_code: str = ""
+    retryable: bool = False
+    staged_file_path: str = ""
+    created_at: str
+    updated_at: str
+
+
 class KnowledgeEmbeddingRecord(BaseModel):
     namespace: str
     chunk_id: str

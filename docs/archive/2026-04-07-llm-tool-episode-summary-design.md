@@ -542,3 +542,18 @@ For `marten-runtime`, the right thin design is:
 - **scope:** remain session-local, budgeted, and non-platformized
 
 This is the smallest design that preserves "what the tool turn accomplished" without overbuilding the runtime.
+
+## 22. Implementation Plan Evidence
+
+The former detailed execution plan has been absorbed into this design and the architecture changelog.
+
+Durable implementation contract:
+
+- same-turn tool follow-up keeps the complete protocol required for correctness
+- cross-turn continuity uses a bounded, session-local LLM-generated episode summary
+- volatile results trigger refresh behavior instead of becoming durable truth
+- summarization runs after the user-visible turn and failure keeps the main turn usable
+- deterministic extraction remains a small degraded fallback
+- focused summary, fallback, reinjection, session, acceptance, real MCP, skill, and volatile-tool checks protect the boundary
+
+The current continuity model is summarized in `.cs/spec/continuity-and-capabilities.md`.

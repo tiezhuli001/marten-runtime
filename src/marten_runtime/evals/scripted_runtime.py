@@ -9,6 +9,7 @@ from marten_runtime.runtime.finalization_contract_prompt import (
     render_finalization_contract_block,
 )
 from marten_runtime.runtime.llm_client import LLMReply, _normalize_reply_contract_metadata
+from marten_runtime.runtime.tool_followup_support import build_finalization_evidence_ledger
 from marten_runtime.tools.builtins.time_tool import render_time_tool_text
 
 
@@ -21,6 +22,14 @@ def _contracted_final_reply(final_text: str) -> LLMReply:
 
 def _plain_final_reply(final_text: str) -> LLMReply:
     return LLMReply(final_text=str(final_text or "").strip())
+
+
+def _result_covered_final_reply(final_text: str) -> LLMReply:
+    visible_text = str(final_text or "").strip()
+    block = render_finalization_contract_block(
+        FinalizationContractDraft(requires_result_coverage=True)
+    )
+    return LLMReply(final_text=f"{visible_text}\n{block}".strip())
 
 
 def _empty_session_summary_reply() -> LLMReply:
@@ -51,6 +60,16 @@ class ScriptedEvalLLMClient:
 
     def complete(self, request):  # noqa: ANN001
         self.requests.append(request)
+        if request.request_kind == "agent_routing":
+            message = str(request.message or "")
+            target = "bazi" if self.case_id.startswith("bazi_") or any(
+                marker in message
+                for marker in ("八字", "四柱", "农历", "子平", "盲派", "大运")
+            ) else "main"
+            return LLMReply(
+                tool_name="agent_route",
+                tool_payload={"target_agent_id": target},
+            )
         if request.request_kind == "session_summary":
             return _normalize_reply_contract_metadata(
                 request,
@@ -70,6 +89,44 @@ class ScriptedEvalLLMClient:
             return _normalize_reply_contract_metadata(
                 request,
                 _scripted_subagent_child_reply(self, request),
+            )
+        if request.request_kind == "bazi_dayun_repair" and self.case_id.startswith("bazi_"):
+            return _normalize_reply_contract_metadata(
+                request,
+                LLMReply(
+                    tool_name="bazi",
+                    tool_payload=dict(request.requested_tool_payload or {"action": "dayun"}),
+                ),
+            )
+        if request.request_kind == "bazi_knowledge_search" and self.case_id.startswith("bazi_"):
+            query = (
+                "no_matching_theory_token"
+                if self.case_id == "bazi_no_recall_degradation_cn"
+                else "bazi_theory_evidence_boundary"
+            )
+            payload = {
+                **dict(request.requested_tool_payload or {}),
+                "action": "search",
+                "namespace": "bazi-theory",
+                "query": query,
+                "top_k": 3,
+            }
+            if self.case_id == "bazi_no_recall_degradation_cn":
+                payload["filters"] = {"school": "missing-school"}
+            return _normalize_reply_contract_metadata(
+                request,
+                LLMReply(
+                    tool_name="knowledge",
+                    tool_payload=payload,
+                ),
+            )
+        if request.request_kind == "finalization_retry" and self.case_id.startswith("bazi_"):
+            return _normalize_reply_contract_metadata(
+                request,
+                _bazi_result_covered_reply(
+                    request,
+                    _scripted_bazi_analysis_text(),
+                ),
             )
         if request.tool_result is not None:
             scripted = _scripted_tool_followup_reply(self, request)
@@ -107,6 +164,9 @@ class ScriptedEvalLLMClient:
         scripted_knowledge = _scripted_knowledge_suite_reply(self)
         if scripted_knowledge is not None:
             return _normalize_reply_contract_metadata(request, scripted_knowledge)
+        scripted_bazi = _scripted_bazi_suite_reply(self)
+        if scripted_bazi is not None:
+            return _normalize_reply_contract_metadata(request, scripted_bazi)
         return _normalize_reply_contract_metadata(
             request,
             _scripted_main_chain_reply(self, request, message),
@@ -177,6 +237,8 @@ def configure_scripted_runtime(runtime, case: EvalCaseSpec, *, provider_name: st
     runtime.runtime_loop.llm = llm
     for name in runtime.models_config.profiles:
         runtime.llm_client_factory.cache_client(name, llm)
+    if case.case_id == "bazi_fingerprint_mismatch_cn":
+        _install_bazi_fingerprint_mismatch_fixture(runtime)
     isolated_reply_text = _isolated_compaction_reply_text(case.case_id)
     if isolated_reply_text is not None:
         runtime.llm_client_factory.create_isolated = lambda profile_name: FixedReplyLLMClient(  # type: ignore[method-assign]
@@ -184,6 +246,22 @@ def configure_scripted_runtime(runtime, case: EvalCaseSpec, *, provider_name: st
             model_name=model_name,
             reply_text=isolated_reply_text,
         )
+
+
+def _install_bazi_fingerprint_mismatch_fixture(runtime) -> None:  # noqa: ANN001
+    registry = runtime.tool_registry
+    original_handler = registry._handlers["bazi"]
+
+    def mismatched_bazi_handler(payload, *, tool_context=None):  # noqa: ANN001, ANN202
+        result = original_handler(payload, tool_context=tool_context)
+        if payload.get("action") != "dayun" or result.get("ok") is not True:
+            return result
+        return {
+            **result,
+            "inputFingerprint": f"sha256:{'f' * 64}",
+        }
+
+    registry._handlers["bazi"] = mismatched_bazi_handler
 
 
 def _isolated_compaction_reply_text(case_id: str) -> str | None:
@@ -195,6 +273,8 @@ def _isolated_compaction_reply_text(case_id: str) -> str | None:
 
 
 def _scripted_tool_followup_reply(llm: ScriptedEvalLLMClient, request) -> LLMReply | None:  # noqa: ANN001
+    if llm.case_id.startswith("bazi_"):
+        return _scripted_bazi_tool_followup(llm, request)
     if llm.case_id in {
         "memory_capture_preference_cn",
         "memory_delayed_recall_same_session_cn",
@@ -464,6 +544,200 @@ def _scripted_knowledge_suite_reply(llm: ScriptedEvalLLMClient) -> LLMReply | No
         tool_name="knowledge",
         tool_payload={"action": "search", "namespace": "fanqie", "query": query_by_case.get(llm.case_id, llm.case_id), "top_k": 5},
     )
+
+
+def _scripted_bazi_suite_reply(llm: ScriptedEvalLLMClient) -> LLMReply | None:
+    if not llm.case_id.startswith("bazi_"):
+        return None
+    if llm.case_id == "bazi_resolve_pillars_cn":
+        return LLMReply(
+            tool_name="bazi",
+            tool_payload={
+                "action": "resolve_pillars",
+                "yearPillar": "戊辰",
+                "monthPillar": "甲寅",
+                "dayPillar": "辛丑",
+                "hourPillar": "戊子",
+            },
+        )
+    return LLMReply(tool_name="bazi", tool_payload=_bazi_birth_payload("chart"))
+
+
+def _scripted_bazi_tool_followup(llm: ScriptedEvalLLMClient, request) -> LLMReply:
+    tool_name = str(request.requested_tool_name or "")
+    action = str((request.requested_tool_payload or {}).get("action") or "")
+    result = request.tool_result if isinstance(request.tool_result, dict) else {}
+    if tool_name == "bazi":
+        fingerprint = str(result.get("inputFingerprint") or "")
+        if action == "resolve_pillars":
+            return _bazi_result_covered_reply(
+                request, "反查候选已由 bazi engine 返回。"
+            )
+        if action == "chart":
+            llm.context["bazi_chart_fingerprint"] = fingerprint
+            if llm.case_id in {
+                "bazi_dayun_citation_cn",
+                "bazi_fingerprint_mismatch_cn",
+                "bazi_theory_citation_cn",
+            }:
+                payload = _bazi_birth_payload("dayun")
+                return LLMReply(tool_name="bazi", tool_payload=payload)
+            knowledge_payload = {
+                    "action": "search",
+                    "namespace": "bazi-theory",
+                    "query": (
+                        "no_matching_theory_token"
+                        if llm.case_id == "bazi_no_recall_degradation_cn"
+                        else "bazi_theory_evidence_boundary"
+                    ),
+                    "top_k": 3,
+                }
+            if llm.case_id == "bazi_no_recall_degradation_cn":
+                knowledge_payload["filters"] = {"school": "missing-school"}
+            return LLMReply(
+                tool_name="knowledge",
+                tool_payload=knowledge_payload,
+            )
+        if action == "dayun":
+            chart_fingerprint = str(llm.context.get("bazi_chart_fingerprint") or "")
+            if not chart_fingerprint:
+                chart_fingerprint = _bazi_fingerprint_from_history(
+                    request.tool_history, "chart"
+                )
+            if llm.case_id == "bazi_fingerprint_mismatch_cn":
+                return _bazi_result_covered_reply(
+                    request,
+                    f"chart={chart_fingerprint}; dayun={fingerprint}; fingerprint 不一致，停止综合解释。",
+                )
+            return LLMReply(
+                tool_name="knowledge",
+                tool_payload={
+                    "action": "search",
+                    "namespace": "bazi-theory",
+                    "query": "bazi_theory_evidence_boundary",
+                    "top_k": 3,
+                },
+            )
+    if tool_name == "knowledge":
+        references = [
+            _readable_bazi_reference(item)
+            for item in result.get("results") or []
+            if isinstance(item, dict)
+        ]
+        references = [item for item in references if item]
+        if not references:
+            return _bazi_result_covered_reply(
+                request,
+                "排盘事实保留；theory 暂不可用。现实建议应结合当前信息和专业支持。",
+            )
+        return _bazi_result_covered_reply(
+            request,
+            _scripted_bazi_analysis_text(),
+        )
+    return _result_covered_final_reply("Bazi scripted evaluation completed.")
+
+
+def _bazi_fingerprint_from_history(tool_history, action: str) -> str:  # noqa: ANN001
+    for exchange in reversed(tool_history):
+        if exchange.tool_name != "bazi":
+            continue
+        exchange_action = str(
+            exchange.tool_payload.get("action")
+            or exchange.tool_result.get("action")
+            or ""
+        ).strip()
+        if exchange_action == action:
+            return str(exchange.tool_result.get("inputFingerprint") or "").strip()
+    return ""
+
+
+def _bazi_birth_payload(action: str) -> dict[str, object]:
+    return {
+        "action": action,
+        "gender": "male",
+        "birthYear": 1988,
+        "birthMonth": 2,
+        "birthDay": 15,
+        "birthHour": 23,
+        "birthMinute": 30,
+        "calendarType": "solar",
+        "timeBasis": "clock",
+        "sourceTimeStandard": "beijing_standard",
+    }
+
+
+def _scripted_bazi_analysis_text() -> str:
+    return (
+        "一、命盘\n天干：戊　甲　辛　戊\n地支：辰　寅　丑　子\n天干、地支与大运以本轮 taibu-core-marten 结果为准。\n\n"
+        "二、原局格局喜用\n按格局、旺衰、调候、病药、财官、体用、做功和喜忌综合判断。\n\n"
+        "三、大运\n按原局与已核验行运说明阶段变化。\n\n"
+        "四、健康注意\n2006（丙戌）｜待核验脾胃检查、治疗或开刀经历｜流年戌冲原局年支辰，并与日支丑形成刑，岁运共同引动土象病位；现实判断结合现实信息和专业支持。\n\n"
+        "五、学历\n本科｜2006 年前后完成关键升学｜流年丙戌处于已核验大运，引动原局印食结构，待本人核验。\n\n"
+        "六、事业\n2012-2014 年进入专业输出型岗位｜食伤做功在对应行运得到发挥。\n\n"
+        "七、婚姻\n日支丑的婚姻桃花为午。2014（甲午）财星透出、午为日支丑的桃花，并与时支子相冲，是首次结婚窗口。\n\n"
+        "八、六亲\n2006（丙戌）｜待核验父亲脾胃检查｜流年戌冲年支辰，父星与年柱土象同步受作用。\n2016（丙申）｜待核验母亲腿脚或胆部检查｜流年申冲月支寅，母星与月柱寅木身体取象同步受作用。\n\n"
+        "九、财富等级\n财富结构分：6/9＝成局路径 2 + 承载 2 + 大运 3 - 制约 1。无财时由食伤生财或暗成财局参与成局路径，官印、杀印、食神制杀与禄只在成格时作为职业变现通道，不直接改称财星。命理年收入能力区间：30-60 万元；这是传统文化模型估算，不等同现实收入。未提供储蓄率、资产和负债，不能换算净积累与总资产。\n\n"
+        "十、过三关\n"
+        "2006（丙戌）｜待核验关键升学结果｜推算原因：流年：丙戌引动学习结构；大运：本轮已核验行运；原局：印食结构被引动。\n"
+        "2014（甲午）｜待核验出现重要恋爱对象｜推算原因：流年：甲午为日支丑的桃花；大运：本轮已核验行运；原局：夫妻宫被桃花引动。\n"
+        "2006（丙戌）｜待核验本人脾胃检查｜推算原因：流年：丙戌冲年支辰、刑日支丑；大运：本轮已核验行运；原局：脾胃土象被引动。\n"
+        "2016（丙申）｜待核验家庭环境变化｜推算原因：流年：丙申冲月支寅；大运：本轮已核验行运；原局：月柱家庭宫位被引动。\n\n"
+        "十一、参考依据\n使用本轮检索到的书名与篇章。"
+    )
+
+
+def _bazi_result_covered_reply(request, final_text: str) -> LLMReply:  # noqa: ANN001
+    ledger = build_finalization_evidence_ledger(
+        user_message=str(request.message or ""),
+        tool_history=list(request.tool_history),
+        model_request_count=None,
+        requires_result_coverage=True,
+        requires_round_trip_report=False,
+    )
+    summaries = [
+        str(item.result_summary).strip()
+        for item in ledger.items
+        if item.required_for_user_request and str(item.result_summary or "").strip()
+    ]
+    visible_text = str(final_text or "").strip()
+    references = _bazi_knowledge_references(request.tool_history)
+    missing_references = [item for item in references if item not in visible_text]
+    if missing_references:
+        rendered = "、".join(missing_references)
+        visible_text = f"{visible_text}\n参考依据：{rendered}。".strip()
+    return _result_covered_final_reply("\n\n".join([*summaries, visible_text]))
+
+
+def _bazi_knowledge_references(tool_history) -> list[str]:  # noqa: ANN001
+    references: list[str] = []
+    for exchange in tool_history:
+        if str(exchange.tool_name or "").strip() != "knowledge":
+            continue
+        action = str(
+            exchange.tool_payload.get("action")
+            or exchange.tool_result.get("action")
+            or ""
+        ).strip()
+        if action != "search":
+            continue
+        for item in exchange.tool_result.get("results") or []:
+            if not isinstance(item, dict):
+                continue
+            source_id = str(item.get("source_id") or "").strip()
+            chunk_id = str(item.get("chunk_id") or "").strip()
+            reference = _readable_bazi_reference(item)
+            if source_id and chunk_id and reference and reference not in references:
+                references.append(reference)
+    return references
+
+
+def _readable_bazi_reference(item: dict[str, object]) -> str:
+    title = str(item.get("source_title") or "").strip()
+    if not title:
+        return ""
+    heading = str(item.get("heading") or "").strip()
+    book = title if title.startswith("《") else f"《{title}》"
+    return f"{book}·{heading}" if heading else book
 
 
 def _scripted_subagent_child_reply(llm: ScriptedEvalLLMClient, request) -> LLMReply:  # noqa: ANN001

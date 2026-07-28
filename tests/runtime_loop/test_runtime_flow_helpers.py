@@ -11,6 +11,7 @@ from marten_runtime.runtime.request_flow import (
     resolve_request_responses_api,
     resolve_request_timeout_seconds,
 )
+from marten_runtime.runtime.tool_followup_support import build_finalization_retry_request
 
 
 class DummyLLM:
@@ -87,6 +88,82 @@ class RuntimeProviderFlowHelperTests(unittest.TestCase):
                 responses_api=False,
             ),
             40,
+        )
+
+    def test_bazi_finalization_has_budget_for_detailed_analysis(self) -> None:
+        request = _request().model_copy(
+            update={"agent_id": "bazi", "request_kind": "finalization_retry"}
+        )
+
+        self.assertEqual(resolve_request_timeout_seconds(request), 90)
+        self.assertEqual(
+            resolve_request_timeout_seconds(
+                request.model_copy(update={"agent_id": "main"})
+            ),
+            20,
+        )
+        self.assertEqual(
+            resolve_request_timeout_seconds(
+                request.model_copy(update={"request_kind": "bazi_output_repair"})
+            ),
+            90,
+        )
+
+    def test_bazi_finalization_retry_discards_nonessential_context(self) -> None:
+        request = _request().model_copy(
+            update={
+                "agent_id": "bazi",
+                "compact_summary_text": "large summary",
+                "working_context": {"large": "context"},
+                "working_context_text": "large working context",
+                "skill_heads_text": "skill heads",
+                "capability_catalog_text": "capabilities",
+                "always_on_skill_text": "always on",
+                "channel_protocol_instruction_text": "card protocol",
+                "repository_context_text": "repository context",
+                "activated_skill_ids": ["bazi_analysis"],
+                "activated_skill_bodies": ["large skill body"],
+            }
+        )
+
+        retry = build_finalization_retry_request(
+            request,
+            tool_history=[],
+        )
+
+        self.assertIsNone(retry.compact_summary_text)
+        self.assertEqual(retry.working_context, {})
+        self.assertIsNone(retry.working_context_text)
+        self.assertIsNone(retry.skill_heads_text)
+        self.assertIsNone(retry.capability_catalog_text)
+        self.assertIsNone(retry.always_on_skill_text)
+        self.assertIsNone(retry.channel_protocol_instruction_text)
+        self.assertIsNone(retry.repository_context_text)
+        self.assertEqual(retry.activated_skill_ids, [])
+        self.assertEqual(retry.activated_skill_bodies, [])
+
+    def test_bazi_generation_after_knowledge_search_has_detailed_analysis_budget(self) -> None:
+        request = _request(model_name="gpt-5.4").model_copy(
+            update={
+                "agent_id": "bazi",
+                "request_kind": "interactive",
+                "tool_history": [
+                    ToolExchange(
+                        tool_name="knowledge",
+                        tool_payload={"action": "search"},
+                        tool_result={"ok": True, "action": "search"},
+                    )
+                ],
+            }
+        )
+
+        self.assertEqual(
+            resolve_request_timeout_seconds(
+                request,
+                model_name="gpt-5.4",
+                responses_api=False,
+            ),
+            90,
         )
 
     def test_resolve_request_responses_api_tracks_gpt_5_chat_fallback(self) -> None:

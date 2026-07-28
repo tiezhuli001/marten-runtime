@@ -65,6 +65,8 @@
 
 ```env
 OPENAI_API_KEY=
+AMAP_WEB_SERVICE_KEY=
+KNOWLEDGE_OPERATOR_TOKEN=
 ```
 
 这个默认 profile 对应的提交态默认模型是 `gpt-5.4`。
@@ -157,6 +159,16 @@ curl -sS http://127.0.0.1:8000/diagnostics/run/<run_id>
 docker build -t marten-runtime:local .
 ```
 
+镜像使用固定 digest 的 Python 3.12 与 Node 22 Debian 基础镜像。构建过程会验证并应用 `sect1-v1` engine patch、运行 Node bridge 测试，并生成以下供应链材料：
+
+- `/app/third_party/taibu_bridge/package-lock.json`
+- `/app/third_party/THIRD_PARTY_LICENSES.md`
+- `/app/third_party/taibu_bridge/LICENSE-*`
+- `/app/sbom/taibu-bridge.cdx.json`
+- `/app/sbom/python.cdx.json`
+
+容器每次启动都会先运行 `marten_runtime.interfaces.http.container_self_check`。自检覆盖 Node major、bridge/engine identity、sect/Yun policy、历史时区数据、Knowledge schema，以及脱敏后的 Amap/Operator 配置状态；自检失败时 HTTP runtime 保持停止。
+
 ### 2. 准备运行时配置
 
 推荐把配置在运行时注入进容器，不要把 secrets 烘焙进镜像。
@@ -165,9 +177,13 @@ docker build -t marten-runtime:local .
 
 ```env
 OPENAI_API_KEY=
+AMAP_WEB_SERVICE_KEY=
+KNOWLEDGE_OPERATOR_TOKEN=
 ```
 
 当前提交态默认模型是 `gpt-5.4`。
+
+`AMAP_WEB_SERVICE_KEY` enables Bazi true-solar place resolution. `KNOWLEDGE_OPERATOR_TOKEN` enables the Bearer-protected `/knowledge/**` management API; keep it empty when the management API is not deployed.
 
 如果你想切到别的 provider 或模型，在本地 `config/models.toml` 里切换 `default_profile`，或重定义它指向的 profile。
 
@@ -199,6 +215,8 @@ SERVER_PUBLIC_BASE_URL=http://127.0.0.1:8000
 - secrets 保留在本地 `.env`
 - 用 `--env-file .env` 注入
 - 只有需要本地覆盖时才挂载额外文件
+
+镜像构建上下文排除 `.env`、`mcps.json` 和 `data/`。生产 secret 通过运行平台的 secret manager 或 `--env-file` 在容器启动时注入。
 
 ### 3. 启动容器
 
@@ -277,7 +295,19 @@ docker run --rm \
   marten-runtime:local
 ```
 
-### 6. 一条更实用的 operator 命令
+`/app/data` 是容器内唯一需要持久化的 runtime 数据根目录，包含 session、Knowledge 数据库、Knowledge 上传暂存和本地模型文件。生产部署应把它挂载到受访问控制、可备份的持久卷。
+
+### 6. 出站网络
+
+Bazi `clock` 计算在镜像内离线完成。`true_solar` 地点解析只需要访问：
+
+```text
+https://restapi.amap.com
+```
+
+生产网络策略应只允许该 HTTPS 主机用于地点解析。请求只发送出生地点文本；`AMAP_WEB_SERVICE_KEY`、出生时间、性别、咨询内容和 session/user 标识不会进入地点解析请求。
+
+### 7. 一条更实用的 operator 命令
 
 如果你想给运维同学一条更接近默认值的命令，可以用：
 
@@ -297,6 +327,46 @@ docker run --rm \
 - secrets 留在镜像外
 - 容器重启后数据可保留
 - MCP 定义可直接替换
+
+## Session 数据生命周期
+
+共享生产实例采用以下固定契约：
+
+- 在线 session 数据保留 90 天，以最后活动时间计算。
+- 部署 operator 负责执行并审计按 session 删除和周期清理。
+- 删除范围覆盖用户消息、assistant 回复、tool outcome summary、compacted context 与相关 binding。
+- 生产备份在主存储删除完成后的 30 天内完成同步清理。
+- 删除与周期清理命令、审计证据和恢复验证由 C12 发布运行手册固定。
+
+删除命令直接操作持久卷中的 SQLite 数据库，执行权限归部署 operator。命令默认只预览；`--apply` 才执行删除。精确删除同时处理目标 session 的子 session、消息、assistant 回复、tool outcome summary、compacted context、conversation binding 和 compaction job。
+
+精确删除：
+
+```bash
+python -m marten_runtime.session.maintenance \
+  --database data/sessions.sqlite3 \
+  --session-id <session_id>
+
+python -m marten_runtime.session.maintenance \
+  --database data/sessions.sqlite3 \
+  --session-id <session_id> \
+  --apply
+```
+
+90 天周期清理：
+
+```bash
+python -m marten_runtime.session.maintenance \
+  --database data/sessions.sqlite3 \
+  --prune-older-than-days 90
+
+python -m marten_runtime.session.maintenance \
+  --database data/sessions.sqlite3 \
+  --prune-older-than-days 90 \
+  --apply
+```
+
+每次执行应保存 JSON 输出作为审计证据。执行后使用 `/diagnostics/sessions` 或 SQLite 只读查询确认目标 session、binding 和关联 payload 已消失。备份系统按删除执行日期登记清理截止日，并在 30 天内删除包含该 session 的备份；完成后执行一次受控恢复检查，确认恢复副本中同样查不到目标 session id。
 
 ## Docker Compose 部署
 

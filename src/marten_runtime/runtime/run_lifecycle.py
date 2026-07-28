@@ -18,6 +18,7 @@ class RunLifecycleFinalizer:
     request_kind: str
     agent_id: str
     channel_id: str | None
+    observation_policy: str = "standard"
 
     def _finalize_common(
         self,
@@ -55,7 +56,11 @@ class RunLifecycleFinalizer:
             kwargs["final_text"] = final_text
         if error_code is not None:
             kwargs["error_code"] = error_code
-        self.langfuse_observer.finalize_run(self.trace_handle, **kwargs)
+        self.langfuse_observer.finalize_run(
+            self.trace_handle,
+            observation_policy=self.observation_policy,
+            **kwargs,
+        )
 
     def finalize_success(
         self,

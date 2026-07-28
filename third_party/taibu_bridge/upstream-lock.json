@@ -1,0 +1,50 @@
+{
+  "engine": {
+    "package": "taibu-core",
+    "version": "3.4.0",
+    "sourceCommit": "1f7f8920ef2c2b032401427623ac0b9a7496c68d",
+    "integrity": "sha512-4gg1rlIGxaeLXKMIM9TD2vG/WP8gbJP6VR7l49a2NTQe7G7iTOlR6lM2jymtJRryynQ7DT971ZofjcsHbmztog==",
+    "patchId": "sect1-v1"
+  },
+  "calendar": {
+    "package": "lunar-javascript",
+    "version": "1.7.7",
+    "integrity": "sha512-u/KYiwPIBo/0bT+WWfU7qO1d+aqeB90Tuy4ErXenr2Gam0QcWeezUvtiOIyXR7HbVnW2I1DKfU0NBvzMZhbVQw=="
+  },
+  "placeResolver": {
+    "sourceCommit": "14860a26e3c428bb9c0a3eee3ba88e7cb57b1e6c",
+    "sourcePath": "packages/mcp-server/src/place-resolution.ts",
+    "license": "MIT"
+  },
+  "targets": [
+    {
+      "path": "dist/domains/bazi/calculate.js",
+      "beforeSha256": "266e9d00e2565d23642bb85759f37510fce30bc3ed03bba9e1e6d7b2139e506f",
+      "afterSha256": "78a704025630917b4e6277c5fe3396ad71e76f4a5ee1be77897cacf52b52084c",
+      "before": "    const eightChar = lunar.getEightChar();",
+      "after": "    const eightChar = lunar.getEightChar();\n    eightChar.setSect(1);"
+    },
+    {
+      "path": "dist/domains/bazi-dayun/calculate.js",
+      "beforeSha256": "974cfc3e708fb8f46ea0e95efccbf31a7b0f647fe3d579b5ef2370656030f07a",
+      "afterSha256": "70eedb68b08d4d859449df5752a5b8759be4fbabe16a463bd5ba17709ae1243e",
+      "before": "    const eightChar = lunar.getEightChar();",
+      "after": "    const eightChar = lunar.getEightChar();\n    eightChar.setSect(1);"
+    },
+    {
+      "path": "dist/domains/bazi-pillars-resolve/calculate.js",
+      "beforeSha256": "e7583e78c184ba63a4616d5b04a1178ab7a2ff2cc3cf2f8907888ccea4b48882",
+      "afterSha256": "4001d9007449ac81fee3d748a778d43e8b26cfc11f83dc4d2f2b7ccff063072a",
+      "replacements": [
+        {
+          "before": "                        const solar = Solar.fromYmdHms(year, month, day, hour, 0, 0);\n                        const ec = solar.getLunar().getEightChar();",
+          "after": "                        const candidateDate = pillars.hour.branch === '子' && hour === 23\n                            ? Solar.fromYmd(year, month, day).next(-1)\n                            : Solar.fromYmd(year, month, day);\n                        const solar = Solar.fromYmdHms(candidateDate.getYear(), candidateDate.getMonth(), candidateDate.getDay(), hour, 0, 0);\n                        const ec = solar.getLunar().getEightChar();\n                        ec.setSect(1);"
+        },
+        {
+          "before": "                            solarText: toSolarText(year, month, day, hour, 0),",
+          "after": "                            solarText: toSolarText(solar.getYear(), solar.getMonth(), solar.getDay(), hour, 0),"
+        }
+      ]
+    }
+  ]
+}

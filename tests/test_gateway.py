@@ -127,7 +127,9 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(alice.status_code, 200)
         self.assertEqual(bob.status_code, 200)
         interactive_requests = [
-            request for request in scripted.requests if request.request_kind != "session_summary"
+            request
+            for request in scripted.requests
+            if request.request_kind not in {"session_summary", "agent_routing"}
         ]
         self.assertEqual(len(interactive_requests), 2)
         bob_history = [

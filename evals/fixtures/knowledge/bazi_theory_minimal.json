@@ -1,0 +1,191 @@
+{
+  "namespace": "bazi-theory",
+  "sources": [
+    {
+      "source_id": "ksrc_bazi_theory_cc0_v1",
+      "title": "Marten 八字方法纲要（调候）",
+      "kind": "method_summary",
+      "uri": "repo://evals/fixtures/knowledge/bazi_theory_minimal.json#qiongtong",
+      "version": "2.0.0",
+      "metadata": {
+        "corpus_type": "theory",
+        "school": "ziping-tiaohou",
+        "review_status": "reviewed",
+        "license": "CC0-1.0",
+        "provenance": "Marten-authored method summary based on a public-domain classic; not a verbatim quotation",
+        "calculation_scope": "seasonal-climate-and-tiaohou",
+        "method": "tiaohou",
+        "content_type": "method_summary"
+      },
+      "text": "# 调候方法\n\n调候先看月令所处季节的寒暖燥湿，再看原局是否具有使气候趋于可用的五行。调候用神解决寒暖燥湿，格局用神解决十神结构，两者需要分层判断。命局出现某种五行，只能说明条件具备程度，仍要结合透干、通根、制化和大运引动。bazi_theory_evidence_boundary\n\n# 推断边界\n\n四柱和大运只有经过对应排盘工具核验后才属于计算事实；用户自行提供且未复算的大运属于待核验输入。学历、收入、家庭成员数量、健康与品行属于解释或现实事实，需要使用倾向、条件和现实核验表达。bazi_theory_layered_response"
+    },
+    {
+      "source_id": "ksrc_bazi_ziping_v1",
+      "title": "Marten 八字方法纲要（格局）",
+      "kind": "method_summary",
+      "uri": "repo://evals/fixtures/knowledge/bazi_theory_minimal.json#ziping",
+      "version": "1.1.0",
+      "metadata": {
+        "corpus_type": "theory",
+        "school": "ziping-pattern",
+        "review_status": "reviewed",
+        "license": "CC0-1.0",
+        "provenance": "Marten-authored method summary based on a public-domain classic; not a verbatim quotation",
+        "calculation_scope": "pattern-strength-and-useful-god",
+        "method": "pattern",
+        "content_type": "method_summary"
+      },
+      "text": "# 格局方法\n\n格局以月令为提纲，观察月令本气、透干、会合刑冲以及财官印食之间是否形成可用结构。格局名称只是入口，成格、破格、救应和行运变化决定结构能否持续。\n\n# 旺衰方法\n\n旺衰判断同时观察得令、得地、得势与通根，不用单一五行数量代替强弱。身强身弱服务于取用和制化，需要与格局、调候和病药相互校验。"
+    },
+    {
+      "source_id": "ksrc_bazi_ditiansui_v1",
+      "title": "Marten 八字方法纲要（流通与病药）",
+      "kind": "method_summary",
+      "uri": "repo://evals/fixtures/knowledge/bazi_theory_minimal.json#ditiansui",
+      "version": "1.0.0",
+      "metadata": {
+        "corpus_type": "theory",
+        "school": "ziping-strength",
+        "review_status": "reviewed",
+        "license": "CC0-1.0",
+        "provenance": "Marten-authored method summary based on a public-domain classic; not a verbatim quotation",
+        "calculation_scope": "strength-flow-disease-remedy",
+        "method": "strength-and-remedy",
+        "content_type": "method_summary"
+      },
+      "text": "# 流通与病药\n\n病药法先找原局最妨碍平衡或流通的矛盾，再看哪一五行能够制病、化病或通关。所谓病与药是结构关系，不能直接等同于现实疾病。\n\n# 体用观察\n\n分析日主与全局气势时，需要看干支之间生克制化能否落实。原局之用与行运之用可能不同，大运引动某一合冲刑害时，应说明被引动的宫位、十神和原局条件。"
+    },
+    {
+      "source_id": "ksrc_bazi_qiongtong_jia_spring_v1",
+      "title": "穷通宝鉴",
+      "kind": "classical_excerpt",
+      "uri": "https://zh.wikisource.org/w/index.php?title=穷通宝鉴&oldid=2294674#三春甲木",
+      "version": "wikisource-oldid-2294674",
+      "metadata": {
+        "corpus_type": "theory",
+        "school": "ziping-tiaohou",
+        "review_status": "reviewed",
+        "license": "Public-Domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+        "provenance": "Public-domain classical excerpt verified against Chinese Wikisource revision 2294674; third-party skills were discovery leads only",
+        "calculation_scope": "theory_interpretation",
+        "method": "tiaohou",
+        "content_type": "classical_excerpt_with_marten_commentary",
+        "work": "穷通宝鉴",
+        "chapter": "论甲木·三春甲木",
+        "edition_or_source": "Chinese Wikisource transcription, revision 2294674 (2023-06-14)",
+        "source_url": "https://zh.wikisource.org/w/index.php?title=穷通宝鉴&oldid=2294674#三春甲木",
+        "verification_status": "verified_against_fixed_public_transcription",
+        "discovery_lineage": "ml8s/liki -> jinchenma94/bazi-skill -> independent Wikisource verification"
+      },
+      "text": "# 古籍原文\n\n正月甲木，初春尚有余寒，得丙癸逢，富贵双全。\n\n# Marten 释义\n\n本条提供正月甲木关注余寒及丙、癸配置的调候线索。原文中的“富贵双全”保留为历史文本内容，解盘时仍需结合全局透干、通根、制化与行运，且不能据此直接断定现实财富或社会地位。"
+    },
+    {
+      "source_id": "ksrc_bazi_ditiansui_geju_v1",
+      "title": "滴天髓",
+      "kind": "classical_excerpt",
+      "uri": "https://zh.wikisource.org/w/index.php?title=滴天髓/06&oldid=844363",
+      "version": "wikisource-oldid-844363",
+      "metadata": {
+        "corpus_type": "theory",
+        "school": "ziping-pattern",
+        "review_status": "reviewed",
+        "license": "Public-Domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+        "provenance": "Public-domain classical excerpt verified against Chinese Wikisource revision 844363; third-party skills were discovery leads only",
+        "calculation_scope": "theory_interpretation",
+        "method": "pattern",
+        "content_type": "classical_excerpt_with_marten_commentary",
+        "work": "滴天髓",
+        "chapter": "格局论",
+        "edition_or_source": "Chinese Wikisource transcription, revision 844363 (2017-03-23)",
+        "source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/06&oldid=844363",
+        "verification_status": "verified_against_fixed_public_transcription",
+        "discovery_lineage": "ml8s/liki -> multiple referenced Bazi skills -> independent Wikisource verification"
+      },
+      "text": "# 古籍原文\n\n財官印綬分偏正，兼論食傷格局定。\n\n# Marten 释义\n\n本条要求先分辨财、官、印、食伤及其偏正关系，再进入格局判断。单句只规定分析入口，具体成格、破格与取用仍需结合月令、透干、根气和制化。"
+    },
+    {
+      "source_id": "ksrc_bazi_ditiansui_wealth_v1",
+      "title": "滴天髓",
+      "kind": "classical_excerpt",
+      "uri": "https://zh.wikisource.org/w/index.php?title=滴天髓/41&oldid=844408",
+      "version": "wikisource-oldid-844408",
+      "metadata": {
+        "corpus_type": "theory",
+        "school": "ziping-wealth-flow",
+        "review_status": "reviewed",
+        "license": "Public-Domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+        "provenance": "Public-domain classical excerpt verified against Chinese Wikisource revision 844408",
+        "calculation_scope": "wealth-path-strength-flow-and-dayun",
+        "method": "wealth-flow",
+        "content_type": "classical_excerpt_with_marten_commentary",
+        "work": "滴天髓",
+        "chapter": "贵贱贫富吉凶寿夭论",
+        "edition_or_source": "Chinese Wikisource transcription, revision 844408 (2017-03-24)",
+        "source_url": "https://zh.wikisource.org/w/index.php?title=滴天髓/41&oldid=844408",
+        "verification_status": "verified_against_fixed_public_transcription",
+        "discovery_lineage": "Independent Chinese Wikisource verification"
+      },
+      "text": "# 古籍原文\n\n何知其人富，財氣通門戶。\n\n財旺身強，官星衛財，忌印而財能壞印，喜印而財能生官，傷官重而財神流通，財神重而傷官有限，無財而暗成財局，財露而傷官亦露，此皆財氣通門戶，所以富也。\n\n# Marten 释义\n\n本条论富不只数明见财星，还检查身能否任财、伤官能否使财气流通，以及无明财时是否暗成财局。食神伤官可作为财源与流通路径；官星在原文中是护财或由财所生的结构角色，并未被直接改称财星。官印、杀印、食神制杀和禄成格可以形成职位、专业或平台收入通道，但这是现代收入映射，必须与古籍原文分层标识。财富范围仍需结合原局强弱、成格破格、当前大运与制约项。"
+    },
+    {
+      "source_id": "ksrc_bazi_shenfeng_bingyao_v1",
+      "title": "神峰通考",
+      "kind": "classical_excerpt",
+      "uri": "https://zh.wikisource.org/w/index.php?title=神峰通考&oldid=1378606#病药说类",
+      "version": "wikisource-oldid-1378606",
+      "metadata": {
+        "corpus_type": "theory",
+        "school": "ziping-disease-remedy",
+        "review_status": "reviewed",
+        "license": "Public-Domain classical work; Wikisource transcription under CC-BY-SA-4.0",
+        "provenance": "Public-domain classical excerpt verified against Chinese Wikisource revision 1378606; third-party skills were discovery leads only",
+        "calculation_scope": "theory_interpretation",
+        "method": "disease-remedy",
+        "content_type": "classical_excerpt_with_marten_commentary",
+        "work": "神峰通考",
+        "chapter": "病药说类",
+        "edition_or_source": "Chinese Wikisource transcription, revision 1378606 (2018-03-02)",
+        "source_url": "https://zh.wikisource.org/w/index.php?title=神峰通考&oldid=1378606#病药说类",
+        "verification_status": "verified_against_fixed_public_transcription",
+        "discovery_lineage": "ml8s/liki -> jinchenma94/bazi-skill -> independent Wikisource verification"
+      },
+      "text": "# 古籍原文\n\n有病方为贵，无伤不是奇；格中如去病，财禄两相随。\n\n# Marten 释义\n\n同篇把“病”解释为原局中造成妨害的因素，把“药”解释为能够解除该妨害的因素。本条可用于建立病、药与去病的分析顺序；其中病药属于命理结构术语，不对应医学诊断，财禄措辞也不直接转换成现实财富结论。分析必须写明受损对象、作用关系与解除条件。"
+    },
+    {
+      "source_id": "ksrc_bazi_mangpai_v1",
+      "title": "Marten 盲派命理方法纲要",
+      "kind": "method_summary",
+      "uri": "repo://evals/fixtures/knowledge/bazi_theory_minimal.json#mangpai",
+      "version": "2.1.0",
+      "metadata": {
+        "corpus_type": "theory",
+        "school": "mangpai",
+        "review_status": "reviewed",
+        "license": "CC0-1.0",
+        "provenance": "Original Marten method summary for deterministic evaluation",
+        "calculation_scope": "wealth-office-body-function-work-branch-relations-health-images-event-timing",
+        "method": "wealth-office-body-function-work",
+        "content_type": "method_summary"
+      },
+      "text": "# 财官、体用与做功\n\n盲派观察常把财官视为结果，把印星、食伤、禄或比劫等看作取得结果的工具。做功需要落到具体干支关系：谁制谁、谁生谁、谁合谁、哪一柱和宫位被引动。\n\n# 刑与伏吟\n\n自刑限定为辰辰、午午、酉酉、亥亥。其他相同地支按伏吟分析，例如巳巳属于伏吟。伏吟落到日支或夫妻宫时，可结合配偶星和行运观察关系反复、决定偏慢或晚婚倾向；伏吟本身不直接推出婚变。\n\n# 应期方法\n\n应期先以大运确定十年主题，再逐年核对流年干支。一个年份同时出现两项以上相互支持的信号时，优先落到具体单年；相邻年份分别承担事件出现、发展和落实时，可使用一至两年窗口。婚恋应期中，男命以财星、女命以官杀为配偶星，逐年检查配偶星出现、得根或被合，桃花出现，以及夫妻宫被合冲刑害或伏吟。桃花按年支或日支所属三合局取：寅午戌见卯、申子辰见酉、巳酉丑见午、亥卯未见子。配偶星、桃花与夫妻宫应期分别核对；桃花只表示关系机会，配偶星与夫妻宫共同支持时再提高结婚判断。\n\n# 身体取象与证据边界\n\n天干取象：甲为头胆；乙为肝、头部神经、头发和四肢；丙为心眼血液；丁为心眼口舌牙齿；戊己同看头部、脾胃、皮肤和肌肉，戊兼鼻；庚为肺胸、骨骼和牙齿；辛为肺胸；壬癸为肾、泌尿、血液和骨髓，癸在女命兼看妇科生殖。地支取象：子为肾；丑辰未戌为脾胃；寅为腿脚、左腿和胆；卯为肝、右腿、手指和手；巳午为心脏，巳兼神明相关；亥为头、血液、足和肾，女命兼看妇科。申酉缺少稳定身体部位归纳。健康分析需要同时结合部位映射、刑冲合害或伏吟等原局作用及行运引动；原局病位受到强冲刑且岁运共同引动等多项信号会合时，可把检查、治疗、住院或开刀作为具体年份的待核验事件。父亲与母亲健康分开结合父星、母星、年柱及其身体取象定位。单一符号只形成传统文化关注方向，现实结论以体检和医疗专业意见为准。\n\n# 主题映射\n\n家庭、婚姻、事业和六亲分析先列宫位与十神关系，再写触发条件。冲合刑害或伏吟表示关系被引动、重复或结构发生变化，不能单凭一个符号断定学历、职业、收入、成员数量、疾病或事件必然发生。"
+    },
+    {
+      "source_id": "ksrc_bazi_timing_validation_v1",
+      "title": "Marten 八字应期校验规则",
+      "kind": "method_summary",
+      "uri": "repo://evals/fixtures/knowledge/bazi_theory_minimal.json#timing-validation",
+      "version": "1.3.0",
+      "metadata": {
+        "corpus_type": "theory",
+        "school": "integrated",
+        "review_status": "reviewed",
+        "license": "CC0-1.0",
+        "provenance": "Original Marten timing validation summary for deterministic evaluation",
+        "calculation_scope": "marriage-health-parent-health-past-event-validation",
+        "method": "dayun-liunian-trigger-validation",
+        "content_type": "method_summary"
+      },
+      "text": "# 逐年扫描\n\n完整应期分析先读取排盘引擎给出的逐年表，从出生年扫描到当前年。每年依次核对所在大运、流年天干对原局四干和大运干的生克、五合与伏吟，并写明作用对象和十神；再核对流年地支对原局四支和大运支的合冲刑害破。引擎关系列表可能省略相同地支，逐年比较时需要把相同者补记为伏吟。年柱兼看父母与家宅，月柱兼看家庭环境、学业与职业平台，日干为本人、日支为夫妻宫，时柱兼看子女和执行结果。父亲重点结合偏财与年柱，母亲重点结合正印与年柱。\n\n# 婚恋应期校验\n\n婚恋应期逐年核对配偶星、桃花与夫妻宫。桃花以命局年支或日支所属三合局计算：寅午戌见卯、申子辰见酉、巳酉丑见午、亥卯未见子。流年地支与对应桃花地支相同时才标注桃花；桃花只表示关系机会。配偶星、桃花与夫妻宫属于三类并列信号，两类以上在同一年共同成立时，可提高恋爱落实或婚期判断。\n\n# 健康与父母应期校验\n\n本人健康先定位原局病位和身体部位，再逐年核对大运、流年对日主、各宫位及病位的合冲刑害、伏吟和重复引动。父母健康分别结合父星、母星、年柱及受作用干支的身体取象。两项以上同向独立信号会合时，可把检查、治疗、住院或开刀作为具体年份的待核验事件；现实结论以体检和医疗专业意见为准。\n\n# 事件主题与筛选\n\n每个流年使用同一套筛选流程：先列出岁运与原局全部干支关系，再结合十神和宫位生成本人、父母、配偶、子女、事业平台与家宅资产候选。候选年份按直接作用强度、岁运重复、星宫同参和可核验性排序，任何单一十神组合都不享有固定优先级。排序后复查全部流年干支，确保多项直接强关系的年份没有遗漏。单一桃花、单一神煞、单一伏吟或单一五行出现只作弱信号。\n\n# 过三关格式\n\n过三关从逐年候选表选择最高信号的已发生事件。每行只核验一个主应事件，写明具体年份、可核验事项，以及流年、大运、原局三层触发依据；原因点明受作用的天干、地支、十神或宫位及事件归属。栏目名称本身不构成可核验事件。"
+    }
+  ]
+}

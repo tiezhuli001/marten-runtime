@@ -2,12 +2,14 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from tempfile import SpooledTemporaryFile
 from uuid import uuid4
 
 from pydantic import BaseModel
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from marten_runtime.gateway.ingress import ingest_message
 from marten_runtime.interfaces.http.bootstrap import (
@@ -19,14 +21,101 @@ from marten_runtime.interfaces.http.bootstrap import (
     render_metrics,
 )
 from marten_runtime.interfaces.http.eval_routes import build_eval_router
+from marten_runtime.interfaces.http.knowledge_routes import (
+    KnowledgeRouteError,
+    MAX_UPLOAD_REQUEST_BYTES,
+    build_knowledge_router,
+    declared_upload_error,
+    error_envelope,
+    operator_authorized,
+)
 from marten_runtime.interfaces.http.runtime_diagnostics import (
     serialize_runtime_diagnostics,
 )
 from marten_runtime.runtime.lanes import LaneLease
 from marten_runtime.runtime.event_loop_cleanup import close_idle_event_loops
+from marten_runtime.runtime.observation_policy import REDACTED_TEXT
 
 
 logger = logging.getLogger(__name__)
+
+
+class KnowledgeUploadSizeLimitMiddleware:
+    def __init__(
+        self,
+        app,
+        *,
+        max_bytes: int = MAX_UPLOAD_REQUEST_BYTES,
+        operator_token: str = "",
+    ) -> None:  # noqa: ANN001
+        self.app = app
+        self.max_bytes = int(max_bytes)
+        self.operator_token = str(operator_token)
+
+    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
+        path = str(scope.get("path") or "")
+        limited = (
+            scope.get("type") == "http"
+            and str(scope.get("method") or "").upper() == "POST"
+            and path.startswith("/knowledge/")
+            and path.endswith("/uploads")
+        )
+        if not limited:
+            await self.app(scope, receive, send)
+            return
+        headers = {
+            bytes(name).decode("latin-1").lower(): bytes(value).decode("latin-1")
+            for name, value in scope.get("headers") or []
+        }
+        if not self.operator_token or not operator_authorized(
+            headers.get("authorization"),
+            self.operator_token,
+        ):
+            await self.app(scope, receive, send)
+            return
+        declared_error = declared_upload_error(headers.get("content-length"))
+        if declared_error is not None:
+            response = JSONResponse(
+                status_code=declared_error.status_code,
+                content=error_envelope(declared_error.code, declared_error.message),
+            )
+            await response(scope, receive, send)
+            return
+        received = 0
+        buffered = SpooledTemporaryFile(max_size=1024 * 1024)
+        try:
+            while True:
+                message = await receive()
+                if message.get("type") != "http.request":
+                    break
+                chunk = bytes(message.get("body") or b"")
+                received += len(chunk)
+                if received > self.max_bytes:
+                    response = JSONResponse(
+                        status_code=413,
+                        content=error_envelope(
+                            "KNOWLEDGE_UPLOAD_TOO_LARGE",
+                            "upload exceeds 10 MiB",
+                        ),
+                    )
+                    await response(scope, receive, send)
+                    return
+                buffered.write(chunk)
+                if not message.get("more_body", False):
+                    break
+            buffered.seek(0)
+
+            async def replay_receive():  # noqa: ANN202
+                chunk = buffered.read(64 * 1024)
+                return {
+                    "type": "http.request",
+                    "body": chunk,
+                    "more_body": bool(chunk),
+                }
+
+            await self.app(scope, replay_receive, send)
+        finally:
+            buffered.close()
 
 
 class MessageRequest(BaseModel):
@@ -119,6 +208,55 @@ def create_app(
 
     app = FastAPI(title="marten-runtime", lifespan=lifespan)
     app.state.runtime = runtime
+    operator_token = str(getattr(runtime, "env", {}).get("KNOWLEDGE_OPERATOR_TOKEN") or "").strip()
+
+    @app.middleware("http")
+    async def knowledge_operator_boundary(request: Request, call_next):  # noqa: ANN001, ANN202
+        if operator_token and request.url.path.startswith("/knowledge/"):
+            if not operator_authorized(request.headers.get("authorization"), operator_token):
+                return JSONResponse(
+                    status_code=401,
+                    content=error_envelope(
+                        "KNOWLEDGE_OPERATOR_UNAUTHORIZED",
+                        "operator authorization failed",
+                    ),
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            if request.method == "POST" and request.url.path.endswith("/uploads"):
+                declared_error = declared_upload_error(request.headers.get("content-length"))
+                if declared_error is not None:
+                    return JSONResponse(
+                        status_code=declared_error.status_code,
+                        content=error_envelope(declared_error.code, declared_error.message),
+                    )
+        return await call_next(request)
+
+    @app.exception_handler(KnowledgeRouteError)
+    async def knowledge_route_error_handler(_request: Request, exc: KnowledgeRouteError) -> JSONResponse:
+        headers = {"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=error_envelope(exc.code, exc.message, retryable=exc.retryable),
+            headers=headers,
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        if request.url.path.startswith("/knowledge/"):
+            return JSONResponse(
+                status_code=422,
+                content=error_envelope(
+                    "KNOWLEDGE_REQUEST_INVALID",
+                    "knowledge request validation failed",
+                ),
+            )
+        return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+    if operator_token:
+        app.include_router(
+            build_knowledge_router(runtime, operator_token=operator_token),
+            prefix="/knowledge",
+        )
     app.include_router(
         build_eval_router(
             getattr(runtime, "repo_root", Path.cwd()),
@@ -210,7 +348,7 @@ def create_app(
     @app.get("/diagnostics/session/{session_id}")
     def get_session(session_id: str) -> dict[str, object]:
         try:
-            return runtime.session_store.get(session_id).model_dump(mode="json")
+            return _serialize_session_diagnostics(runtime.session_store.get(session_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND") from exc
 
@@ -262,18 +400,23 @@ def create_app(
     def get_runtime(request: Request) -> dict[str, object]:
         return serialize_runtime_diagnostics(runtime, request)
 
+    app.add_middleware(
+        KnowledgeUploadSizeLimitMiddleware,
+        operator_token=operator_token,
+    )
     return app
 
 
 def _serialize_session_catalog_item(record) -> dict[str, object]:  # noqa: ANN001
+    sensitive = _is_bazi_session(record)
     return {
         "session_id": record.session_id,
         "conversation_id": record.conversation_id,
         "channel_id": record.channel_id,
         "user_id": record.user_id,
         "agent_id": record.agent_id or record.active_agent_id,
-        "session_title": record.session_title,
-        "session_preview": record.session_preview,
+        "session_title": REDACTED_TEXT if sensitive and record.session_title else record.session_title,
+        "session_preview": REDACTED_TEXT if sensitive and record.session_preview else record.session_preview,
         "message_count": record.message_count,
         "state": record.state,
         "created_at": record.created_at.isoformat(),
@@ -282,6 +425,27 @@ def _serialize_session_catalog_item(record) -> dict[str, object]:  # noqa: ANN00
             record.last_event_at.isoformat() if record.last_event_at is not None else None
         ),
     }
+
+
+def _serialize_session_diagnostics(record) -> dict[str, object]:  # noqa: ANN001
+    payload = record.model_dump(mode="json")
+    if not _is_bazi_session(record):
+        return payload
+    payload["session_title"] = REDACTED_TEXT if record.session_title else ""
+    payload["session_preview"] = REDACTED_TEXT if record.session_preview else ""
+    payload["history"] = [
+        {**message, "content": REDACTED_TEXT if str(message.get("content") or "").strip() else ""}
+        for message in payload.get("history") or []
+        if isinstance(message, dict)
+    ]
+    payload["latest_compacted_context"] = None
+    payload["recent_tool_outcome_summaries"] = []
+    payload["sensitive_projection"] = "sensitive_bazi"
+    return payload
+
+
+def _is_bazi_session(record) -> bool:  # noqa: ANN001
+    return str(record.agent_id or record.active_agent_id or "").strip() == "bazi"
 
 
 def _bind_queue_observation_to_response(

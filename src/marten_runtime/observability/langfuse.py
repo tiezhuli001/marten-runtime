@@ -4,6 +4,14 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from marten_runtime.runtime.observation_policy import (
+    project_generation_input,
+    project_generation_output,
+    project_text,
+    project_tool_payload,
+    project_tool_result,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +85,12 @@ class LangfuseObserver:
         input_text: str | None = None,
         metadata: dict[str, Any] | None = None,
         tags: list[str] | None = None,
+        observation_policy: str = "standard",
     ) -> LangfuseRunHandle:
         payload = {
             "name": name,
             "trace_id": trace_id,
-            "input_text": input_text,
+            "input_text": project_text(input_text, observation_policy),
             "metadata": dict(metadata or {}),
             "tags": list(tags or []),
         }
@@ -122,6 +131,7 @@ class LangfuseObserver:
         latency_ms: int,
         metadata: dict[str, Any] | None = None,
         error_code: str | None = None,
+        observation_policy: str = "standard",
     ) -> None:
         if not self.enabled():
             return
@@ -133,8 +143,12 @@ class LangfuseObserver:
                     "name": name,
                     "model": model,
                     "provider": provider,
-                    "input_payload": dict(input_payload or {}),
-                    "output_payload": dict(output_payload or {}),
+                    "input_payload": project_generation_input(
+                        input_payload or {}, observation_policy
+                    ),
+                    "output_payload": project_generation_output(
+                        output_payload or {}, observation_policy
+                    ),
                     "usage": dict(usage or {}),
                     "status": status,
                     "latency_ms": int(latency_ms),
@@ -158,6 +172,7 @@ class LangfuseObserver:
         latency_ms: int,
         metadata: dict[str, Any] | None = None,
         error_code: str | None = None,
+        observation_policy: str = "standard",
     ) -> None:
         if not self.enabled():
             return
@@ -168,8 +183,12 @@ class LangfuseObserver:
                     "trace_id": handle.trace_id,
                     "name": name,
                     "tool_name": tool_name,
-                    "tool_payload": dict(tool_payload or {}),
-                    "tool_result": dict(tool_result or {}),
+                    "tool_payload": project_tool_payload(
+                        tool_payload or {}, observation_policy
+                    ),
+                    "tool_result": project_tool_result(
+                        tool_result or {}, observation_policy
+                    ),
                     "status": status,
                     "latency_ms": int(latency_ms),
                     "metadata": dict(metadata or {}),
@@ -190,6 +209,7 @@ class LangfuseObserver:
         usage: dict[str, Any] | None = None,
         total_ms: int | None = None,
         metadata: dict[str, Any] | None = None,
+        observation_policy: str = "standard",
     ) -> None:
         if not self.enabled():
             return
@@ -199,7 +219,7 @@ class LangfuseObserver:
                 {
                     "trace_id": handle.trace_id,
                     "status": status,
-                    "final_text": final_text,
+                    "final_text": project_text(final_text, observation_policy),
                     "error_code": error_code,
                     "usage": dict(usage or {}),
                     "total_ms": total_ms,

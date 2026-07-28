@@ -4,5 +4,6 @@ lark-oapi
 mcp
 python-socks
 python-dotenv
+python-multipart
 uvicorn
 langfuse

@@ -414,6 +414,52 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertEqual(details.assessment, "accepted")
         self.assertEqual(details.missing_evidence_items, ())
 
+    def test_assess_finalization_rejects_unresolved_text_tool_invocation(self) -> None:
+        details = assess_finalization_text_with_details(
+            _mcp_readme_history(),
+            (
+                '<invoke name="knowledge">\n'
+                '<parameter name="action">search</parameter>\n'
+                '</invoke>'
+            ),
+            user_message="检索并回答",
+            model_request_count=4,
+        )
+
+        self.assertEqual(details.assessment, "retryable_degraded")
+        self.assertEqual(details.missing_evidence_items, ("unresolved_tool_invocation",))
+
+    def test_assess_finalization_ignores_tool_invocation_code_examples(self) -> None:
+        details = assess_finalization_text_with_details(
+            _mcp_readme_history(),
+            (
+                "已查看 README，包含快速开始、运行、测试和文档。\n\n"
+                "示例：`<invoke name=\"knowledge\">`。\n"
+                "```xml\n<invoke name=\"knowledge\">\n"
+                "<parameter name=\"action\">search</parameter>\n</invoke>\n```"
+            ),
+            user_message="梳理 README 并展示调用格式",
+            model_request_count=4,
+        )
+
+        self.assertEqual(details.assessment, "accepted")
+        self.assertNotIn("unresolved_tool_invocation", details.missing_evidence_items)
+
+    def test_assess_finalization_keeps_feishu_card_invoke_protocol_available(self) -> None:
+        details = assess_finalization_text_with_details(
+            _mcp_readme_history(),
+            (
+                '<invoke name="feishu_card">\n'
+                '<parameter name="title">README</parameter>\n'
+                '<parameter name="summary">已完成检索</parameter>\n'
+                '</invoke>'
+            ),
+            user_message="检索并回答",
+            model_request_count=4,
+        )
+
+        self.assertNotEqual(details.missing_evidence_items, ("unresolved_tool_invocation",))
+
     def test_assess_finalization_accepts_grounded_mcp_readme_synthesis_with_top_level_payload(
         self,
     ) -> None:

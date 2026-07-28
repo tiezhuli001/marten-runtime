@@ -65,7 +65,8 @@ class LangfuseDiagnosticsContractTests(unittest.TestCase):
             trace_diag["external_refs"]["langfuse_url"],
             f"https://langfuse.example/trace/{trace_id}",
         )
-        self.assertEqual(len(trace_diag["run_ids"]), 1)
+        self.assertEqual(len(trace_diag["run_ids"]), 2)
+        self.assertEqual(trace_diag["run_ids"][-1], run_id)
         self.assertGreaterEqual(len(trace_diag["event_ids"]), 1)
 
     def test_runtime_diagnostics_mark_langfuse_unhealthy_after_client_error(self) -> None:

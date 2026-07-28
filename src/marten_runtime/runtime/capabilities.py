@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from marten_runtime.tools.builtins.bazi_tool import BAZI_PARAMETERS_SCHEMA
+
 
 class CapabilityDeclaration(BaseModel):
     name: str
@@ -36,6 +38,17 @@ GLOBAL_CAPABILITY_RULES: tuple[str, ...] = (
 
 def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
     return {
+        "bazi": CapabilityDeclaration(
+            name="bazi",
+            summary="Calculate a Bazi chart, Dayun sequence, or birth-time candidates from four pillars.",
+            actions=["chart", "dayun", "resolve_pillars"],
+            usage_rules=[
+                "Use chart for a deterministic natal chart and dayun for the matching fortune-cycle sequence.",
+                "Use resolve_pillars with gender when the user provides four complete Jiazi pillars; a unique already-born candidate can seed dayun.",
+                "For true_solar, collect a birthPlace at city or district precision; coordinates are internal.",
+            ],
+            parameters_schema=BAZI_PARAMETERS_SCHEMA,
+        ),
         "automation": CapabilityDeclaration(
             name="automation",
             summary="Manage recurring automations and inspect scheduled jobs, timed tasks, cron jobs, and 定时任务.",

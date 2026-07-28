@@ -1,0 +1,24 @@
+case_id = "bazi_fingerprint_mismatch_cn"
+suite_id = "bazi_agent"
+family = "bazi_agent"
+grader_id = "bazi_agent"
+description = "Fingerprint mismatch stops synthesis"
+agent_id = "bazi"
+profile_name = "openai_gpt_5_4"
+tags = ["bazi", "fingerprint", "degradation"]
+gate_components = ["mismatch_stop", "tool_order"]
+
+[[turns]]
+role = "user"
+content = "执行 chart/dayun fingerprint mismatch 保护测试。"
+
+[component_weights]
+mismatch_stop = 60
+tool_order = 40
+
+[grader_case]
+required_tool_order = [["bazi", "chart"], ["bazi", "dayun"]]
+stop_marker = "停止综合解释"
+
+[setup]
+knowledge_fixture = "bazi_theory_minimal.json"

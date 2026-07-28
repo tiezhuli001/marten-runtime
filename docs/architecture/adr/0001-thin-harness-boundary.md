@@ -48,5 +48,5 @@ The host must not become:
 
 ## References
 
-- [Agent Runtime Harness Design](../../2026-03-29-private-agent-harness-design.md)
+- [Agent Runtime Harness Design](../../archive/2026-03-29-private-agent-harness-design.md)
 - [Architecture Changelog](../../ARCHITECTURE_CHANGELOG.md)

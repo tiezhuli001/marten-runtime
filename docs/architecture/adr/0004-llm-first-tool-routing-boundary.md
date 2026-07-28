@@ -93,5 +93,5 @@ These exceptions are contract enforcement. They are outside the free-form natura
 
 - [ADR 0001: Thin Harness Boundary](./0001-thin-harness-boundary.md)
 - [ADR 0002: Progressive Disclosure Default Surface](./0002-progressive-disclosure-default-surface.md)
-- [Progressive Disclosure + LLM-First Capability Design](../../2026-03-31-progressive-disclosure-llm-first-capability-design.md)
+- [Progressive Disclosure + LLM-First Capability Design](../../archive/2026-03-31-progressive-disclosure-llm-first-capability-design.md)
 - [Architecture Changelog](../../ARCHITECTURE_CHANGELOG.md)

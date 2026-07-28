@@ -1,6 +1,7 @@
 import os
 import queue
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from pathlib import Path
@@ -28,6 +29,7 @@ from marten_runtime.evals.scripted_runtime import (
     PromptTooLongThenCompactThenFinalEvalClient,
     ScriptedEvalLLMClient,
     _contracted_final_reply,
+    _install_bazi_fingerprint_mismatch_fixture,
 )
 from marten_runtime.evals.models import (
     EvalCaseSpec,
@@ -44,7 +46,7 @@ from fastapi.testclient import TestClient
 from marten_runtime.interfaces.http.app import create_app
 from marten_runtime.runtime.llm_client import LLMRequest
 from marten_runtime.runtime.recovery_flow import assess_finalization_text_with_details
-from marten_runtime.tools.registry import ToolSnapshot
+from marten_runtime.tools.registry import ToolRegistry, ToolSnapshot
 from tests.http_app_support import build_test_app
 
 
@@ -67,6 +69,35 @@ class EvalExecutorTests(unittest.TestCase):
 
         self.assertIsNone(reply.finalization_contract_draft)
         self.assertIn("```finalization_contract", reply.final_text or "")
+
+    def test_bazi_fingerprint_mismatch_fixture_changes_only_dayun_result(self) -> None:
+        registry = ToolRegistry()
+        seen_contexts: list[dict | None] = []
+
+        def bazi_handler(payload: dict, *, tool_context=None) -> dict:  # noqa: ANN001
+            seen_contexts.append(tool_context)
+            return {
+                "ok": True,
+                "action": payload["action"],
+                "inputFingerprint": f"sha256:{'a' * 64}",
+            }
+
+        registry.register("bazi", bazi_handler)
+        _install_bazi_fingerprint_mismatch_fixture(
+            SimpleNamespace(tool_registry=registry)
+        )
+        tool_context = {"turn_tool_state": {}}
+
+        chart = registry.call(
+            "bazi", {"action": "chart"}, tool_context=tool_context
+        )
+        dayun = registry.call(
+            "bazi", {"action": "dayun"}, tool_context=tool_context
+        )
+
+        self.assertEqual(chart["inputFingerprint"], f"sha256:{'a' * 64}")
+        self.assertEqual(dayun["inputFingerprint"], f"sha256:{'f' * 64}")
+        self.assertEqual(seen_contexts, [tool_context, tool_context])
 
     def test_scripted_eval_direct_answer_initial_reply_does_not_preseed_structured_contract(self) -> None:
         llm = ScriptedEvalLLMClient(
@@ -365,19 +396,19 @@ class EvalExecutorTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     Path(left_runtime.knowledge_service.config.db_path),
-                    left_root / "data" / "knowledge" / "knowledge.sqlite3",
+                    left_root.resolve() / "data" / "knowledge" / "knowledge.sqlite3",
                 )
                 self.assertEqual(
                     Path(right_runtime.knowledge_service.config.db_path),
-                    right_root / "data" / "knowledge" / "knowledge.sqlite3",
+                    right_root.resolve() / "data" / "knowledge" / "knowledge.sqlite3",
                 )
                 self.assertEqual(
                     Path(left_runtime.knowledge_service.config.embedding.local_path),
-                    left_root / "data" / "models" / "fake" / "embedding",
+                    left_root.resolve() / "data" / "models" / "fake" / "embedding",
                 )
                 self.assertEqual(
                     Path(right_runtime.knowledge_service.config.reranker.local_path),
-                    right_root / "data" / "models" / "fake" / "reranker",
+                    right_root.resolve() / "data" / "models" / "fake" / "reranker",
                 )
                 self.assertEqual(left_runtime.knowledge_service.config.embedding.provider, "fake")
                 self.assertEqual(right_runtime.knowledge_service.config.reranker.provider, "fake")

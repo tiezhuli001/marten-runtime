@@ -8,11 +8,98 @@ from marten_runtime.channels.feishu.rendering import (
     normalize_feishu_durable_text,
     normalize_feishu_visible_text,
     parse_feishu_card_protocol,
+    recover_feishu_card_protocol,
     render_final_reply_card,
 )
 
 
 class FeishuRenderingTests(unittest.TestCase):
+    def test_recover_feishu_card_protocol_filters_unsupported_root_keys(self) -> None:
+        text = (
+            "已完成。\n"
+            "```feishu_card\n"
+            '{"title":"八字分析","summary":"文化研究",'
+            '"sections":[{"title":"参考语料","items":["source_id: s; chunk_id: c"]}],'
+            '"risk_notice":"extra"}\n'
+            "```"
+        )
+
+        visible, card = recover_feishu_card_protocol(text)
+
+        self.assertEqual(visible, "已完成。")
+        self.assertIsNotNone(card)
+        self.assertEqual(card.sections[0].title, "参考语料")
+
+    def test_render_final_reply_card_uses_recovered_protocol(self) -> None:
+        card = render_final_reply_card(
+            "已完成。\n"
+            "```feishu_card\n"
+            '{"title":"八字分析","summary":"文化研究",'
+            '"sections":[{"title":"参考语料","items":["source_id: s; chunk_id: c"]}],'
+            '"risk_notice":"extra"}\n'
+            "```"
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "八字分析")
+        contents = [element.get("content", "") for element in card["body"]["elements"]]
+        self.assertTrue(any("source_id: s; chunk_id: c" in content for content in contents))
+        self.assertNotIn("risk_notice", str(card))
+
+    def test_recover_rendered_lark_card_json_as_visible_protocol(self) -> None:
+        rendered_payload = {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": "八字文化分析"},
+                "template": "orange",
+            },
+            "elements": [
+                {"tag": "markdown", "content": "**一、命盘**\n- 丁火日主"},
+                {"tag": "markdown", "content": "**二、原局**\n- 火旺见冲"},
+            ],
+        }
+        text = "排盘完成。\n```json\n" + json.dumps(rendered_payload, ensure_ascii=False) + "\n```"
+
+        visible, protocol = recover_feishu_card_protocol(text)
+        card = render_final_reply_card(text)
+        durable = normalize_feishu_durable_text(text)
+
+        self.assertEqual(visible, "排盘完成。")
+        self.assertIsNotNone(protocol)
+        self.assertEqual(protocol.title, "八字文化分析")
+        self.assertIn("一、命盘", protocol.sections[0].items[0])
+        self.assertEqual(card["header"]["title"]["content"], "八字文化分析")
+        body_text = "\n".join(
+            str(item.get("content") or "") for item in card["body"]["elements"]
+        )
+        self.assertIn("二、原局", body_text)
+        self.assertNotIn('"wide_screen_mode"', body_text)
+        self.assertNotIn('"elements"', body_text)
+        self.assertIn("一、命盘", durable)
+
+    def test_recover_rendered_schema_two_lark_card_without_protocol_marker(self) -> None:
+        rendered_payload = {
+            "schema": "2.0",
+            "config": {"wide_screen_mode": True},
+            "header": {"title": {"tag": "plain_text", "content": "八字分析"}},
+            "body": {
+                "elements": [
+                    {"tag": "markdown", "content": "**参考依据**\n《穷通宝鉴》·调候方法"}
+                ]
+            },
+        }
+        text = json.dumps(rendered_payload, ensure_ascii=False)
+
+        card = render_final_reply_card(text)
+        visible = normalize_feishu_visible_text(text)
+
+        self.assertEqual(visible, "")
+        self.assertEqual(card["header"]["title"]["content"], "八字分析")
+        body_text = "\n".join(
+            str(item.get("content") or "") for item in card["body"]["elements"]
+        )
+        self.assertIn("《穷通宝鉴》", body_text)
+        self.assertNotIn('"schema"', body_text)
+
     def test_parse_feishu_card_protocol_extracts_trailing_block(self) -> None:
         visible, protocol = parse_feishu_card_protocol(
             "当前有 2 个任务。\n\n```feishu_card\n"

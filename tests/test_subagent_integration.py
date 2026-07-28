@@ -14,6 +14,15 @@ PARENT_SUBAGENT_ACK = "已受理，子 agent 正在后台执行，完成后会�
 QUEUED_SUBAGENT_ACK = "已受理，子 agent 已进入队列，开始后会通知你结果。"
 
 
+def _main_route_reply(request):  # noqa: ANN001
+    if request.request_kind != "agent_routing":
+        return None
+    return LLMReply(
+        tool_name="agent_route",
+        tool_payload={"target_agent_id": "main"},
+    )
+
+
 class SubagentEndToEndLLM:
     provider_name = "subagent-e2e"
     model_name = "subagent-e2e-local"
@@ -23,6 +32,8 @@ class SubagentEndToEndLLM:
 
     def complete(self, request):  # noqa: ANN001
         self.requests.append(request)
+        if route_reply := _main_route_reply(request):
+            return route_reply
         if request.request_kind == "subagent":
             return contracted_final_reply("child finished")
         if request.tool_result is None:
@@ -46,6 +57,8 @@ class SubagentUsageEndToEndLLM:
 
     def complete(self, request):  # noqa: ANN001
         self.requests.append(request)
+        if route_reply := _main_route_reply(request):
+            return route_reply
         if request.request_kind == "subagent":
             return contracted_final_reply(
                 "child finished with usage",
@@ -78,6 +91,8 @@ class InvalidSubagentAgentIdLLM:
 
     def complete(self, request):  # noqa: ANN001
         self.requests.append(request)
+        if route_reply := _main_route_reply(request):
+            return route_reply
         if request.request_kind == "subagent":
             return contracted_final_reply("child finished after invalid agent fallback")
         if request.tool_result is None:
@@ -279,6 +294,8 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
 
             def complete(self, request):  # noqa: ANN001
                 self.requests.append(request)
+                if route_reply := _main_route_reply(request):
+                    return route_reply
                 if request.request_kind == "subagent":
                     self.release.wait(timeout=2.0)
                     return contracted_final_reply("child finished after parent ack")
@@ -392,6 +409,8 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
 
             def complete(self, request):  # noqa: ANN001
                 self.requests.append(request)
+                if route_reply := _main_route_reply(request):
+                    return route_reply
                 if request.request_kind == "subagent":
                     index = self.child_call_count
                     self.child_call_count += 1
@@ -496,6 +515,8 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
 
             def complete(self, request):  # noqa: ANN001
                 self.requests.append(request)
+                if route_reply := _main_route_reply(request):
+                    return route_reply
                 if request.request_kind == "subagent":
                     index = self.child_call_count
                     self.child_call_count += 1
@@ -600,6 +621,8 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
 
             def complete(self, request):  # noqa: ANN001
                 self.requests.append(request)
+                if route_reply := _main_route_reply(request):
+                    return route_reply
                 if request.request_kind == "subagent":
                     self.release.wait(timeout=2.0)
                     return contracted_final_reply("child finished too late")
@@ -679,6 +702,8 @@ class SubagentHTTPIntegrationTests(unittest.TestCase):
 
             def complete(self, request):  # noqa: ANN001
                 self.requests.append(request)
+                if route_reply := _main_route_reply(request):
+                    return route_reply
                 if request.request_kind == "subagent":
                     self.release.wait(timeout=2.0)
                     return contracted_final_reply("child finished after timeout")

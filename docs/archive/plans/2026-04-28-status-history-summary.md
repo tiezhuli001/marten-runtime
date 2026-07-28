@@ -47,12 +47,23 @@ The active short-form local continuity board now lives in:
   - `overall_passed = true`
   - covered plain chat, builtin tool, MCP multi-turn, skill, subagent, `session.new`, new-session follow-up, `session.resume`, and resumed-session follow-up
 
+## 2026-04-28 Deep Cleanup Outcome
+
+The standalone deep-cleanup checklist has been absorbed into this summary.
+
+- Removed stale adapter-wave documents after the direct-store runtime shape became the active baseline.
+- Removed stale GitHub hot-repos execution material after the MCP-first path became current.
+- Inlined the single-consumer subagent in-memory store into `SubagentService`.
+- Consolidated Feishu test helpers and kept acceptance coverage smoke-oriented.
+- Preserved owner truth in lower-level session, subagent, Feishu, runtime, and contract suites.
+- Protected-core, main-chain, owner-bundle, compile, diff, and simulated full-chain verification passed for the cleanup wave.
+
 ## Active Successors
 
 - current execution board:
   - `STATUS.md`
 - 2026-04-28 cleanup-wave summary:
-  - `docs/2026-04-28-deep-repo-cleanup-checklist.md`
+  - this document
 - durable runtime and architecture timeline:
   - `docs/ARCHITECTURE_CHANGELOG.md`
 - earlier cleanup archive summary:

@@ -1,7 +1,7 @@
 # 主链评测基础能力设计
 
-> 日期：2026-04-30  
-> 状态：已实现，保留为背景设计  
+> 日期：2026-04-30<br>
+> 状态：已实现，保留为背景设计<br>
 > 范围：`marten-runtime` 主链黄金任务回放评测基础能力
 
 > 说明：当前长期真相已经进入 `docs/ARCHITECTURE_EVOLUTION.md` 与 `docs/ARCHITECTURE_CHANGELOG.md`；实现过程计划已归档到 `docs/archive/plans/`。
@@ -144,28 +144,28 @@ Langfuse 和 run diagnostics 继续承担证据采集职责。
 
 ## 7. 设计约束
 
-1. **一条 case 只对应一次规范运行**  
+1. **一条 case 只对应一次规范运行**<br>
    单次评测不做隐藏重跑。任何重跑都生成新的 `eval_run_id`。
 
-2. **默认串行执行**  
+2. **默认串行执行**<br>
    第一版 `concurrency = 1`，优先保证证据清晰和成本稳定。
 
-3. **live 评测优先服务主链质量判断**  
+3. **live 评测优先服务主链质量判断**<br>
    `scripted` 模式只用于评测 harness 自身测试。
 
-4. **基础套件优先依赖 builtin/runtime 面**  
+4. **基础套件优先依赖 builtin/runtime 面**<br>
    第一条必跑套件尽量减少外部依赖，先把核心主链评测做稳定。
 
-5. **每条结果必须能回链到运行证据**  
+5. **每条结果必须能回链到运行证据**<br>
    case 结果必须带 `run_id`、`trace_id`、diagnostics 摘要、原始输出落盘路径。
 
-6. **评测命令和日常测试命令分离**  
+6. **评测命令和日常测试命令分离**<br>
    `python -m unittest` 继续只做测试。评测通过独立命令运行。
 
-7. **评测结果默认本地保存**  
+7. **评测结果默认本地保存**<br>
    第一版以 SQLite + 文件报告为基线，优先保证单机可用性和历史可追溯性。
 
-8. **配置漂移必须可见**  
+8. **配置漂移必须可见**<br>
    每次 run 记录 `git_sha`、branch、profile、provider、`config_fingerprint`。
 
 ## 8. 套件分层
@@ -422,16 +422,16 @@ PYTHONPATH=src .venv/bin/python scripts/run_eval.py --suite main_chain_core --pr
 
 第一版统一围绕四个维度打分：
 
-1. **结果分**  
+1. **结果分**<br>
    用户目标有没有完成
 
-2. **工具路径分**  
+2. **工具路径分**<br>
    该走的工具有没有走，链路顺序是否符合预期
 
-3. **链路效率分**  
+3. **链路效率分**<br>
    LLM 请求轮数、tool 调用次数、额外回合是否控制在预算内
 
-4. **上下文稳定分**  
+4. **上下文稳定分**<br>
    长线程里 compaction、continuity、context status 是否符合预期
 
 ### 12.2 权重策略
@@ -483,7 +483,7 @@ SQLite 作为第一版的唯一持久层。
 
 路径：
 
-- `/Users/litiezhu/workspace/github/marten-runtime/data/evals.sqlite3`
+- `data/evals.sqlite3`
 
 ### 13.1 `eval_runs`
 
@@ -615,13 +615,13 @@ SQLite 作为第一版的唯一持久层。
 
 第一版先把“直观查看”定义成三层：
 
-1. **终端摘要**  
+1. **终端摘要**<br>
    看当前 run 是否变好
 
-2. **Markdown 报告**  
+2. **Markdown 报告**<br>
    看哪些 case 提升或退化
 
-3. **trace 深挖入口**  
+3. **trace 深挖入口**<br>
    通过 `run_id`、`trace_id`、`langfuse_url` 进入根因分析
 
 第一版先不把图形面板做进 runtime。当前最有价值的是让“分数变化 -> 运行证据”这条链路闭合。

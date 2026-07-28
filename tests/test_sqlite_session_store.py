@@ -1,4 +1,5 @@
 import sqlite3
+import threading
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -537,6 +538,175 @@ class SQLiteSessionStoreTests(unittest.TestCase):
         self.assertEqual(listed[0].session_title, "会话列表")
         self.assertEqual(listed[0].message_count, 1)
         self.assertEqual(listed[0].history, [])
+
+    def test_delete_session_removes_lineage_payloads_bindings_and_compaction_jobs(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            store = SQLiteSessionStore(path)
+            parent = store.create(
+                session_id="sess_delete",
+                conversation_id="conv-delete",
+                channel_id="http",
+                user_id="user-delete",
+            )
+            child = store.create_child_session(
+                parent_session_id=parent.session_id,
+                conversation_id="conv-delete-child",
+                session_id="sess_delete_child",
+            )
+            store.append_message(parent.session_id, SessionMessage.user("sensitive birth data"))
+            store.append_message(parent.session_id, SessionMessage.assistant("sensitive answer"))
+            store.append_tool_outcome_summary(
+                parent.session_id,
+                {"tool_name": "bazi", "source_kind": "builtin", "summary": "fingerprint"},
+            )
+            store.set_compacted_context(
+                parent.session_id,
+                CompactedContext(
+                    compact_id="cmp_delete",
+                    session_id=parent.session_id,
+                    summary_text="sensitive compacted context",
+                    source_message_range=[0, 2],
+                    preserved_tail_user_turns=1,
+                ),
+            )
+            store.enqueue_compaction_job(
+                source_session_id=child.session_id,
+                current_message="sensitive child task",
+                preserved_tail_user_turns=1,
+                source_message_range=[0, 1],
+                snapshot_message_count=1,
+            )
+
+            result = store.delete_session(parent.session_id)
+
+            self.assertEqual(result["deleted_session_ids"], ["sess_delete", "sess_delete_child"])
+            self.assertEqual(result["session_count"], 2)
+            self.assertEqual(result["message_count"], 4)
+            self.assertEqual(result["tool_outcome_count"], 1)
+            self.assertEqual(result["binding_count"], 2)
+            self.assertEqual(result["compaction_job_count"], 1)
+            self.assertEqual(store.count(), 0)
+            self.assertEqual(store.binding_count(), 0)
+            with self.assertRaises(KeyError):
+                store.get(parent.session_id)
+
+    def test_prune_sessions_previews_then_deletes_only_inactive_lineage(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            store = SQLiteSessionStore(path)
+            store.create(session_id="sess_old", conversation_id="conv-old")
+            store.create_child_session(
+                parent_session_id="sess_old",
+                conversation_id="conv-old-child",
+                session_id="sess_old_child",
+            )
+            store.create(session_id="sess_current", conversation_id="conv-current")
+            old = datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat()
+            with sqlite3.connect(path) as conn:
+                conn.execute(
+                    "UPDATE sessions SET updated_at=?, last_event_at=? WHERE session_id IN (?, ?)",
+                    (old, old, "sess_old", "sess_old_child"),
+                )
+
+            cutoff = datetime(2026, 4, 1, tzinfo=timezone.utc)
+            preview = store.prune_sessions(inactive_before=cutoff)
+            applied = store.prune_sessions(inactive_before=cutoff, apply=True)
+
+            self.assertFalse(preview["applied"])
+            self.assertEqual(preview["session_ids"], ["sess_old", "sess_old_child"])
+            self.assertTrue(applied["applied"])
+            self.assertEqual(applied["session_count"], 2)
+            self.assertEqual([item.session_id for item in store.list_sessions()], ["sess_current"])
+
+    def test_prune_sessions_preserves_active_descendant_and_its_ancestors(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            store = SQLiteSessionStore(path)
+            store.create(session_id="sess_old_parent", conversation_id="conv-old-parent")
+            store.create_child_session(
+                parent_session_id="sess_old_parent",
+                conversation_id="conv-active-child",
+                session_id="sess_active_child",
+            )
+            store.create_child_session(
+                parent_session_id="sess_old_parent",
+                conversation_id="conv-old-child",
+                session_id="sess_old_child",
+            )
+            old = datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat()
+            with sqlite3.connect(path) as conn:
+                conn.execute(
+                    "UPDATE sessions SET updated_at=?, last_event_at=? WHERE session_id IN (?, ?)",
+                    (old, old, "sess_old_parent", "sess_old_child"),
+                )
+
+            cutoff = datetime(2026, 4, 1, tzinfo=timezone.utc)
+            preview = store.prune_sessions(inactive_before=cutoff)
+            applied = store.prune_sessions(inactive_before=cutoff, apply=True)
+
+            self.assertEqual(preview["session_ids"], ["sess_old_child"])
+            self.assertEqual(applied["deleted_session_ids"], ["sess_old_child"])
+            self.assertEqual(
+                sorted(item.session_id for item in store.list_sessions()),
+                ["sess_active_child", "sess_old_parent"],
+            )
+
+    def test_delete_session_rejects_child_created_after_lineage_selection(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sessions.sqlite3"
+            lineage_selected = threading.Event()
+            allow_delete = threading.Event()
+
+            class PausingStore(SQLiteSessionStore):
+                def _session_lineage(self, conn, session_id):  # noqa: ANN001, ANN202
+                    result = super()._session_lineage(conn, session_id)
+                    lineage_selected.set()
+                    self.assert_release(allow_delete)
+                    return result
+
+                @staticmethod
+                def assert_release(event: threading.Event) -> None:
+                    if not event.wait(timeout=2):
+                        raise AssertionError("delete test release timed out")
+
+            store = PausingStore(path)
+            store.create(session_id="sess_parent", conversation_id="conv-parent")
+            delete_errors: list[BaseException] = []
+            child_errors: list[BaseException] = []
+
+            def delete_parent() -> None:
+                try:
+                    store.delete_session("sess_parent")
+                except BaseException as exc:  # noqa: BLE001
+                    delete_errors.append(exc)
+
+            def create_child() -> None:
+                try:
+                    store.create_child_session(
+                        parent_session_id="sess_parent",
+                        conversation_id="conv-child",
+                        session_id="sess_late_child",
+                    )
+                except BaseException as exc:  # noqa: BLE001
+                    child_errors.append(exc)
+
+            delete_thread = threading.Thread(target=delete_parent)
+            delete_thread.start()
+            self.assertTrue(lineage_selected.wait(timeout=2))
+            child_thread = threading.Thread(target=create_child)
+            child_thread.start()
+            allow_delete.set()
+            delete_thread.join(timeout=5)
+            child_thread.join(timeout=5)
+
+            self.assertFalse(delete_thread.is_alive())
+            self.assertFalse(child_thread.is_alive())
+            self.assertEqual(delete_errors, [])
+            self.assertEqual(len(child_errors), 1)
+            self.assertIsInstance(child_errors[0], (KeyError, sqlite3.IntegrityError))
+            self.assertEqual(store.count(), 0)
+            self.assertEqual(store.binding_count(), 0)
 
     def test_compaction_job_round_trip_claim_and_complete(self) -> None:
         with TemporaryDirectory() as tmpdir:
