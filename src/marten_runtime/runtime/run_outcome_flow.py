@@ -198,7 +198,7 @@ def _ensure_bazi_citation_footer(
         recovered_visible, recovered_protocol = recover_feishu_card_protocol(final_text)
         if recovered_protocol is not None:
             visible_text, protocol = recovered_visible, recovered_protocol
-    if protocol is not None:
+    if protocol is not None and channel_id in {None, "feishu"}:
         visible_text = _sanitize_bazi_visible_analysis(visible_text)
         protocol = _sanitize_bazi_protocol(protocol)
         if references:
@@ -225,15 +225,22 @@ def _ensure_bazi_citation_footer(
         )
     if channel_id != "feishu":
         durable_text = normalize_bazi_timing_contract_text(durable_text)
-    normalized_text = _normalize_bazi_reference_text(durable_text)
+    visible_reference_keys = {
+        _bazi_reference_key(line)
+        for line in section_text(durable_text, "参考依据").splitlines()
+        if "《" in line and "》" in line
+    }
     missing = [
         reference
         for reference in references
-        if _normalize_bazi_reference_text(reference) not in normalized_text
+        if _bazi_reference_key(reference) not in visible_reference_keys
     ]
     if missing:
         rendered = "\n".join(f"- {reference}" for reference in missing)
-        durable_text = f"{durable_text.rstrip()}\n\n参考依据：\n{rendered}".strip()
+        if section_text(durable_text, "参考依据"):
+            durable_text = f"{durable_text.rstrip()}\n{rendered}".strip()
+        else:
+            durable_text = f"{durable_text.rstrip()}\n\n十一、参考依据\n{rendered}".strip()
     if channel_id == "feishu":
         return _build_bazi_feishu_reply(durable_text)
     return durable_text
@@ -340,7 +347,7 @@ def _bazi_readable_references(tool_history: list[ToolExchange]) -> list[str]:
             if not source_id or not chunk_id:
                 continue
             title = str(item.get("source_title") or "").strip()
-            heading = str(item.get("heading") or "").strip()
+            heading = _reference_heading(str(item.get("heading") or ""))
             display_title = _book_title(title or "已审核理论资料")
             reference = f"{display_title} · {heading}" if heading else display_title
             if reference not in references:
@@ -349,14 +356,36 @@ def _bazi_readable_references(tool_history: list[ToolExchange]) -> list[str]:
 
 
 def _book_title(title: str) -> str:
-    normalized = str(title or "").strip()
+    normalized = re.sub(
+        r"(?:：结构化(?:核心)?原文|\s*·\s*(?:作者经验卡|完整教学章节|应期与取象方法))$",
+        "",
+        str(title or "").strip(),
+    ).strip()
     if normalized.startswith("《") and normalized.endswith("》"):
         return normalized
     return f"《{normalized}》"
 
 
+def _reference_heading(heading: str) -> str:
+    return re.sub(
+        r"\s*·\s*(?:author_method|timing_method)_[0-9a-f]+\s*$",
+        "",
+        str(heading or "").strip(),
+    ).strip()
+
+
 def _normalize_bazi_reference_text(text: str) -> str:
     return re.sub(r"[\s*_`]+", "", str(text or ""))
+
+
+def _bazi_reference_key(text: str) -> str:
+    cleaned = _strip_internal_bazi_citations(str(text or ""))
+    book = re.search(r"《[^》]+》", cleaned)
+    if book is None:
+        return _normalize_bazi_reference_text(cleaned)
+    tail = cleaned[book.end() :].strip(" -•·:：*_`")
+    heading = re.split(r"\s*·\s*|[：:]", tail, maxsplit=1)[0].strip()
+    return _normalize_bazi_reference_text(f"{book.group(0)}{heading}")
 
 
 def _sanitize_bazi_protocol(protocol):  # noqa: ANN001
@@ -401,8 +430,19 @@ def _sanitize_bazi_protocol(protocol):  # noqa: ANN001
 
 def _sanitize_bazi_visible_analysis(text: str) -> str:
     kept_lines: list[str] = []
+    reference_keys: set[str] = set()
     current_section: str | None = None
     for raw_line in str(text or "").splitlines():
+        raw_line = re.sub(
+            r"《([^》]+?)(?:：结构化(?:核心)?原文|\s*·\s*(?:作者经验卡|完整教学章节|应期与取象方法))》",
+            r"《\1》",
+            raw_line,
+        )
+        raw_line = re.sub(
+            r"\s*·\s*(?:author_method|timing_method)_[0-9a-f]+\b",
+            "",
+            raw_line,
+        )
         heading_candidate = re.sub(r"^[\s#*]+", "", raw_line).strip().rstrip("*")
         heading_candidate = re.sub(
             r"^(?:[一二三四五六七八九十]+|\d+)[、.．]\s*",
@@ -420,6 +460,11 @@ def _sanitize_bazi_visible_analysis(text: str) -> str:
             years = [int(item) for item in re.findall(r"(?<!\d)(?:19|20)\d{2}(?!\d)", raw_line)]
             if years and max(years) > datetime.now().year:
                 continue
+        if current_section == "参考依据" and raw_line.lstrip().startswith(("-", "*", "•")):
+            reference_key = _bazi_reference_key(raw_line)
+            if reference_key in reference_keys:
+                continue
+            reference_keys.add(reference_key)
         kept_lines.append(raw_line.rstrip())
     return re.sub(r"\n{3,}", "\n\n", "\n".join(kept_lines)).strip()
 

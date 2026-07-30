@@ -341,6 +341,35 @@ class LLMClientInstructionTests(unittest.TestCase):
         self.assertIn("不要调用工具", instruction)
         self.assertIn("只输出原回复中待修复的栏目", instruction)
         self.assertIn("过三关包含栏目名称", instruction)
+        self.assertIn("不邀请命主反馈", instruction)
+        self.assertNotIn("准确 / 部分准确 / 不准确", instruction)
+
+    def test_request_specific_instruction_adds_bazi_semantic_review_contract(self) -> None:
+        request = self._build_request(
+            agent_id="bazi",
+            request_kind="bazi_output_semantic_review",
+            invalid_final_text="十、过三关\n2024｜住处反复折腾｜依据",
+            available_tools=[],
+        )
+
+        instruction = _request_specific_instruction(request) or ""
+
+        self.assertIn("只审查", instruction)
+        self.assertIn("对象、动作和明确结果", instruction)
+        self.assertIn("每个栏目有可信度不低于 70", instruction)
+        self.assertIn("不得做跨栏目总排名", instruction)
+        self.assertIn("relationship=婚姻恋爱", instruction)
+        self.assertIn("career_change=工作变更", instruction)
+        self.assertIn("不得要求年份彼此不同", instruction)
+        self.assertIn("流年、大运、原局三层", instruction)
+        self.assertIn('"passed":true', instruction)
+        self.assertIn("不得输出 Markdown", instruction)
+        self.assertIn("住处反复折腾", instruction)
+        self.assertIn("审查不要求反馈邀请", instruction)
+        self.assertIn("索取反馈", instruction)
+        self.assertIn("分手、恋爱确定或结婚应判为过度推断", instruction)
+        self.assertIn("感情关系发生明显变动", instruction)
+        self.assertNotIn("准确 / 部分准确 / 不准确", instruction)
 
     def test_request_specific_instruction_adds_contract_repair_guardrails(self) -> None:
         request = self._build_request(

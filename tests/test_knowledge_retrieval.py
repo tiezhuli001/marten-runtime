@@ -81,6 +81,52 @@ class KnowledgeRetrievalTests(unittest.TestCase):
 
         self.assertEqual([item.chunk_id for item in result.results], [chunk.chunk_id])
 
+    def test_metadata_filter_is_preserved_for_contains_fallback(self) -> None:
+        store, _, _ = _store_with_chunk("无关内容", metadata={"content_type": "author_method"})
+        calls: list[dict[str, object] | None] = []
+        original = store.find_chunks_containing
+
+        def recording_fallback(namespace, query, *, limit, filters=None):
+            calls.append(filters)
+            return original(namespace, query, limit=limit, filters=filters)
+
+        store.find_chunks_containing = recording_fallback  # type: ignore[method-assign]
+        retriever = KnowledgeRetriever(store)
+
+        retriever.search(
+            namespace="fanqie",
+            query="不存在的作者方法",
+            embedding_config_hash="missing",
+            query_vector=[],
+            top_k=5,
+            filters={"content_type": "author_method"},
+        )
+
+        self.assertEqual(calls, [{"content_type": "author_method"}])
+
+    def test_metadata_filter_overfetches_vector_candidates_before_filtering(self) -> None:
+        store, source, target = _store_with_chunk("目标方法", metadata={"content_type": "timing_method"})
+        distractors = [
+            KnowledgeChunk.new(
+                namespace="fanqie", source_id=source.source_id, ordinal=index + 1,
+                text=f"无关经典 {index}", metadata={"content_type": "classical"},
+            )
+            for index in range(120)
+        ]
+        store.replace_chunks("fanqie", source.source_id, [target, *distractors])
+        store.upsert_embedding(namespace="fanqie", chunk_id=target.chunk_id, model_id="m", dimension=2, embedding_config_hash="h", vector=[0.8, 0.2])
+        for index, item in enumerate(distractors):
+            store.upsert_embedding(namespace="fanqie", chunk_id=item.chunk_id, model_id="m", dimension=2, embedding_config_hash="h", vector=[1.0, index * 0.01])
+        config = KnowledgeSearchConfig(default_top_k=1, candidate_pool=1, fts_weight=0.0, vector_weight=1.0, metadata_weight=0.0, reranker_weight=0.0)
+        retriever = KnowledgeRetriever(store, search_config=config)
+
+        result = retriever.search(
+            namespace="fanqie", query="不存在于正文", embedding_config_hash="h",
+            query_vector=[1.0, 0.0], top_k=1, filters={"content_type": "timing_method"},
+        )
+
+        self.assertEqual([item.chunk_id for item in result.results], [target.chunk_id])
+
     def test_theory_search_excludes_course_notes_and_cases_by_default(self) -> None:
         store, source, original = _store_with_chunk("月劫格以月令为据", metadata={"evidence_kind": "classical_original"})
         notes = KnowledgeChunk.new(namespace="fanqie", source_id=source.source_id, ordinal=1, text="月劫格课程笔记", metadata={"evidence_kind": "course_notes"})

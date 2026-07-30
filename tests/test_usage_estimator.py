@@ -134,7 +134,7 @@ class UsageEstimatorTests(unittest.TestCase):
         self.assertEqual(buckets["escaped_unicode_sequences"], 2)
         self.assertEqual(buckets["ascii_text_chars"], len('prefix-suffix'))
 
-    def test_preflight_estimate_boosts_escaped_unicode_tool_payloads(self) -> None:
+    def test_preflight_estimate_uses_readable_cjk_tool_payloads_without_escape_inflation(self) -> None:
         client = OpenAIChatLLMClient(
             api_key="secret",
             model="gpt-4.1",
@@ -166,8 +166,10 @@ class UsageEstimatorTests(unittest.TestCase):
         serialized = serialize_payload_stably(payload)
         buckets = classify_serialized_payload_chars(serialized)
 
-        self.assertGreater(buckets["escaped_unicode_sequences"], 1000)
-        self.assertGreater(estimate.input_tokens_estimate, 8500)
+        self.assertEqual(buckets["escaped_unicode_sequences"], 0)
+        self.assertGreater(buckets["cjk_chars"], 1000)
+        self.assertGreater(estimate.input_tokens_estimate, 1000)
+        self.assertLess(estimate.input_tokens_estimate, 8500)
 
 
 if __name__ == "__main__":

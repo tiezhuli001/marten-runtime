@@ -43,6 +43,8 @@ _BIRTH_PROPERTIES = {
 }
 _PILLAR_PATTERN = f"^[{_STEMS}][{_BRANCHES}]$"
 _RESULT_CACHE_NAMESPACE = "bazi.successful_requests"
+CURRENT_RESULT_STATE_KEY = "bazi.current_result"
+RESULTS_BY_ACTION_STATE_KEY = "bazi.results_by_action"
 
 BAZI_PARAMETERS_SCHEMA: dict[str, object] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -129,6 +131,7 @@ def run_bazi_tool(
             result = deepcopy(cached)
             result["requestId"] = request_id
             result["duplicateRequestSuppressed"] = True
+            _remember_current_result(tool_context, result)
             return result
         response = bridge_manager.invoke(
             action,
@@ -140,6 +143,7 @@ def run_bazi_tool(
         result = _render_bridge_response(response)
         if result.get("ok") is True:
             cache[cache_key] = deepcopy(result)
+            _remember_current_result(tool_context, result)
         return result
     except BaziInputError as exc:
         return _error_envelope(
@@ -229,7 +233,7 @@ def _validate_birth_payload(payload: Mapping[str, object]) -> tuple[dict, str]:
         raise BaziInputError("bazi_birth_place_required", "birthPlace is required for true_solar")
     if normalized_place is not None and not 2 <= len(normalized_place) <= 200:
         raise BaziInputError("bazi_bridge_invalid_request", "birthPlace length must be between 2 and 200")
-    detail_level = payload.get("detailLevel", "default")
+    detail_level = "full" if payload.get("action") == "dayun" else payload.get("detailLevel", "default")
     if detail_level not in {"default", "full"}:
         raise BaziInputError("bazi_bridge_invalid_request", "detailLevel must be default or full")
     arguments = {
@@ -306,6 +310,17 @@ def _successful_request_cache(tool_context: dict | None) -> dict:
 
 def _successful_request_cache_key(action: str, arguments: Mapping[str, object], detail_level: str) -> tuple:
     return action, detail_level, tuple(sorted(arguments.items()))
+
+
+def _remember_current_result(tool_context: dict | None, result: dict[str, object]) -> None:
+    state = (tool_context or {}).get("turn_tool_state")
+    if isinstance(state, dict):
+        state[CURRENT_RESULT_STATE_KEY] = deepcopy(result)
+        by_action = state.setdefault(RESULTS_BY_ACTION_STATE_KEY, {})
+        if isinstance(by_action, dict):
+            action = str(result.get("action") or "")
+            if action:
+                by_action[action] = deepcopy(result)
 
 
 def _render_bridge_response(response: dict) -> dict:

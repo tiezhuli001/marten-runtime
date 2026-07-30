@@ -62,6 +62,32 @@ class KnowledgeStoreTests(unittest.TestCase):
                     results = store.search_fts("fanqie", query, limit=10)
                     self.assertEqual([item.chunk_id for item in results], [chunk.chunk_id])
 
+    def test_fts_search_applies_metadata_filter_before_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLiteKnowledgeStore(Path(tmp) / "knowledge.sqlite3")
+            source = KnowledgeSource.new(namespace="bazi", title="Book", kind="text", uri="local://book")
+            store.upsert_source(source)
+            chapter = KnowledgeChunk.new(
+                namespace="bazi", source_id=source.source_id, ordinal=0,
+                text="婚姻宫逢冲 配偶星 婚姻不顺 离婚",
+                metadata={"content_type": "author_chapter"},
+            )
+            method = KnowledgeChunk.new(
+                namespace="bazi", source_id=source.source_id, ordinal=1,
+                text="婚姻宫逢冲 配偶星需要结合岁运判断",
+                metadata={"content_type": "author_method"},
+            )
+            store.replace_chunks("bazi", source.source_id, [chapter, method])
+
+            results = store.search_fts(
+                "bazi",
+                "婚姻宫逢冲 配偶星 婚姻不顺 离婚",
+                limit=1,
+                filters={"content_type": "author_method"},
+            )
+
+            self.assertEqual([item.chunk_id for item in results], [method.chunk_id])
+
 
     def test_delete_source_removes_sqlite_vec_rows_from_active_queries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -76,6 +102,40 @@ class KnowledgeStoreTests(unittest.TestCase):
             store.delete_source("fanqie", source.source_id)
 
             self.assertEqual(store.query_sqlite_vec("fanqie", "h", [1.0] + [0.0] * 511, top_k=1).items, [])
+
+    def test_sqlite_vec_applies_metadata_filter_before_top_k(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLiteKnowledgeStore(Path(tmp) / "knowledge.sqlite3")
+            source = KnowledgeSource.new(namespace="bazi", title="Book", kind="text", uri="local://book")
+            store.upsert_source(source)
+            chapter = KnowledgeChunk.new(
+                namespace="bazi", source_id=source.source_id, ordinal=0, text="chapter",
+                metadata={"content_type": "author_chapter"},
+            )
+            method = KnowledgeChunk.new(
+                namespace="bazi", source_id=source.source_id, ordinal=1, text="method",
+                metadata={"content_type": "author_method"},
+            )
+            store.replace_chunks("bazi", source.source_id, [chapter, method])
+            query = [1.0] + [0.0] * 511
+            store.upsert_embedding(
+                namespace="bazi", chunk_id=chapter.chunk_id, model_id="m", dimension=512,
+                embedding_config_hash="h", vector=query,
+            )
+            store.upsert_embedding(
+                namespace="bazi", chunk_id=method.chunk_id, model_id="m", dimension=512,
+                embedding_config_hash="h", vector=[0.8, 0.2] + [0.0] * 510,
+            )
+
+            result = store.query_sqlite_vec(
+                "bazi",
+                "h",
+                query,
+                top_k=1,
+                filters={"content_type": "author_method"},
+            )
+
+            self.assertEqual([item.chunk_id for item in result.items], [method.chunk_id])
 
     def test_namespace_embedding_config_hash_can_be_updated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -232,6 +232,11 @@ class SQLiteKnowledgeStore:
                 embedding_profile_id=embedding_profile_id,
             )
 
+    def replace_source_chunks(self, *, source: KnowledgeSource, chunks: list[KnowledgeChunk]) -> None:
+        with self._connect() as conn:
+            self._upsert_source(conn, source)
+            self._replace_chunks(conn, source.namespace, source.source_id, chunks)
+
     def complete_ingest_job_with_source_bundle(
         self,
         *,
@@ -297,41 +302,82 @@ class SQLiteKnowledgeStore:
             ).fetchone()
         return _chunk_from_row(row) if row is not None else None
 
-    def search_fts(self, namespace: str, query: str, *, limit: int) -> list[KnowledgeChunk]:
+    def search_fts(
+        self,
+        namespace: str,
+        query: str,
+        *,
+        limit: int,
+        filters: dict[str, object] | None = None,
+    ) -> list[KnowledgeChunk]:
         match_query = _normalize_query(query)
         if not match_query:
             return []
+        filter_sql, filter_params = _metadata_filter_sql(filters)
         with self._connect() as conn:
             try:
                 rows = conn.execute(
-                    """
+                    f"""
                     SELECT c.*
                     FROM knowledge_chunks_fts f
                     JOIN knowledge_chunks c ON c.namespace=f.namespace AND c.chunk_id=f.chunk_id
                     WHERE f.namespace=? AND f.knowledge_chunks_fts MATCH ? AND c.status='active'
+                    {filter_sql}
                     ORDER BY c.ordinal ASC, c.chunk_id ASC
                     LIMIT ?
                     """,
-                    (namespace, match_query, limit),
+                    (namespace, match_query, *filter_params, limit),
                 ).fetchall()
+                if not rows and filters:
+                    any_term_query = _any_term_query(query)
+                    if any_term_query:
+                        rows = conn.execute(
+                            f"""
+                            SELECT c.*
+                            FROM knowledge_chunks_fts f
+                            JOIN knowledge_chunks c
+                              ON c.namespace=f.namespace AND c.chunk_id=f.chunk_id
+                            WHERE f.namespace=?
+                              AND f.knowledge_chunks_fts MATCH ?
+                              AND c.status='active'
+                              {filter_sql}
+                            ORDER BY bm25(knowledge_chunks_fts), c.ordinal ASC, c.chunk_id ASC
+                            LIMIT ?
+                            """,
+                            (namespace, any_term_query, *filter_params, limit),
+                        ).fetchall()
             except sqlite3.Error:
-                return self.find_chunks_containing(namespace, query, limit=limit)
+                return self.find_chunks_containing(
+                    namespace,
+                    query,
+                    limit=limit,
+                    filters=filters,
+                )
         return [_chunk_from_row(row) for row in rows]
 
-    def find_chunks_containing(self, namespace: str, query: str, *, limit: int) -> list[KnowledgeChunk]:
+    def find_chunks_containing(
+        self,
+        namespace: str,
+        query: str,
+        *,
+        limit: int,
+        filters: dict[str, object] | None = None,
+    ) -> list[KnowledgeChunk]:
         text = str(query or "").strip()
         if not text:
             return []
+        filter_sql, filter_params = _metadata_filter_sql(filters)
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT *
-                FROM knowledge_chunks
+                FROM knowledge_chunks c
                 WHERE namespace=? AND status='active' AND text LIKE ?
+                {filter_sql}
                 ORDER BY ordinal ASC, chunk_id ASC
                 LIMIT ?
                 """,
-                (namespace, f"%{text}%", limit),
+                (namespace, f"%{text}%", *filter_params, limit),
             ).fetchall()
         return [_chunk_from_row(row) for row in rows]
 
@@ -468,8 +514,10 @@ class SQLiteKnowledgeStore:
         query_vector: list[float],
         *,
         top_k: int,
+        filters: dict[str, object] | None = None,
     ) -> VectorQueryResult:
         table_name = _sqlite_vec_table_name(len(query_vector))
+        filter_sql, filter_params = _metadata_filter_sql(filters)
         with self._connect() as conn:
             if not table_name or not self._sqlite_vec_ready(conn):
                 return VectorQueryResult(status=VectorStatus.DISABLED, message="sqlite-vec table is not available")
@@ -494,6 +542,7 @@ class SQLiteKnowledgeStore:
                     status=VectorStatus.BACKEND_ERROR,
                     message="sqlite-vec index table rows are missing while embeddings exist. Run knowledge.reindex --namespace xxx.",
                 )
+            query_k = active_count if filters else top_k
             try:
                 import sqlite_vec  # type: ignore[import-not-found]
 
@@ -514,15 +563,17 @@ class SQLiteKnowledgeStore:
                       AND m.dimension = ?
                       AND c.status = 'active'
                       AND e.status = 'active'
+                      {filter_sql}
                     ORDER BY v.distance ASC
                     LIMIT ?
                     """,
                     (
                         sqlite_vec.serialize_float32(query_vector),
-                        top_k,
+                        query_k,
                         namespace,
                         embedding_config_hash,
                         len(query_vector),
+                        *filter_params,
                         top_k,
                     ),
                 ).fetchall()
@@ -1322,6 +1373,25 @@ def _ingest_job_from_row(row: sqlite3.Row) -> KnowledgeIngestJob:
 
 def _normalize_query(query: str) -> str:
     return " ".join(token for token in str(query or "").strip().split() if token) or str(query or "").strip()
+
+
+def _any_term_query(query: str) -> str:
+    tokens = [token for token in str(query or "").strip().split() if token]
+    return " OR ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
+
+
+def _metadata_filter_sql(
+    filters: dict[str, object] | None,
+) -> tuple[str, list[object]]:
+    if not filters:
+        return "", []
+    clauses: list[str] = []
+    params: list[object] = []
+    for key, value in filters.items():
+        path = '$."' + str(key).replace('"', '\\"') + '"'
+        clauses.append("AND json_extract(c.metadata_json, ?) = ?")
+        params.extend((path, value))
+    return "\n".join(clauses), params
 
 
 def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, column_sql: str) -> None:

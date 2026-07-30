@@ -204,6 +204,16 @@ class BaziToolTests(unittest.TestCase):
         self.assertTrue(cycles[0]["流年列表"])
         self.assertIn("原局关系", cycles[0]["流年列表"][0])
 
+    def test_dayun_forces_full_detail_even_when_default_is_requested(self) -> None:
+        manager = FakeBridgeManager()
+
+        run_bazi_tool(
+            self.birth_payload(action="dayun", detailLevel="default"),
+            bridge_manager=manager,
+        )
+
+        self.assertEqual(manager.calls[0]["detail_level"], "full")
+
     def test_validation_expands_resolve_arguments_without_detail_level(self) -> None:
         arguments, detail = validate_bazi_payload(
             {

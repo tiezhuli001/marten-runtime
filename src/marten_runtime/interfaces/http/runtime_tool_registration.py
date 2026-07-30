@@ -7,6 +7,7 @@ from marten_runtime.runtime.capabilities import get_parameters_schema, render_to
 from marten_runtime.session.transition import SessionTransitionResult
 from marten_runtime.tools.builtins.automation_tool import run_automation_tool
 from marten_runtime.tools.builtins.bazi_tool import run_bazi_tool
+from marten_runtime.tools.builtins.bazi_case_tool import run_bazi_case_tool
 from marten_runtime.tools.builtins.knowledge_tool import run_knowledge_tool
 from marten_runtime.tools.builtins.memory_tool import run_memory_tool
 from marten_runtime.tools.builtins.mcp_tool import run_mcp_tool
@@ -48,6 +49,17 @@ def register_family_tools(
         ),
         description=render_tool_description(capability_declarations["bazi"]),
         parameters_schema=get_parameters_schema(capability_declarations["bazi"]),
+        observation_policy="sensitive_bazi",
+    )
+    state.tool_registry.register(
+        "bazi_case",
+        lambda payload, runtime_state=state, *, tool_context=None: run_bazi_case_tool(
+            payload,
+            case_service=runtime_state.bazi_case_service,
+            tool_context=tool_context,
+        ),
+        description=render_tool_description(capability_declarations["bazi_case"]),
+        parameters_schema=get_parameters_schema(capability_declarations["bazi_case"]),
         observation_policy="sensitive_bazi",
     )
     state.tool_registry.register(

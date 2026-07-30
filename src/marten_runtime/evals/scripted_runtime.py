@@ -120,7 +120,30 @@ class ScriptedEvalLLMClient:
                     tool_payload=payload,
                 ),
             )
-        if request.request_kind == "finalization_retry" and self.case_id.startswith("bazi_"):
+        if request.request_kind == "bazi_case_search" and self.case_id.startswith("bazi_"):
+            return _normalize_reply_contract_metadata(
+                request,
+                LLMReply(
+                    tool_name="bazi_case",
+                    tool_payload={
+                        "action": "search",
+                        "query": "日主 月令 主要十神 关键干支关系 当前大运",
+                        "top_k": 3,
+                    },
+                ),
+            )
+        if (
+            request.request_kind == "bazi_output_semantic_review"
+            and self.case_id.startswith("bazi_")
+        ):
+            return _normalize_reply_contract_metadata(
+                request,
+                _plain_final_reply('{"passed":true,"violations":[]}'),
+            )
+        if request.request_kind in {
+            "bazi_final_generation",
+            "finalization_retry",
+        } and self.case_id.startswith("bazi_"):
             return _normalize_reply_contract_metadata(
                 request,
                 _bazi_result_covered_reply(
@@ -634,6 +657,11 @@ def _scripted_bazi_tool_followup(llm: ScriptedEvalLLMClient, request) -> LLMRepl
             request,
             _scripted_bazi_analysis_text(),
         )
+    if tool_name == "bazi_case":
+        return _bazi_result_covered_reply(
+            request,
+            _scripted_bazi_analysis_text(),
+        )
     return _result_covered_final_reply("Bazi scripted evaluation completed.")
 
 
@@ -676,10 +704,12 @@ def _scripted_bazi_analysis_text() -> str:
         "六、事业\n2012-2014 年进入专业输出型岗位｜食伤做功在对应行运得到发挥。\n\n"
         "七、婚姻\n日支丑的婚姻桃花为午。2014（甲午）财星透出、午为日支丑的桃花，并与时支子相冲，是首次结婚窗口。\n\n"
         "八、六亲\n2006（丙戌）｜待核验父亲脾胃检查｜流年戌冲年支辰，父星与年柱土象同步受作用。\n2016（丙申）｜待核验母亲腿脚或胆部检查｜流年申冲月支寅，母星与月柱寅木身体取象同步受作用。\n\n"
-        "九、财富等级\n财富结构分：6/9＝成局路径 2 + 承载 2 + 大运 3 - 制约 1。无财时由食伤生财或暗成财局参与成局路径，官印、杀印、食神制杀与禄只在成格时作为职业变现通道，不直接改称财星。命理年收入能力区间：30-60 万元；这是传统文化模型估算，不等同现实收入。未提供储蓄率、资产和负债，不能换算净积累与总资产。\n\n"
+        "九、财富等级\n财富结构分：6/9＝成局路径 2 + 承载 2 + 大运 3 - 制约 1。"
+        "命理年收入能力区间：30-60 万；这是传统文化模型估算，不等同现实收入。"
+        "未提供储蓄率、资产和负债，不估算净资产或总资产。\n\n"
         "十、过三关\n"
-        "2006（丙戌）｜待核验关键升学结果｜推算原因：流年：丙戌引动学习结构；大运：本轮已核验行运；原局：印食结构被引动。\n"
-        "2014（甲午）｜待核验出现重要恋爱对象｜推算原因：流年：甲午为日支丑的桃花；大运：本轮已核验行运；原局：夫妻宫被桃花引动。\n"
+        "2006（丙戌）｜待核验关键升学结果｜推算原因：流年：丙戌引动学习结构；大运：本轮已核验行运；原局：印食结构被引动；2006太极贵人仅作辅助证据。\n"
+        "2014（甲午）｜待核验出现重要恋爱对象｜推算原因：流年：甲午为日支丑的桃花；大运：本轮已核验行运；原局：夫妻宫被桃花引动；2014桃花仅作辅助证据。\n"
         "2006（丙戌）｜待核验本人脾胃检查｜推算原因：流年：丙戌冲年支辰、刑日支丑；大运：本轮已核验行运；原局：脾胃土象被引动。\n"
         "2016（丙申）｜待核验家庭环境变化｜推算原因：流年：丙申冲月支寅；大运：本轮已核验行运；原局：月柱家庭宫位被引动。\n\n"
         "十一、参考依据\n使用本轮检索到的书名与篇章。"

@@ -255,6 +255,14 @@ class OpenAIChatClientTests(unittest.TestCase):
         self.assertEqual(payload["max_completion_tokens"], 2500)
         self.assertNotIn("tools", payload)
 
+        final_payload = build_openai_chat_payload(
+            "gpt-5.4",
+            request.model_copy(update={"request_kind": "bazi_final_generation"}),
+        )
+        self.assertEqual(final_payload["reasoning_effort"], "low")
+        self.assertEqual(final_payload["max_completion_tokens"], 3400)
+        self.assertNotIn("tools", final_payload)
+
         main_payload = build_openai_chat_payload(
             "gpt-5.4", request.model_copy(update={"agent_id": "main"})
         )
@@ -354,6 +362,46 @@ class OpenAIChatClientTests(unittest.TestCase):
         self.assertEqual(len(client.last_call_diagnostics.attempts), 3)
         self.assertEqual(
             client.last_call_diagnostics.final_error_code, "PROVIDER_TIMEOUT"
+        )
+
+    def test_bazi_full_generation_fails_over_after_one_provider_attempt(self) -> None:
+        attempts = 0
+
+        def fake_transport(
+            url: str,
+            headers: dict[str, str],
+            body: dict,
+            timeout_seconds: float,
+        ) -> dict:
+            nonlocal attempts
+            del url, headers, body, timeout_seconds
+            attempts += 1
+            raise RuntimeError("provider_http_error:504:gateway timeout")
+
+        client = OpenAIChatLLMClient(
+            api_key="secret",
+            model="gpt-5.4",
+            profile_name="openai_gpt_5_4",
+            transport=fake_transport,
+        )
+
+        with self.assertRaises(ProviderTransportError):
+            client.complete(
+                LLMRequest(
+                    session_id="sess_1",
+                    trace_id="trace_1",
+                    message="完整解盘",
+                    agent_id="bazi",
+                    request_kind="bazi_final_generation",
+                )
+            )
+
+        self.assertEqual(attempts, 1)
+        assert client.last_call_diagnostics is not None
+        self.assertEqual(client.last_call_diagnostics.max_attempts, 1)
+        self.assertEqual(
+            client.last_call_diagnostics.final_error_code,
+            "PROVIDER_UPSTREAM_UNAVAILABLE",
         )
 
     def test_openai_client_treats_null_content_as_empty_final_text(self) -> None:
@@ -624,7 +672,7 @@ class OpenAIChatClientTests(unittest.TestCase):
         self.assertEqual(input_items[-1]["call_id"], "call_1")
         self.assertEqual(
             input_items[-1]["output"],
-            '{"iso_time": "2026-04-20T12:00:00Z"}',
+            '{"iso_time":"2026-04-20T12:00:00Z"}',
         )
 
     def test_openai_5_series_responses_payload_omits_tools_for_finalization_retry_request(

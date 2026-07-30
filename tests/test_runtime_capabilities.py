@@ -19,6 +19,7 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
             {
                 "automation",
                 "bazi",
+                "bazi_case",
                 "cancel_subagent",
                 "knowledge",
                 "memory",

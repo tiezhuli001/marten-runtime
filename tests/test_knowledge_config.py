@@ -4,7 +4,11 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from marten_runtime.knowledge.config import load_knowledge_config, embedding_config_hash
+from marten_runtime.knowledge.config import (
+    embedding_config_hash,
+    load_knowledge_config,
+    resolve_knowledge_runtime_paths,
+)
 
 
 class KnowledgeConfigTests(unittest.TestCase):
@@ -181,6 +185,32 @@ class KnowledgeConfigTests(unittest.TestCase):
         profiles = config.resolved_embedding_profiles()
         self.assertEqual(set(profiles), {"default", "large"})
         self.assertEqual(profiles["large"].dimension, 768)
+
+    def test_runtime_path_resolution_covers_all_model_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            text = _valid_config() + """
+            [knowledge.embedding_profiles.large]
+            enabled = true
+            provider = "fake"
+            model = "fake-large"
+            local_path = "data/models/fake-large"
+            dimension = 768
+            allow_remote_download = false
+            use_fp16 = false
+            """
+            config = load_knowledge_config.from_text(text).knowledge
+
+            resolved = resolve_knowledge_runtime_paths(config, repo_root=root)
+
+            self.assertEqual(resolved.repo_root, str(root))
+            self.assertEqual(resolved.db_path, str(root / config.db_path))
+            self.assertEqual(resolved.embedding.local_path, str(root / config.embedding.local_path))
+            self.assertEqual(
+                resolved.embedding_profiles["large"].local_path,
+                str(root / "data/models/fake-large"),
+            )
+            self.assertEqual(resolved.reranker.local_path, str(root / config.reranker.local_path))
 
 
 def _valid_config(

@@ -16,6 +16,15 @@ from marten_runtime.runtime.llm_client import (
     ToolFollowupFragment,
     ToolFollowupRender,
 )
+from marten_runtime.runtime.llm_message_support import (
+    compact_bazi_verification_repair_evidence,
+)
+from marten_runtime.runtime.bazi_output_contract import (
+    bazi_analysis_response_schema,
+    bazi_semantic_review_response_schema,
+    bazi_verification_events_response_schema,
+    section_text,
+)
 from marten_runtime.runtime.tool_outcome_flow import collect_structured_hint_facts
 from marten_runtime.tools.builtins.runtime_tool import annotate_runtime_context_status_peak
 from marten_runtime.tools.builtins.runtime_tool import render_runtime_compaction_status_text
@@ -164,6 +173,27 @@ def build_finalization_retry_request(
     return base_request.model_copy(update=updates)
 
 
+def build_bazi_final_generation_request(
+    base_request: LLMRequest,
+    *,
+    tool_history: list[ToolExchange],
+    finalization_evidence_ledger: FinalizationEvidenceLedger | None = None,
+) -> LLMRequest:
+    request = build_finalization_retry_request(
+        base_request,
+        tool_history=tool_history,
+        finalization_evidence_ledger=finalization_evidence_ledger,
+    )
+    return request.model_copy(
+        update={
+            "request_kind": "bazi_final_generation",
+            "max_completion_tokens": 3400,
+            "response_schema_name": "bazi_analysis_draft",
+            "response_schema": bazi_analysis_response_schema(),
+        }
+    )
+
+
 def build_bazi_output_repair_request(
     base_request: LLMRequest,
     *,
@@ -196,6 +226,143 @@ def build_bazi_output_repair_request(
             "request_kind": "bazi_output_repair",
             "finalization_evidence_ledger": None,
             "invalid_final_text": repair_text or None,
+        }
+    )
+
+
+def build_bazi_analysis_draft_repair_request(
+    base_request: LLMRequest,
+    *,
+    tool_history: list[ToolExchange],
+    invalid_draft_text: str,
+    violations: list[str],
+) -> LLMRequest:
+    request = build_bazi_final_generation_request(
+        base_request,
+        tool_history=tool_history,
+    )
+    violation_text = "；".join(
+        str(item or "").strip() for item in violations if str(item or "").strip()
+    )
+    return request.model_copy(
+        update={
+            "request_kind": "bazi_analysis_draft_repair",
+            "invalid_final_text": (
+                f"违规项：{violation_text}。\n上一版结构化草稿：{invalid_draft_text}"
+            ),
+        }
+    )
+
+
+def build_bazi_verification_event_repair_request(
+    base_request: LLMRequest,
+    *,
+    tool_history: list[ToolExchange],
+    current_events_json: str,
+    violations: list[str],
+) -> LLMRequest:
+    request = build_bazi_final_generation_request(
+        base_request,
+        tool_history=tool_history,
+    )
+    try:
+        current_payload = json.loads(current_events_json)
+    except (TypeError, ValueError):
+        current_payload = {}
+    candidate_years = {
+        int(candidate["year"])
+        for candidate in current_payload.get("verification_candidates", [])
+        if isinstance(candidate, dict)
+        and isinstance(candidate.get("year"), int)
+        and not isinstance(candidate.get("year"), bool)
+    }
+    compact_evidence = compact_bazi_verification_repair_evidence(
+        tool_history,
+        candidate_years,
+    )
+    violation_text = "；".join(
+        str(item or "").strip() for item in violations if str(item or "").strip()
+    )
+    return request.model_copy(
+        update={
+            "request_kind": "bazi_verification_event_repair",
+            "invalid_final_text": (
+                f"语义审查违规项：{violation_text}。\n"
+                f"上一版 verification_candidates 与 verification_events：{current_events_json}\n"
+                "候选年份对应的确定性事实："
+                f"{json.dumps(compact_evidence, ensure_ascii=False, separators=(',', ':'))}"
+            ),
+            "tool_history": [],
+            "max_completion_tokens": 1600,
+            "response_schema_name": "bazi_verification_events_patch",
+            "response_schema": bazi_verification_events_response_schema(),
+        }
+    )
+
+
+def build_bazi_output_semantic_review_request(
+    base_request: LLMRequest,
+    *,
+    tool_history: list[ToolExchange],
+    candidate_text: str,
+    verification_events_json: str | None = None,
+) -> LLMRequest:
+    verification = section_text(candidate_text, "过三关").strip()
+    review_material = verification or "过三关栏目为空"
+    if verification_events_json:
+        review_material = (
+            f"{review_material}\n\n结构化候选与最终事件（仅供审查，不对用户展示）："
+            f"{verification_events_json}"
+        )
+        try:
+            verification_payload = json.loads(verification_events_json)
+        except (TypeError, ValueError):
+            verification_payload = {}
+        candidate_years = {
+            int(candidate["year"])
+            for candidate in (
+                verification_payload.get("verification_candidates", [])
+                if isinstance(verification_payload, dict)
+                else []
+            )
+            if isinstance(candidate, dict)
+            and isinstance(candidate.get("year"), int)
+            and not isinstance(candidate.get("year"), bool)
+        }
+        if candidate_years:
+            deterministic_evidence = compact_bazi_verification_repair_evidence(
+                tool_history,
+                candidate_years,
+            )
+            review_material = (
+                f"{review_material}\n\n候选年份确定性事实（审查合化、刑冲合害时以此为准）："
+                f"{json.dumps(deterministic_evidence, ensure_ascii=False, separators=(',', ':'))}"
+            )
+    return base_request.model_copy(
+        update={
+            "conversation_messages": [],
+            "compact_summary_text": None,
+            "tool_outcome_summary_text": None,
+            "memory_text": None,
+            "working_context": {},
+            "working_context_text": None,
+            "skill_heads_text": None,
+            "capability_catalog_text": None,
+            "always_on_skill_text": None,
+            "repository_context_text": None,
+            "activated_skill_ids": [],
+            "activated_skill_bodies": [],
+            "tool_history": [],
+            "tool_result": None,
+            "requested_tool_name": None,
+            "requested_tool_payload": {},
+            "available_tools": [],
+            "request_kind": "bazi_output_semantic_review",
+            "finalization_evidence_ledger": None,
+            "invalid_final_text": review_material,
+            "max_completion_tokens": 500,
+            "response_schema_name": "bazi_semantic_review",
+            "response_schema": bazi_semantic_review_response_schema(),
         }
     )
 

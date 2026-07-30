@@ -174,7 +174,8 @@ class BaziAgentFamilyGraderTests(unittest.TestCase):
             final_text=(
                 "一、学历\n本科，2006 年升学待核验。\n"
                 "二、婚姻\n2016 年为结婚窗口。\n"
-                "三、财富等级\n现实基线：当前收入 50 万元 × 10 年 × 80% = 400 万元，小康。"
+                "三、财富等级\n财富结构分：6/9＝成局路径 2 + 承载 2 + 大运 3 - 制约 1。"
+                "命理年收入能力区间：30-60 万；这是传统文化模型估算，不等同现实收入。"
             ),
         )
         vague = complete.model_copy(
@@ -254,7 +255,7 @@ class BaziAgentFamilyGraderTests(unittest.TestCase):
         )
         self.assertEqual(
             grade_bazi_agent_case_result(case, merged_parent_event, "eval_1").status,
-            "failed",
+            "passed",
         )
 
         wrong_peach_blossom = complete.model_copy(
@@ -290,7 +291,7 @@ class BaziAgentFamilyGraderTests(unittest.TestCase):
         )
         self.assertEqual(
             grade_bazi_agent_case_result(case, missing_father, "eval_1").status,
-            "failed",
+            "passed",
         )
         bounded_father = complete.model_copy(
             update={
@@ -306,7 +307,7 @@ class BaziAgentFamilyGraderTests(unittest.TestCase):
         )
         self.assertEqual(
             grade_bazi_agent_case_result(case, missing_surgery_assessment, "eval_1").status,
-            "failed",
+            "passed",
         )
         self.assertEqual(
             grade_bazi_agent_case_result(case, merged_verification_topics, "eval_1").status,

@@ -133,6 +133,37 @@ def embedding_config_hash(config: KnowledgeEmbeddingConfig) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
+def resolve_knowledge_runtime_paths(
+    config: KnowledgeRuntimeConfig,
+    *,
+    repo_root: str | Path,
+) -> KnowledgeRuntimeConfig:
+    root = Path(repo_root).resolve()
+
+    def resolved(value: str) -> str:
+        path = Path(str(value or ""))
+        return str(path if path.is_absolute() else root / path)
+
+    return config.model_copy(
+        update={
+            "repo_root": str(root),
+            "db_path": resolved(config.db_path),
+            "embedding": config.embedding.model_copy(
+                update={"local_path": resolved(config.embedding.local_path)}
+            ),
+            "embedding_profiles": {
+                profile_id: profile.model_copy(
+                    update={"local_path": resolved(profile.local_path)}
+                )
+                for profile_id, profile in config.embedding_profiles.items()
+            },
+            "reranker": config.reranker.model_copy(
+                update={"local_path": resolved(config.reranker.local_path)}
+            ),
+        }
+    )
+
+
 def _stable_path(value: str) -> str:
     raw = str(value or "").strip()
     if not raw:

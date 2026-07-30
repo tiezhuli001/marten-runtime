@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import threading
@@ -15,13 +16,25 @@ from marten_runtime.observability.langfuse import (
 )
 from marten_runtime.runtime.context import assemble_runtime_context
 from marten_runtime.runtime.bazi_output_contract import (
+    BaziAnalysisDraft,
+    bind_bazi_verification_facts,
     bazi_repair_source_text,
     bazi_timing_contract_violations,
+    bazi_verification_group_violations,
+    classify_bazi_contract_violations,
+    deterministic_verification_event_violations,
     bazi_violation_sections,
     merge_bazi_repaired_sections,
     missing_bazi_sections,
     normalize_bazi_timing_contract_text,
+    normalize_bazi_verification_candidate_reasons,
+    parse_bazi_analysis_draft,
+    parse_bazi_semantic_review,
+    parse_bazi_verification_events_patch,
+    prune_semantically_rejected_verification_events,
+    render_bazi_analysis_draft,
 )
+from marten_runtime.runtime.llm_message_support import build_bazi_timing_fact_registry
 from marten_runtime.runtime.events import OutboundEvent
 from marten_runtime.runtime.finalization_contract_prompt import (
     FinalizationContractDraft,
@@ -102,7 +115,11 @@ from marten_runtime.runtime.tool_episode_summary_prompt import (
 )
 from marten_runtime.runtime.tool_followup_support import (
     append_tool_exchange,
+    build_bazi_analysis_draft_repair_request,
+    build_bazi_final_generation_request,
     build_bazi_output_repair_request,
+    build_bazi_output_semantic_review_request,
+    build_bazi_verification_event_repair_request,
     build_finalization_retry_request,
     build_tool_followup_request,
     normalize_tool_result_for_followup,
@@ -124,6 +141,28 @@ from marten_runtime.tools.registry import ToolRegistry, ToolSnapshot
 
 
 logger = logging.getLogger(__name__)
+
+
+def _host_orchestrated_bazi_tool_reply(
+    request: LLMRequest,
+    llm: LLMClient,
+) -> LLMReply | None:
+    if request.agent_id != "bazi" or not bool(
+        getattr(llm, "host_orchestrated_bazi_pipeline", False)
+    ):
+        return None
+    expected_tools = {
+        "bazi_dayun_repair": "bazi",
+        "bazi_knowledge_search": "knowledge",
+        "bazi_case_search": "bazi_case",
+    }
+    expected_tool = expected_tools.get(request.request_kind)
+    if expected_tool is None or request.requested_tool_name != expected_tool:
+        return None
+    payload = dict(request.requested_tool_payload or {})
+    if not str(payload.get("action") or "").strip():
+        return None
+    return LLMReply(tool_name=expected_tool, tool_payload=payload)
 
 
 DEFAULT_ALLOWED_TOOLS = [
@@ -172,6 +211,15 @@ def _infer_required_first_turn_contract_from_text(
         )
         return inferred
     return actual_draft
+
+
+def _finalization_candidate_text(
+    *, request_kind: str, normalized_final_text: str, raw_reply_text: str | None
+) -> str:
+    if request_kind == "bazi_output_repair":
+        return normalized_final_text
+    return str(raw_reply_text or "").strip()
+
 
 class RuntimeLoop:
 
@@ -670,9 +718,23 @@ class RuntimeLoop:
         bazi_chart_repair_used = False
         bazi_dayun_repair_used = False
         bazi_knowledge_repair_used = False
-        bazi_analysis_repair_used = False
+        bazi_case_repair_used = False
+        bazi_analysis_repair_attempts = 0
+        bazi_final_generation_used = False
         bazi_analysis_repair_source_text: str | None = None
         bazi_analysis_repair_sections: list[str] = []
+        bazi_semantic_review_source_text: str | None = None
+        bazi_pending_verification_violations: tuple[str, ...] = ()
+        bazi_pending_rejected_event_labels: tuple[str, ...] = ()
+        bazi_semantic_review_completed = False
+        bazi_semantic_review_attempts = 0
+        bazi_semantic_repair_attempts = 0
+        bazi_analysis_draft: BaziAnalysisDraft | None = None
+        bazi_fact_reference_violations: tuple[str, ...] = ()
+        bazi_structured_generation_retry_used = False
+        bazi_requires_complete_dayun = bool(
+            getattr(resolved_llm, "host_orchestrated_bazi_pipeline", False)
+        )
 
         def rebind_same_turn_session_context(target_session_id: str) -> None:
             nonlocal active_context_session_id
@@ -730,14 +792,13 @@ class RuntimeLoop:
             current_request = rebound.current_request
             latest_actual_usage = rebound.latest_actual_usage
 
-        for _ in range(self.max_tool_rounds + 2):
+        final_quality_rounds = 5 if resolved_agent.agent_id == "bazi" else 2
+        for _ in range(self.max_tool_rounds + final_quality_rounds):
             generation_name = "llm.first" if not tool_history else "llm.followup"
             generation_stage = "llm_first" if not tool_history else "llm_second"
             generation_observed = False
             try:
                 self._raise_if_interrupted(stop_event, deadline_monotonic)
-                self.request_count += 1
-                llm_request_count += 1
                 llm_started_at = time.perf_counter()
                 current_request = current_request.model_copy(
                     update={
@@ -748,9 +809,19 @@ class RuntimeLoop:
                         "cooperative_deadline_monotonic": deadline_monotonic,
                     }
                 )
-                reply = resolved_llm.complete(current_request)
-                reply = _enforce_bazi_repair_reply(current_request, reply)
-                self.langfuse_observer.observe_generation(
+                local_reply = _host_orchestrated_bazi_tool_reply(
+                    current_request,
+                    resolved_llm,
+                )
+                if local_reply is not None:
+                    reply = local_reply
+                    generation_observed = True
+                else:
+                    self.request_count += 1
+                    llm_request_count += 1
+                    reply = resolved_llm.complete(current_request)
+                    reply = _enforce_bazi_repair_reply(current_request, reply)
+                    self.langfuse_observer.observe_generation(
                     trace_handle,
                     name=generation_name,
                     model=getattr(resolved_llm, "model_name", None),
@@ -766,30 +837,34 @@ class RuntimeLoop:
                         "model_profile": provider_state.active_profile_name,
                     },
                     observation_policy=observation_policy,
-                )
-                generation_observed = True
-                provider_diagnostics = getattr(
-                    resolved_llm, "last_call_diagnostics", None
-                )
-                if provider_diagnostics is not None:
-                    self.history.record_provider_call(
+                    )
+                    generation_observed = True
+                    provider_diagnostics = getattr(
+                        resolved_llm, "last_call_diagnostics", None
+                    )
+                    if provider_diagnostics is not None:
+                        self.history.record_provider_call(
+                            run.run_id,
+                            stage="llm_first" if not tool_history else "llm_second",
+                            diagnostics=provider_diagnostics,
+                        )
+                    if reply.usage is not None:
+                        latest_actual_usage = reply.usage
+                        self.history.set_actual_usage(
+                            run.run_id,
+                            reply.usage,
+                            stage="llm_first" if not tool_history else "llm_second",
+                        )
+                    self.history.set_stage_timing(
                         run.run_id,
                         stage="llm_first" if not tool_history else "llm_second",
-                        diagnostics=provider_diagnostics,
+                        elapsed_ms=elapsed_ms(llm_started_at),
                     )
-                if reply.usage is not None:
-                    latest_actual_usage = reply.usage
-                    self.history.set_actual_usage(
-                        run.run_id,
-                        reply.usage,
-                        stage="llm_first" if not tool_history else "llm_second",
-                    )
-                self.history.set_stage_timing(
-                    run.run_id,
-                    stage="llm_first" if not tool_history else "llm_second",
-                    elapsed_ms=elapsed_ms(llm_started_at),
-                )
-                if current_request.request_kind == "finalization_retry" and reply.tool_name:
+                if (
+                    current_request.request_kind
+                    in {"finalization_retry", "bazi_final_generation"}
+                    and reply.tool_name
+                ):
                     finalization_evidence_ledger = build_current_turn_evidence_ledger(
                         user_message=message,
                         tool_history=tool_history,
@@ -855,8 +930,12 @@ class RuntimeLoop:
                 if (
                     reply.tool_name
                     and resolved_agent.agent_id == "bazi"
-                    and _bazi_required_analysis_complete(message, tool_history)
-                    and not finalization_retry_used
+                    and _bazi_required_analysis_complete(
+                        message,
+                        tool_history,
+                        require_case_search="bazi_case" in first_request.available_tools,
+                    )
+                    and not bazi_final_generation_used
                 ):
                     finalization_evidence_ledger = build_current_turn_evidence_ledger(
                         user_message=message,
@@ -864,8 +943,8 @@ class RuntimeLoop:
                         model_request_count=llm_request_count,
                         base_ledger=current_request.finalization_evidence_ledger,
                     )
-                    finalization_retry_used = True
-                    current_request = build_finalization_retry_request(
+                    bazi_final_generation_used = True
+                    current_request = build_bazi_final_generation_request(
                         first_request,
                         tool_history=tool_history,
                         finalization_evidence_ledger=finalization_evidence_ledger,
@@ -1495,6 +1574,261 @@ class RuntimeLoop:
             if tool_result is None:
                 final_text = (reply.final_text or "").strip()
                 if resolved_agent.agent_id == "bazi":
+                    if current_request.request_kind in {
+                        "bazi_final_generation",
+                        "bazi_analysis_draft_repair",
+                    }:
+                        parsed_draft = parse_bazi_analysis_draft(final_text)
+                        if parsed_draft is None:
+                            if not bool(
+                                getattr(
+                                    resolved_llm,
+                                    "host_orchestrated_bazi_pipeline",
+                                    False,
+                                )
+                            ):
+                                final_text = normalize_bazi_timing_contract_text(
+                                    final_text
+                                )
+                            elif not bazi_structured_generation_retry_used:
+                                bazi_structured_generation_retry_used = True
+                                current_request = build_bazi_final_generation_request(
+                                    first_request,
+                                    tool_history=tool_history,
+                                ).model_copy(
+                                    update={
+                                        "invalid_final_text": (
+                                            "上一版未返回可解析的 response schema JSON，请完整重新生成。"
+                                        ),
+                                        "timeout_seconds_override": timeout_seconds_override
+                                        if timeout_seconds_override is not None
+                                        else remaining_timeout_seconds(deadline_monotonic),
+                                    }
+                                )
+                                continue
+                            else:
+                                finalize_error(error_code="BAZI_STRUCTURED_OUTPUT_FAILED")
+                                return finish_run_error(
+                                    history=self.history,
+                                    events=events,
+                                    session_id=session_id,
+                                    run_id=run.run_id,
+                                    trace_id=trace_id,
+                                    run_started_at=run_started_at,
+                                    llm_request_count=llm_request_count,
+                                    error_code="BAZI_STRUCTURED_OUTPUT_FAILED",
+                                    error_text="八字答案未能生成有效结构，请重试本次解盘。",
+                                    agent_id=resolved_agent.agent_id,
+                                    post_commit_callback=self.self_improve_post_commit_callback,
+                                )
+                        else:
+                            normalized_draft = parsed_draft.model_copy(
+                                update={
+                                    "verification_candidates": normalize_bazi_verification_candidate_reasons(
+                                        parsed_draft.verification_candidates,
+                                        parsed_draft.verification_events,
+                                    )
+                                }
+                            )
+                            (
+                                bazi_analysis_draft,
+                                fact_findings,
+                            ) = bind_bazi_verification_facts(
+                                normalized_draft,
+                                build_bazi_timing_fact_registry(tool_history),
+                            )
+                            bazi_fact_reference_violations = tuple(
+                                finding.message for finding in fact_findings
+                            )
+                            final_text = render_bazi_analysis_draft(bazi_analysis_draft)
+                    elif current_request.request_kind == "bazi_verification_event_repair":
+                        patch = parse_bazi_verification_events_patch(final_text)
+                        if patch is None or bazi_analysis_draft is None:
+                            finalize_error(error_code="BAZI_EVENT_REPAIR_FAILED")
+                            return finish_run_error(
+                                history=self.history,
+                                events=events,
+                                session_id=session_id,
+                                run_id=run.run_id,
+                                trace_id=trace_id,
+                                run_started_at=run_started_at,
+                                llm_request_count=llm_request_count,
+                                error_code="BAZI_EVENT_REPAIR_FAILED",
+                                error_text="过三关修复未生成有效结构，请重试本次解盘。",
+                                agent_id=resolved_agent.agent_id,
+                                post_commit_callback=self.self_improve_post_commit_callback,
+                            )
+                        normalized_candidates = normalize_bazi_verification_candidate_reasons(
+                            patch.verification_candidates,
+                            patch.verification_events,
+                        )
+                        patched_draft = bazi_analysis_draft.model_copy(
+                            update={
+                                "verification_candidates": normalized_candidates,
+                                "verification_events": patch.verification_events,
+                            }
+                        )
+                        (
+                            bazi_analysis_draft,
+                            fact_findings,
+                        ) = bind_bazi_verification_facts(
+                            patched_draft,
+                            build_bazi_timing_fact_registry(tool_history),
+                        )
+                        bazi_fact_reference_violations = tuple(
+                            finding.message for finding in fact_findings
+                        )
+                        final_text = render_bazi_analysis_draft(bazi_analysis_draft)
+                        bazi_semantic_review_completed = False
+                    if (
+                        current_request.request_kind == "bazi_output_semantic_review"
+                        and bazi_semantic_review_source_text is not None
+                    ):
+                        review = parse_bazi_semantic_review(final_text)
+                        reviewed_text = bazi_semantic_review_source_text
+                        bazi_semantic_review_source_text = None
+                        review_violations = tuple(
+                            dict.fromkeys(
+                                (
+                                    *bazi_pending_verification_violations,
+                                    *review.violations,
+                                )
+                            )
+                        )
+                        rejected_event_labels = tuple(
+                            dict.fromkeys(
+                                (
+                                    *bazi_pending_rejected_event_labels,
+                                    *review.rejected_events,
+                                )
+                            )
+                        )
+                        bazi_pending_verification_violations = ()
+                        bazi_pending_rejected_event_labels = ()
+                        bazi_semantic_review_attempts += 1
+                        bazi_semantic_review_completed = (
+                            review.passed and not review_violations
+                        )
+                        if not bazi_semantic_review_completed:
+                            logger.warning(
+                                "bazi semantic output repair required run_id=%s violations=%s",
+                                run.run_id,
+                                "；".join(review_violations),
+                            )
+                            pruned_draft = (
+                                prune_semantically_rejected_verification_events(
+                                    bazi_analysis_draft,
+                                    rejected_event_labels,
+                                )
+                                if bazi_analysis_draft is not None
+                                else None
+                            )
+                            if pruned_draft is not None:
+                                pruned_text = render_bazi_analysis_draft(pruned_draft)
+                                pruned_violations = bazi_timing_contract_violations(
+                                    pruned_text,
+                                    expected_shensha_years=_bazi_key_shensha_years(
+                                        tool_history
+                                    ),
+                                )
+                                if not pruned_violations:
+                                    bazi_analysis_draft = pruned_draft
+                                    final_text = pruned_text
+                                    bazi_semantic_review_completed = True
+                                    logger.info(
+                                        "bazi semantic review pruned rejected events run_id=%s removed=%s retained=%s",
+                                        run.run_id,
+                                        len(rejected_event_labels),
+                                        len(pruned_draft.verification_events),
+                                    )
+                            if (
+                                not bazi_semantic_review_completed
+                                and bazi_semantic_repair_attempts < 2
+                                and bazi_analysis_draft is not None
+                            ):
+                                bazi_semantic_repair_attempts += 1
+                                current_request = build_bazi_verification_event_repair_request(
+                                    first_request,
+                                    tool_history=tool_history,
+                                    current_events_json=json.dumps(
+                                        {
+                                            "verification_candidates": [
+                                                candidate.model_dump()
+                                                for candidate in bazi_analysis_draft.verification_candidates
+                                            ],
+                                            "verification_events": [
+                                                event.model_dump()
+                                                for event in bazi_analysis_draft.verification_events
+                                            ],
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                    violations=list(review_violations),
+                                )
+                                current_request = current_request.model_copy(
+                                    update={
+                                        "timeout_seconds_override": timeout_seconds_override
+                                        if timeout_seconds_override is not None
+                                        else remaining_timeout_seconds(deadline_monotonic)
+                                    }
+                                )
+                                continue
+                            if (
+                                not bazi_semantic_review_completed
+                                and bazi_analysis_draft is None
+                                and bazi_semantic_repair_attempts < 2
+                            ):
+                                bazi_semantic_repair_attempts += 1
+                                bazi_analysis_repair_source_text = reviewed_text
+                                bazi_analysis_repair_sections = ["过三关"]
+                                current_request = build_bazi_output_repair_request(
+                                    first_request,
+                                    invalid_final_text=bazi_repair_source_text(
+                                        reviewed_text,
+                                        bazi_analysis_repair_sections,
+                                    ),
+                                    violations=[
+                                        f"过三关语义审查未通过：{item}"
+                                        for item in review_violations
+                                    ],
+                                ).model_copy(
+                                    update={
+                                        "timeout_seconds_override": timeout_seconds_override
+                                        if timeout_seconds_override is not None
+                                        else remaining_timeout_seconds(deadline_monotonic)
+                                    }
+                                )
+                                continue
+                            if not bazi_semantic_review_completed:
+                                logger.warning(
+                                    "bazi semantic output review exhausted run_id=%s attempts=%s",
+                                    run.run_id,
+                                    bazi_semantic_review_attempts,
+                                )
+                                self.history.set_finalization_state(
+                                    run.run_id,
+                                    assessment="rejected",
+                                    request_kind=current_request.request_kind,
+                                    required_evidence_count=0,
+                                    missing_evidence_items=list(review_violations),
+                                    retry_triggered=True,
+                                )
+                                finalize_error(error_code="BAZI_SEMANTIC_REVIEW_FAILED")
+                                return finish_run_error(
+                                    history=self.history,
+                                    events=events,
+                                    session_id=session_id,
+                                    run_id=run.run_id,
+                                    trace_id=trace_id,
+                                    run_started_at=run_started_at,
+                                    llm_request_count=llm_request_count,
+                                    error_code="BAZI_SEMANTIC_REVIEW_FAILED",
+                                    error_text="过三关未通过质量审查，请重试本次解盘。",
+                                    agent_id=resolved_agent.agent_id,
+                                    post_commit_callback=self.self_improve_post_commit_callback,
+                                )
+                        if review.passed:
+                            final_text = reviewed_text
                     if (
                         current_request.request_kind == "bazi_output_repair"
                         and bazi_analysis_repair_source_text is not None
@@ -1520,6 +1854,8 @@ class RuntimeLoop:
                             )
                         else:
                             final_text = normalized_repaired_final_text
+                        if bazi_semantic_repair_attempts:
+                            bazi_semantic_review_completed = False
                     else:
                         final_text = normalize_bazi_timing_contract_text(final_text)
                 if (
@@ -1550,7 +1886,10 @@ class RuntimeLoop:
                     resolved_agent.agent_id == "bazi"
                     and _bazi_dayun_requested(message)
                     and _bazi_has_dayun_seed(tool_history, message)
-                    and not _bazi_has_dayun(tool_history)
+                    and not _bazi_has_required_dayun(
+                        tool_history,
+                        require_annuals=bazi_requires_complete_dayun,
+                    )
                     and "bazi" in first_request.available_tools
                     and not bazi_dayun_repair_used
                 ):
@@ -1590,6 +1929,7 @@ class RuntimeLoop:
                             "requested_tool_payload": {
                                 "action": "search",
                                 "namespace": "bazi-theory",
+                                "top_k": 8,
                             },
                             "request_kind": "bazi_knowledge_search",
                             "invalid_final_text": final_text,
@@ -1601,39 +1941,121 @@ class RuntimeLoop:
                         }
                     )
                     continue
+                if (
+                    resolved_agent.agent_id == "bazi"
+                    and _bazi_dayun_requested(message)
+                    and _bazi_has_chart_facts(tool_history)
+                    and _bazi_has_knowledge_search(tool_history)
+                    and not _bazi_has_case_search(tool_history)
+                    and "bazi_case" in first_request.available_tools
+                    and not bazi_case_repair_used
+                ):
+                    bazi_case_repair_used = True
+                    current_request = first_request.model_copy(
+                        update={
+                            "tool_history": list(tool_history),
+                            "tool_result": None,
+                            "requested_tool_name": "bazi_case",
+                            "requested_tool_payload": {"action": "search", "top_k": 3},
+                            "request_kind": "bazi_case_search",
+                            "invalid_final_text": final_text,
+                            "timeout_seconds_override": timeout_seconds_override
+                            if timeout_seconds_override is not None
+                            else remaining_timeout_seconds(deadline_monotonic),
+                            "cooperative_stop_event": stop_event,
+                            "cooperative_deadline_monotonic": deadline_monotonic,
+                        }
+                    )
+                    continue
                 bazi_timing_violations = (
-                    bazi_timing_contract_violations(final_text)
+                    bazi_timing_contract_violations(
+                        final_text,
+                        expected_shensha_years=_bazi_key_shensha_years(tool_history),
+                    )
                     if resolved_agent.agent_id == "bazi"
                     and _bazi_has_dayun(tool_history)
                     and _bazi_has_knowledge_search(tool_history)
                     else []
                 )
-                if bazi_timing_violations and not bazi_analysis_repair_used:
-                    logger.info(
+                if bazi_analysis_draft is not None:
+                    bazi_timing_violations.extend(bazi_fact_reference_violations)
+                    bazi_timing_violations.extend(
+                        bazi_verification_group_violations(
+                            bazi_analysis_draft.verification_candidates,
+                            bazi_analysis_draft.verification_events
+                        )
+                    )
+                    bazi_timing_violations.extend(
+                        deterministic_verification_event_violations(
+                            bazi_analysis_draft.verification_events
+                        )
+                    )
+                    bazi_timing_violations = list(
+                        dict.fromkeys(bazi_timing_violations)
+                    )
+                typed_bazi_violations = classify_bazi_contract_violations(
+                    bazi_timing_violations
+                )
+                verification_only_violations = bool(typed_bazi_violations) and all(
+                    violation.scope == "verification"
+                    for violation in typed_bazi_violations
+                )
+                if (
+                    verification_only_violations
+                    and bazi_analysis_draft is not None
+                    and bazi_semantic_repair_attempts < 2
+                ):
+                    logger.warning(
+                        "bazi verification patch required run_id=%s violations=%s",
+                        run.run_id,
+                        "；".join(bazi_timing_violations),
+                    )
+                    bazi_semantic_repair_attempts += 1
+                    current_request = build_bazi_verification_event_repair_request(
+                        first_request,
+                        tool_history=tool_history,
+                        current_events_json=json.dumps(
+                            {
+                                "verification_candidates": [
+                                    candidate.model_dump()
+                                    for candidate in bazi_analysis_draft.verification_candidates
+                                ],
+                                "verification_events": [
+                                    event.model_dump()
+                                    for event in bazi_analysis_draft.verification_events
+                                ],
+                            },
+                            ensure_ascii=False,
+                        ),
+                        violations=bazi_timing_violations,
+                    ).model_copy(
+                        update={
+                            "timeout_seconds_override": timeout_seconds_override
+                            if timeout_seconds_override is not None
+                            else remaining_timeout_seconds(deadline_monotonic)
+                        }
+                    )
+                    continue
+                if (
+                    bazi_timing_violations
+                    and (
+                        not verification_only_violations
+                        or bazi_analysis_draft is None
+                    )
+                    and bazi_analysis_repair_attempts < 1
+                ):
+                    logger.warning(
                         "bazi output contract repair required run_id=%s violations=%s",
                         run.run_id,
                         "；".join(bazi_timing_violations),
                     )
-                    bazi_analysis_repair_used = True
-                    missing_sections = missing_bazi_sections(final_text)
-                    if missing_sections:
-                        bazi_analysis_repair_source_text = None
-                        bazi_analysis_repair_sections = []
-                        finalization_evidence_ledger = build_current_turn_evidence_ledger(
-                            user_message=message,
-                            tool_history=tool_history,
-                            model_request_count=llm_request_count,
-                            base_ledger=current_request.finalization_evidence_ledger,
-                        )
-                        current_request = build_finalization_retry_request(
+                    bazi_analysis_repair_attempts += 1
+                    if bazi_analysis_draft is not None:
+                        current_request = build_bazi_analysis_draft_repair_request(
                             first_request,
                             tool_history=tool_history,
-                            finalization_evidence_ledger=finalization_evidence_ledger,
-                            invalid_final_text=(
-                                f"八字完整答案缺少栏目：{'、'.join(missing_sections)}；"
-                                f"输出契约问题：{'；'.join(bazi_timing_violations)}。"
-                                f"请基于工具事实完整重写十一栏：{final_text}"
-                            ),
+                            invalid_draft_text=bazi_analysis_draft.model_dump_json(),
+                            violations=bazi_timing_violations,
                         )
                     else:
                         bazi_analysis_repair_sections = bazi_violation_sections(
@@ -1656,6 +2078,119 @@ class RuntimeLoop:
                         }
                     )
                     continue
+                if bazi_timing_violations:
+                    logger.warning(
+                        "bazi output contract repair exhausted run_id=%s attempts=%s violations=%s",
+                        run.run_id,
+                        bazi_analysis_repair_attempts,
+                        "；".join(bazi_timing_violations),
+                    )
+                    self.history.set_finalization_state(
+                        run.run_id,
+                        assessment="rejected",
+                        request_kind=current_request.request_kind,
+                        required_evidence_count=0,
+                        missing_evidence_items=bazi_timing_violations,
+                        retry_triggered=True,
+                    )
+                    finalize_error(error_code="BAZI_OUTPUT_CONTRACT_FAILED")
+                    return finish_run_error(
+                        history=self.history,
+                        events=events,
+                        session_id=session_id,
+                        run_id=run.run_id,
+                        trace_id=trace_id,
+                        run_started_at=run_started_at,
+                        llm_request_count=llm_request_count,
+                        error_code="BAZI_OUTPUT_CONTRACT_FAILED",
+                        error_text="八字答案未通过结构与事实审查，请重试本次解盘。",
+                        agent_id=resolved_agent.agent_id,
+                        post_commit_callback=self.self_improve_post_commit_callback,
+                    )
+                if (
+                    resolved_agent.agent_id == "bazi"
+                    and current_request.request_kind
+                    in {
+                        "bazi_final_generation",
+                        "bazi_analysis_draft_repair",
+                        "bazi_output_repair",
+                        "bazi_verification_event_repair",
+                    }
+                    and not missing_bazi_sections(final_text)
+                    and not bazi_timing_violations
+                    and not bazi_semantic_review_completed
+                ):
+                    bazi_semantic_review_source_text = final_text
+                    current_request = build_bazi_output_semantic_review_request(
+                        first_request,
+                        tool_history=tool_history,
+                        candidate_text=final_text,
+                        verification_events_json=(
+                            json.dumps(
+                                {
+                                    "verification_candidates": [
+                                        candidate.model_dump()
+                                        for candidate in bazi_analysis_draft.verification_candidates
+                                    ],
+                                    "verification_events": [
+                                        event.model_dump()
+                                        for event in bazi_analysis_draft.verification_events
+                                    ],
+                                },
+                                ensure_ascii=False,
+                            )
+                            if bazi_analysis_draft is not None
+                            else None
+                        ),
+                    ).model_copy(
+                        update={
+                            "timeout_seconds_override": timeout_seconds_override
+                            if timeout_seconds_override is not None
+                            else remaining_timeout_seconds(deadline_monotonic)
+                        }
+                    )
+                    continue
+                if (
+                    resolved_agent.agent_id == "bazi"
+                    and current_request.request_kind
+                    in {
+                        "bazi_final_generation",
+                        "bazi_analysis_draft_repair",
+                        "bazi_output_repair",
+                        "bazi_output_semantic_review",
+                        "bazi_verification_event_repair",
+                    }
+                    and not missing_bazi_sections(final_text)
+                    and not bazi_timing_violations
+                    and bazi_semantic_review_completed
+                ):
+                    self.history.set_finalization_state(
+                        run.run_id,
+                        assessment="accepted",
+                        request_kind=current_request.request_kind,
+                        required_evidence_count=0,
+                        missing_evidence_items=[],
+                        retry_triggered=False,
+                    )
+                    finalize_success(final_text=final_text)
+                    return finish_run_success(
+                        history=self.history,
+                        self_improve_recorder=self.self_improve_recorder,
+                        append_post_turn_summary_callback=self._append_post_turn_summary,
+                        post_commit_callback=self.self_improve_post_commit_callback,
+                        events=events,
+                        session_id=session_id,
+                        run_id=run.run_id,
+                        trace_id=trace_id,
+                        run_started_at=run_started_at,
+                        llm_request_count=llm_request_count,
+                        message=message,
+                        agent_id=resolved_agent.agent_id,
+                        final_text=final_text,
+                        tool_history=tool_history,
+                        tool_snapshot=tool_snapshot,
+                        channel_id=channel_id,
+                    )
                 effective_finalization_contract_draft = (
                     _infer_required_first_turn_contract_from_text(
                         final_text,
@@ -1839,6 +2374,7 @@ class RuntimeLoop:
                     if (
                         finalization_details.assessment == "retryable_degraded"
                         and not finalization_retry_used
+                        and current_request.request_kind != "bazi_final_generation"
                     ):
                         record_finalization_diagnostics(
                             self.history,
@@ -1862,8 +2398,15 @@ class RuntimeLoop:
                             }
                         )
                         continue
-                    if finalization_details.assessment == "retryable_degraded":
-                        invalid_retry_text = (reply.final_text or "").strip()
+                    if (
+                        finalization_details.assessment == "retryable_degraded"
+                        and current_request.request_kind != "bazi_final_generation"
+                    ):
+                        invalid_retry_text = _finalization_candidate_text(
+                            request_kind=current_request.request_kind,
+                            normalized_final_text=final_text,
+                            raw_reply_text=reply.final_text,
+                        )
                         final_text = recover_successful_tool_followup_text_with_meta(
                             tool_history,
                             model_request_count=llm_request_count,
@@ -1894,7 +2437,10 @@ class RuntimeLoop:
                             run_id=run.run_id,
                             request_kind=current_request.request_kind,
                             details=finalization_details,
-                            retry_triggered=True,
+                            retry_triggered=bool(
+                                finalization_retry_used
+                                or current_request.request_kind == "finalization_retry"
+                            ),
                             recovered_from_fragments=bool(final_text and final_text != invalid_retry_text),
                             invalid_final_text=invalid_retry_text,
                         )
@@ -2120,7 +2666,10 @@ class RuntimeLoop:
                 resolved_agent.agent_id == "bazi"
                 and _bazi_dayun_requested(message)
                 and _bazi_has_dayun_seed(tool_history, message)
-                and not _bazi_has_dayun(tool_history)
+                and not _bazi_has_required_dayun(
+                    tool_history,
+                    require_annuals=bazi_requires_complete_dayun,
+                )
                 and "bazi" in first_request.available_tools
                 and not bazi_dayun_repair_used
             ):
@@ -2160,6 +2709,7 @@ class RuntimeLoop:
                         "requested_tool_payload": {
                             "action": "search",
                             "namespace": "bazi-theory",
+                            "top_k": 8,
                         },
                         "request_kind": "bazi_knowledge_search",
                         "invalid_final_text": None,
@@ -2173,8 +2723,38 @@ class RuntimeLoop:
                 continue
             if (
                 resolved_agent.agent_id == "bazi"
-                and _bazi_required_analysis_complete(message, tool_history)
-                and not finalization_retry_used
+                and _bazi_dayun_requested(message)
+                and _bazi_has_chart_facts(tool_history)
+                and _bazi_has_knowledge_search(tool_history)
+                and not _bazi_has_case_search(tool_history)
+                and "bazi_case" in first_request.available_tools
+                and not bazi_case_repair_used
+            ):
+                bazi_case_repair_used = True
+                current_request = first_request.model_copy(
+                    update={
+                        "tool_history": list(tool_history),
+                        "tool_result": None,
+                        "requested_tool_name": "bazi_case",
+                        "requested_tool_payload": {"action": "search", "top_k": 3},
+                        "request_kind": "bazi_case_search",
+                        "invalid_final_text": None,
+                        "timeout_seconds_override": timeout_seconds_override
+                        if timeout_seconds_override is not None
+                        else remaining_timeout_seconds(deadline_monotonic),
+                        "cooperative_stop_event": stop_event,
+                        "cooperative_deadline_monotonic": deadline_monotonic,
+                    }
+                )
+                continue
+            if (
+                resolved_agent.agent_id == "bazi"
+                and _bazi_required_analysis_complete(
+                    message,
+                    tool_history,
+                    require_case_search="bazi_case" in first_request.available_tools,
+                )
+                and not bazi_final_generation_used
             ):
                 finalization_evidence_ledger = build_current_turn_evidence_ledger(
                     user_message=message,
@@ -2182,8 +2762,8 @@ class RuntimeLoop:
                     model_request_count=llm_request_count,
                     base_ledger=current_request.finalization_evidence_ledger,
                 )
-                finalization_retry_used = True
-                current_request = build_finalization_retry_request(
+                bazi_final_generation_used = True
+                current_request = build_bazi_final_generation_request(
                     first_request,
                     tool_history=tool_history,
                     finalization_evidence_ledger=finalization_evidence_ledger,
@@ -2296,11 +2876,19 @@ def _bazi_analysis_evidence_complete(tool_history: list[ToolExchange]) -> bool:
 def _bazi_required_analysis_complete(
     user_message: str,
     tool_history: list[ToolExchange],
+    *,
+    require_case_search: bool = False,
 ) -> bool:
     if (
         _bazi_dayun_requested(user_message)
         and _bazi_has_dayun_seed(tool_history, user_message)
         and not _bazi_has_dayun(tool_history)
+    ):
+        return False
+    if (
+        require_case_search
+        and _bazi_dayun_requested(user_message)
+        and not _bazi_has_case_search(tool_history)
     ):
         return False
     return _bazi_analysis_evidence_complete(tool_history)
@@ -2420,18 +3008,34 @@ def _bazi_dayun_payload_from_resolve(
 
 
 def _bazi_has_dayun(tool_history: list[ToolExchange]) -> bool:
-    return any(
-        exchange.tool_name == "bazi"
-        and str(
+    return _bazi_has_required_dayun(tool_history, require_annuals=False)
+
+
+def _bazi_has_required_dayun(
+    tool_history: list[ToolExchange], *, require_annuals: bool
+) -> bool:
+    for exchange in tool_history:
+        if exchange.tool_name != "bazi" or not isinstance(exchange.tool_result, dict):
+            continue
+        action = str(
             exchange.tool_payload.get("action")
             or exchange.tool_result.get("action")
             or ""
         ).strip()
-        == "dayun"
-        and isinstance(exchange.tool_result, dict)
-        and exchange.tool_result.get("ok") is True
-        for exchange in tool_history
-    )
+        if action != "dayun" or exchange.tool_result.get("ok") is not True:
+            continue
+        if not require_annuals:
+            return True
+        result = exchange.tool_result.get("result")
+        cycles = result.get("大运列表") if isinstance(result, dict) else None
+        if isinstance(cycles, list) and any(
+            isinstance(cycle, dict)
+            and isinstance(cycle.get("流年列表"), list)
+            and any(isinstance(annual, dict) for annual in cycle["流年列表"])
+            for cycle in cycles
+        ):
+            return True
+    return False
 
 
 def _bazi_has_birth_chart(tool_history: list[ToolExchange]) -> bool:
@@ -2494,6 +3098,54 @@ def _bazi_has_knowledge_search(tool_history: list[ToolExchange]) -> bool:
         == "search"
         for exchange in tool_history
     )
+
+
+def _bazi_has_case_search(tool_history: list[ToolExchange]) -> bool:
+    return any(
+        exchange.tool_name == "bazi_case"
+        and str(
+            exchange.tool_payload.get("action")
+            or exchange.tool_result.get("action")
+            or ""
+        ).strip()
+        == "search"
+        for exchange in tool_history
+    )
+
+
+def _bazi_key_shensha_years(
+    tool_history: list[ToolExchange],
+) -> tuple[tuple[int, str], ...]:
+    key_names = {
+        "羊刃", "飞刃", "血刃", "白虎", "流霞", "灾煞", "劫煞",
+        "桃花", "红鸾", "天喜", "红艳煞", "孤辰", "寡宿", "驿马", "马星",
+        "禄神", "金舆", "华盖", "空亡", "文昌", "文昌贵人", "天乙贵人",
+        "天德贵人", "月德贵人", "太极贵人", "国印贵人", "福星贵人",
+        "天医", "将星", "官符", "丧门", "吊客", "天罗", "地网",
+    }
+    found: list[tuple[int, str]] = []
+    for exchange in tool_history:
+        if exchange.tool_name != "bazi" or exchange.tool_result.get("ok") is not True:
+            continue
+        result = exchange.tool_result.get("result")
+        cycles = result.get("大运列表") if isinstance(result, dict) else None
+        if not isinstance(cycles, list):
+            continue
+        for cycle in cycles:
+            annuals = cycle.get("流年列表") if isinstance(cycle, dict) else None
+            if not isinstance(annuals, list):
+                continue
+            for annual in annuals:
+                names = annual.get("神煞") if isinstance(annual, dict) else None
+                year = annual.get("流年") if isinstance(annual, dict) else None
+                if not isinstance(year, int) or isinstance(year, bool) or not isinstance(names, list):
+                    continue
+                for name in names:
+                    normalized = str(name or "").strip()
+                    item = (year, normalized)
+                    if normalized in key_names and item not in found:
+                        found.append(item)
+    return tuple(found)
 
 
 def _bazi_chart_dayun_fingerprints_match(

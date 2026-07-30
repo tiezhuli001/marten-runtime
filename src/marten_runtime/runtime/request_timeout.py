@@ -46,7 +46,15 @@ def resolve_request_timeout_seconds(
     if remaining_seconds is not None:
         return max(1, int(math.ceil(remaining_seconds)))
     if getattr(request, "agent_id", None) == "bazi" and (
-        getattr(request, "request_kind", None) in {"finalization_retry", "bazi_output_repair"}
+        getattr(request, "request_kind", None)
+        in {
+            "finalization_retry",
+            "bazi_final_generation",
+            "bazi_analysis_draft_repair",
+            "bazi_output_repair",
+            "bazi_output_semantic_review",
+            "bazi_verification_event_repair",
+        }
         or _has_bazi_knowledge_search(request)
     ):
         return 90

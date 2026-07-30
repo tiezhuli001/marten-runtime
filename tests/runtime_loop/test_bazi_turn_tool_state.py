@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import json
 import unittest
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from marten_runtime.agents.specs import AgentSpec
 from marten_runtime.runtime.history import InMemoryRunHistory
 from marten_runtime.runtime.llm_client import LLMReply, ScriptedLLMClient
 from marten_runtime.runtime.llm_message_support import (
-    _annual_event_candidates,
     _compact_bazi_structural_summary,
     _compact_bazi_timing_years,
+    _restore_compact_bazi_facts,
     _ten_god_for_stem,
     build_openai_chat_payload,
 )
@@ -23,6 +25,9 @@ from marten_runtime.runtime.loop import (
     RuntimeLoop,
     _bazi_dayun_payload,
     _bazi_has_actionable_birth_input,
+    _bazi_has_dayun,
+    _bazi_has_required_dayun,
+    _finalization_candidate_text,
 )
 from marten_runtime.runtime.run_outcome_flow import _ensure_bazi_citation_footer
 from marten_runtime.runtime.llm_client import ToolExchange
@@ -31,6 +36,236 @@ from tests.support.finalization_contracts import contracted_final_reply
 
 
 class BaziTurnToolStateTests(unittest.TestCase):
+    def test_dayun_evidence_requires_at_least_one_annual_record(self) -> None:
+        incomplete = ToolExchange(
+            tool_name="bazi",
+            tool_payload={"action": "dayun"},
+            tool_result={
+                "ok": True,
+                "result": {"大运列表": [{"起运年份": 2017, "干支": "庚午"}]},
+            },
+        )
+        complete = ToolExchange(
+            tool_name="bazi",
+            tool_payload={"action": "dayun"},
+            tool_result={
+                "ok": True,
+                "result": {
+                    "大运列表": [
+                        {
+                            "起运年份": 2017,
+                            "干支": "庚午",
+                            "流年列表": [{"流年": 2018, "干支": "戊戌"}],
+                        }
+                    ]
+                },
+            },
+        )
+
+        self.assertTrue(_bazi_has_dayun([incomplete]))
+        self.assertFalse(
+            _bazi_has_required_dayun([incomplete], require_annuals=True)
+        )
+        self.assertTrue(_bazi_has_dayun([complete]))
+        self.assertTrue(_bazi_has_required_dayun([complete], require_annuals=True))
+
+    def test_host_orchestrated_bazi_pipeline_skips_deterministic_model_calls(self) -> None:
+        class HostOrchestratedLLM(ScriptedLLMClient):
+            host_orchestrated_bazi_pipeline = True
+
+        tools = ToolRegistry()
+        tool_actions: list[tuple[str, str]] = []
+        fingerprint = "sha256:" + "d" * 64
+
+        def bazi_handler(payload: dict) -> dict:
+            action = str(payload["action"])
+            tool_actions.append(("bazi", action))
+            result = {
+                "四柱": [
+                    {"柱": "年柱", "干支": "甲戌"},
+                    {"柱": "月柱", "干支": "丁卯"},
+                    {"柱": "日柱", "干支": "庚戌"},
+                    {"柱": "时柱", "干支": "庚辰"},
+                ]
+            }
+            if action == "dayun":
+                result = {
+                    "起运信息": {"起运年龄": 4},
+                    "大运列表": [
+                        {
+                            "起运年份": 2007,
+                            "起运年龄": 14,
+                            "干支": "己巳",
+                            "流年列表": [
+                                {"流年": year, "干支": "戊戌"}
+                                for year in (2012, 2015)
+                            ],
+                        },
+                        {
+                            "起运年份": 2017,
+                            "起运年龄": 24,
+                            "干支": "庚午",
+                            "流年列表": [
+                                {"流年": year, "干支": "戊戌"}
+                                for year in (2018, 2020, 2023, 2024)
+                            ],
+                        },
+                    ],
+                }
+            return {
+                "ok": True,
+                "action": action,
+                "inputFingerprint": fingerprint,
+                "result": result,
+            }
+
+        tools.register("bazi", bazi_handler)
+        tools.register(
+            "knowledge",
+            lambda payload: tool_actions.append(("knowledge", payload["action"]))
+            or {
+                "ok": True,
+                "action": "search",
+                "results": [
+                    {
+                        "text": "月令与制化并看。",
+                        "source_id": "source-1",
+                        "chunk_id": "chunk-1",
+                        "source_title": "子平真诠",
+                        "heading": "论用神",
+                    }
+                ],
+            },
+        )
+        draft = {
+            "chart": "四柱为甲戌、丁卯、庚戌、庚辰。",
+            "pattern_and_use": "以月令和全局制化综合判断格局喜用。",
+            "dayun": "大运按工具排出的庚午运分析阶段重点。",
+            "health": "健康仅作传统取象，不替代医学检查。",
+            "education": "印星与岁运共同判断学习路径。",
+            "career": "结合官星、财星及大运判断事业路径。",
+            "marriage": "夫妻宫戌与时支辰相冲，关系需要现实经营。",
+            "kinship": "六亲以对应十神和宫位综合判断。",
+            "wealth": (
+                "财富结构分：6/9＝成局路径 2 + 承载 2 + 大运 3 - 制约 1。"
+                "命理年收入能力区间：30-60 万；这是传统文化模型估算，不等同现实收入。"
+                "未提供储蓄率、资产和负债，不估算净资产或总资产。"
+            ),
+            "verification_candidates": [
+                {
+                    "category": category,
+                    "year": year,
+                    "event": event,
+                    "confidence": confidence,
+                    "evidence_summary": "原局大运流年三层证据摘要。",
+                    "discard_reason": discard_reason,
+                }
+                for category, year, event, confidence, discard_reason in (
+                    ("self_health", 2015, "完成一次手术", 86, ""),
+                    ("career_change", 2018, "正式入职", 88, ""),
+                    ("relationship", 2020, "结束一段恋爱关系", 84, ""),
+                    ("wealth_change", 2023, "获得一笔项目奖金", 90, ""),
+                    ("wealth_change", 2024, "获得重大收益", 80, ""),
+                    ("family", 2012, "父亲完成一次住院治疗", 72, ""),
+                )
+            ],
+            "verification_events": [
+                {
+                    "year": year,
+                    "category": category,
+                    "event": event,
+                    "fact_ids": [
+                        f"year.{year}.identity",
+                        f"dayun.{2007 if year < 2017 else 2017}.identity",
+                        "natal.pillar.2",
+                    ],
+                }
+                for year, category, event in (
+                    (2015, "self_health", "完成一次手术"),
+                    (2018, "career_change", "正式入职"),
+                    (2020, "relationship", "结束一段恋爱关系"),
+                    (2023, "wealth_change", "获得一笔项目奖金"),
+                    (2024, "wealth_change", "获得重大收益"),
+                    (2012, "family", "父亲完成一次住院治疗"),
+                )
+            ],
+            "references": ["《子平真诠》·论用神"],
+        }
+        llm = HostOrchestratedLLM(
+            [
+                LLMReply(
+                    tool_name="bazi",
+                    tool_payload={
+                        "action": "chart",
+                        "gender": "male",
+                        "birthYear": 1994,
+                        "birthMonth": 2,
+                        "birthDay": 14,
+                        "birthHour": 8,
+                        "birthMinute": 40,
+                        "calendarType": "lunar",
+                    },
+                ),
+                LLMReply(final_text=json.dumps(draft, ensure_ascii=False)),
+                LLMReply(
+                    final_text=(
+                        '{"passed":false,"violations":['
+                        '{"event":"5. 2024年｜获得重大收益",'
+                        '"reason":"现实结果缺少足够依据"}]}'
+                    )
+                ),
+            ]
+        )
+        history = InMemoryRunHistory()
+
+        events = RuntimeLoop(llm, tools, history).run(
+            session_id="session",
+            message=(
+                "男，1994年农历2月14日早上8点40，福建省泉州市晋江市。"
+                "请按子平格局法和盲派分析。"
+            ),
+            agent=AgentSpec(
+                agent_id="bazi",
+                role="test",
+                allowed_tools=["bazi", "knowledge"],
+            ),
+        )
+
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.status, "succeeded")
+        self.assertEqual(
+            tool_actions,
+            [("bazi", "chart"), ("bazi", "dayun"), ("knowledge", "search")],
+        )
+        self.assertEqual(
+            [request.request_kind for request in llm.requests],
+            ["interactive", "bazi_final_generation", "bazi_output_semantic_review"],
+        )
+        self.assertEqual(run.llm_request_count, 3)
+        self.assertEqual(missing_bazi_sections(events[-1].payload["text"]), [])
+        self.assertNotIn("2024年｜获得重大收益", events[-1].payload["text"])
+        self.assertIn("2023年｜获得一笔项目奖金", events[-1].payload["text"])
+        self.assertNotIn("2020年｜结束恋爱或婚姻关系", events[-1].payload["text"])
+        self.assertIn("2012年｜父亲完成一次住院治疗", events[-1].payload["text"])
+
+    def test_bazi_output_repair_finalization_keeps_merged_complete_text(self) -> None:
+        self.assertEqual(
+            _finalization_candidate_text(
+                request_kind="bazi_output_repair",
+                normalized_final_text="完整十一栏",
+                raw_reply_text="仅婚姻与财富",
+            ),
+            "完整十一栏",
+        )
+        self.assertEqual(
+            _finalization_candidate_text(
+                request_kind="finalization_retry",
+                normalized_final_text="旧文本",
+                raw_reply_text=" 新文本 ",
+            ),
+            "新文本",
+        )
+
     def test_actionable_birth_input_accepts_complete_birth_or_four_pillars(self) -> None:
         self.assertTrue(
             _bazi_has_actionable_birth_input(
@@ -137,7 +372,7 @@ class BaziTurnToolStateTests(unittest.TestCase):
         self.assertEqual(run.status, "succeeded")
         self.assertEqual([item["tool_name"] for item in run.tool_calls], ["bazi", "knowledge"])
         self.assertEqual(time_calls, [])
-        self.assertEqual(llm.requests[-1].request_kind, "finalization_retry")
+        self.assertEqual(llm.requests[-1].request_kind, "bazi_final_generation")
         self.assertEqual(llm.requests[-1].available_tools, [])
 
     def test_bazi_complete_evidence_keeps_explicitly_requested_dayun_call(self) -> None:
@@ -202,7 +437,7 @@ class BaziTurnToolStateTests(unittest.TestCase):
             ],
             [("bazi", "chart"), ("bazi", "dayun"), ("knowledge", "search")],
         )
-        self.assertEqual(llm.requests[-1].request_kind, "finalization_retry")
+        self.assertEqual(llm.requests[-1].request_kind, "bazi_final_generation")
         self.assertEqual(llm.requests[-1].available_tools, [])
         self.assertEqual(len(llm.requests[-1].tool_history), 3)
 
@@ -264,7 +499,7 @@ class BaziTurnToolStateTests(unittest.TestCase):
             ],
             [("bazi", "resolve_pillars"), ("knowledge", "search")],
         )
-        self.assertEqual(llm.requests[-1].request_kind, "finalization_retry")
+        self.assertEqual(llm.requests[-1].request_kind, "bazi_final_generation")
         self.assertEqual(llm.requests[-1].available_tools, [])
 
     def test_four_pillar_full_analysis_uses_unique_past_candidate_for_dayun(self) -> None:
@@ -633,7 +868,10 @@ class BaziTurnToolStateTests(unittest.TestCase):
                         "query": "丁火 巳月",
                     },
                 ),
-                contracted_final_reply("完整解盘\n参考依据：《滴天髓》·Marten 释义"),
+                contracted_final_reply(
+                    "完整解盘\n2018年驿马与辰戌冲同见，驿马仅作辅助证据。\n"
+                    "参考依据：《滴天髓》·Marten 释义"
+                ),
             ]
         )
         history = InMemoryRunHistory()
@@ -670,7 +908,9 @@ class BaziTurnToolStateTests(unittest.TestCase):
         self.assertNotIn("四柱_truncated_count", chart_tool_content["result"])
 
         finalization_request = next(
-            request for request in llm.requests if request.request_kind == "finalization_retry"
+            request
+            for request in llm.requests
+            if request.request_kind == "bazi_final_generation"
         )
         final_request = build_openai_chat_payload("gpt-5.4", finalization_request)
         tool_contents = [
@@ -686,65 +926,300 @@ class BaziTurnToolStateTests(unittest.TestCase):
         ]
         self.assertEqual(len(dayun_contents[0]["result"]["大运列表"]), 3)
         self.assertNotIn("藏干", dayun_contents[0]["result"]["大运列表"][0])
+        dayun_facts = dayun_contents[0]["result"]["大运列表"][0]["确定性事实"]
         self.assertEqual(
-            dayun_contents[0]["result"]["大运列表"][0]["天干作用"],
+            [item["text"] for item in dayun_facts if item["kind"] == "stem_relation"],
             [
-                "庚克甲（大运干克年干）",
-                "丁克庚（日干克大运干）",
-                "庚克甲（大运干克时干）",
+                "运干庚克年干甲",
+                "月干己生运干庚",
+                "日干丁克运干庚",
+                "运干庚克时干甲",
             ],
         )
+        timing_year = dayun_contents[0]["result"]["应期逐年表"][0]
+        self.assertEqual(timing_year["流年"], 2018)
+        timing_facts = timing_year["确定性事实"]
         self.assertEqual(
-            dayun_contents[0]["result"]["应期逐年表"],
-            [
-                {
-                    "流年": 2018,
-                    "年龄": 25,
-                    "干支": "戊戌",
-                    "十神": "食神",
-                    "所在大运": "庚午",
-                    "大运十神": "正财",
-                    "作用关系": ["辰戌相冲（与时柱）"],
-                    "天干作用": [
-                        "甲克戊（年干克流年干）",
-                        "甲克戊（时干克流年干）",
-                    ],
-                    "同支伏吟": ["戌伏吟年支"],
-                    "结构组合": [
-                        "流年食神与年干正印、年支同步引动；天干关系：甲克戊",
-                        "年支伏吟叠加其他柱位受合冲刑害",
-                        "大运正财克年干正印，流年支多处引动",
-                    ],
-                    "关键神煞": ["驿马"],
-                }
-            ],
+            [item["text"] for item in timing_facts if item["kind"] == "relation"],
+            ["辰戌相冲（与时柱）"],
+        )
+        hidden_stem_facts = [
+            item["text"]
+            for item in timing_facts
+            if item["kind"] == "hidden_stem_relation"
+        ]
+        self.assertIn("岁干戊生年支中辛", hidden_stem_facts)
+        self.assertIn("年干甲克岁支本戊", hidden_stem_facts)
+        self.assertIn("岁支中辛克年干甲", hidden_stem_facts)
+        self.assertNotIn("藏干作用", timing_year)
+        self.assertEqual(
+            [item["text"] for item in timing_facts if item["kind"] == "repetition"],
+            ["戌伏吟年支"],
         )
         self.assertEqual(
-            dayun_contents[0]["result"]["成年后结构组合摘要"],
-            [
-                {
-                    "流年": 2018,
-                    "年龄": 25,
-                    "干支": "戊戌",
-                    "所在大运": "庚午",
-                    "结构组合": [
-                        "流年食神与年干正印、年支同步引动；天干关系：甲克戊",
-                        "年支伏吟叠加其他柱位受合冲刑害",
-                        "大运正财克年干正印，流年支多处引动",
-                    ],
-                    "候选归属": [
-                        "房屋/搬迁/工作环境变动（年支伏吟叠加其他宫位受作用）",
-                        "母亲事务待核验（大运作用父母星，流年多宫引动；缺少流年干直接作用时不单独定健康）",
-                    ],
-                }
-            ],
+            [item["text"] for item in timing_facts if item["kind"] == "shensha"],
+            ["驿马", "华盖"],
         )
+        structural_summary = dayun_contents[0]["result"]["成年后关系事实摘要"]
+        self.assertEqual(structural_summary[0]["流年"], 2018)
+        self.assertEqual(structural_summary[0]["信号计数"]["作用关系"], 1)
+        self.assertEqual(structural_summary[0]["信号计数"]["同支伏吟"], 1)
+        self.assertNotIn("藏干作用", structural_summary[0])
         self.assertNotIn("小运", dayun_contents[0]["result"])
         repair_request = llm.requests[-1]
-        self.assertEqual(repair_request.request_kind, "finalization_retry")
+        self.assertEqual(repair_request.request_kind, "bazi_final_generation")
         self.assertEqual(len(repair_request.tool_history), 3)
         repair_payload = build_openai_chat_payload("gpt-5.4", repair_request)
         self.assertTrue(any(item["role"] == "tool" for item in repair_payload["messages"]))
+
+    def test_bazi_full_analysis_forces_private_case_search_after_theory(self) -> None:
+        tools = ToolRegistry()
+        fingerprint = "sha256:" + "b" * 64
+
+        def bazi_handler(payload: dict) -> dict:
+            result = {
+                "四柱": [
+                    {"柱": "年柱", "干支": "甲戌"},
+                    {"柱": "月柱", "干支": "丁卯"},
+                    {"柱": "日柱", "干支": "庚戌"},
+                    {"柱": "时柱", "干支": "庚辰"},
+                ]
+            }
+            if payload["action"] == "dayun":
+                result = {
+                    "起运信息": {"起运年龄": 4},
+                    "大运列表": [{"起运年份": 2017, "起运年龄": 24, "干支": "庚午"}],
+                }
+            return {
+                "ok": True,
+                "action": payload["action"],
+                "inputFingerprint": fingerprint,
+                "result": result,
+            }
+
+        case_calls: list[dict] = []
+        tools.register("bazi", bazi_handler)
+        tools.register(
+            "knowledge",
+            lambda payload: {
+                "ok": True,
+                "action": "search",
+                "results": [
+                    {
+                        "text": "财官须辨月令与制化。",
+                        "source_id": "source-1",
+                        "chunk_id": "chunk-1",
+                    }
+                ],
+            },
+        )
+        tools.register(
+            "bazi_case",
+            lambda payload: case_calls.append(payload)
+            or {"ok": True, "action": "search", "matches": [], "count": 0},
+        )
+        final_text = (
+            "## 命盘\n天干：甲 丁 庚 庚\n地支：戌 卯 戌 辰\n"
+            "## 原局格局喜用\n按月令与制化分析。\n"
+            "## 大运\n2017年进入庚午大运。\n"
+            "## 健康注意\n2024年甲辰流年在庚午大运引动辰戌冲，留意脾胃，严重不适时检查；本轮未形成可靠住院或手术信号。\n"
+            "## 学历\n以实际经历核验。\n"
+            "## 事业\n结合财官结构观察。\n"
+            "## 婚姻\n结合配偶星与夫妻宫观察。\n"
+            "## 六亲\n父亲：本轮未形成可靠高信号健康应期。\n母亲：本轮未形成可靠高信号健康应期。\n"
+            "## 财富等级\n财富结构分：6/9＝成局路径 2 + 承载 2 + 大运 3 - 制约 1。"
+            "命理年收入能力区间：30-60 万；这是传统文化模型估算，不等同现实收入。"
+            "未提供储蓄率、资产和负债，不估算净资产或总资产。\n"
+            "## 过三关\n2024｜住处反复折腾｜流年甲辰；大运庚午；原局辰戌冲。\n"
+            "## 参考依据\n《子平真诠》·论用神。"
+        )
+        birth_payload = {
+            "action": "chart",
+            "gender": "male",
+            "birthYear": 1994,
+            "birthMonth": 2,
+            "birthDay": 14,
+            "birthHour": 8,
+            "birthMinute": 40,
+            "calendarType": "lunar",
+        }
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(tool_name="bazi", tool_payload=birth_payload),
+                LLMReply(tool_name="bazi", tool_payload={**birth_payload, "action": "dayun"}),
+                LLMReply(
+                    tool_name="knowledge",
+                    tool_payload={
+                        "action": "search",
+                        "namespace": "bazi-theory",
+                        "query": "庚金 卯月 财官 辰戌冲",
+                    },
+                ),
+                LLMReply(
+                    tool_name="bazi_case",
+                    tool_payload={
+                        "action": "search",
+                        "query": "庚金 卯月 财官 辰戌冲 庚午大运",
+                        "top_k": 3,
+                    },
+                ),
+                contracted_final_reply(final_text),
+                contracted_final_reply(
+                    '{"passed":false,"violations":['
+                    '{"event":"住处反复折腾","reason":"缺少具体动作和结果"}]}'
+                ),
+                contracted_final_reply(
+                    "## 过三关\n2024｜搬家｜流年甲辰；大运庚午；原局辰戌冲。"
+                ),
+                contracted_final_reply('{"passed":true,"violations":[]}'),
+            ]
+        )
+        history = InMemoryRunHistory()
+
+        events = RuntimeLoop(llm, tools, history).run(
+            session_id="session",
+            message="男，1994年农历2月14日早上8点40，请按子平格局法和盲派完整解盘",
+            agent=AgentSpec(
+                agent_id="bazi",
+                role="test",
+                allowed_tools=["bazi", "knowledge", "bazi_case"],
+            ),
+            channel_id="http",
+            user_id="user-1",
+        )
+
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.status, "succeeded")
+        self.assertEqual(
+            [(item["tool_name"], item["tool_payload"]["action"]) for item in run.tool_calls],
+            [
+                ("bazi", "chart"),
+                ("bazi", "dayun"),
+                ("knowledge", "search"),
+                ("bazi_case", "search"),
+            ],
+        )
+        self.assertEqual(case_calls[0]["top_k"], 3)
+        self.assertEqual(llm.requests[3].request_kind, "bazi_case_search")
+        case_request = build_openai_chat_payload("gpt-5.4", llm.requests[3])
+        self.assertEqual(
+            case_request["tool_choice"],
+            {"type": "function", "function": {"name": "bazi_case"}},
+        )
+        case_schema = case_request["tools"][0]["function"]["parameters"]
+        self.assertEqual(case_schema["properties"]["action"]["const"], "search")
+        self.assertEqual(case_schema["properties"]["top_k"]["const"], 3)
+        self.assertEqual(llm.requests[-4].request_kind, "bazi_final_generation")
+        self.assertEqual(len(llm.requests[-4].tool_history), 4)
+        self.assertEqual(llm.requests[-3].request_kind, "bazi_output_semantic_review")
+        self.assertEqual(llm.requests[-2].request_kind, "bazi_output_repair")
+        self.assertEqual(llm.requests[-1].request_kind, "bazi_output_semantic_review")
+        self.assertIn("2024｜搬家｜", events[-1].payload["text"])
+        self.assertNotIn("住处反复折腾", events[-1].payload["text"])
+
+    def test_bazi_output_repair_finishes_without_full_finalization_retry(self) -> None:
+        tools = ToolRegistry()
+        fingerprint = "sha256:" + "c" * 64
+
+        def bazi_handler(payload: dict) -> dict:
+            result = {
+                "四柱": [
+                    {"柱": "年柱", "干支": "甲戌"},
+                    {"柱": "月柱", "干支": "丁卯"},
+                    {"柱": "日柱", "干支": "庚戌"},
+                    {"柱": "时柱", "干支": "庚辰"},
+                ]
+            }
+            if payload["action"] == "dayun":
+                result = {
+                    "起运信息": {"起运年龄": 4},
+                    "大运列表": [{"起运年份": 2017, "起运年龄": 24, "干支": "庚午"}],
+                }
+            return {
+                "ok": True,
+                "action": payload["action"],
+                "inputFingerprint": fingerprint,
+                "result": result,
+            }
+
+        tools.register("bazi", bazi_handler)
+        tools.register(
+            "knowledge",
+            lambda payload: {
+                "ok": True,
+                "action": "search",
+                "results": [{"text": "财官须辨月令。", "source_id": "s1", "chunk_id": "c1"}],
+            },
+        )
+        initial = (
+            "## 一、命盘\n天干：甲 丁 庚 庚\n地支：戌 卯 戌 辰\n"
+            "## 二、原局格局喜用\n财官并见，土金为先。\n"
+            "## 三、大运\n2017年进入庚午大运。\n"
+            "## 四、健康注意\n留意脾胃。\n"
+            "## 五、学历\n本科倾向。\n"
+            "## 六、事业\n适合制度型平台。\n"
+            "## 七、婚姻\n结合财星与夫妻宫核验。\n"
+            "## 八、六亲\n父亲：本轮未形成可靠高信号健康应期。\n"
+            "母亲：本轮未形成可靠高信号健康应期。\n"
+            "## 九、财富等级\n财富结构分：6/9＝成局路径 2 + 承载 2 + 大运 3 - 制约 1。"
+            "命理年收入能力区间：30-60 万；这是传统文化模型估算，不等同现实收入。"
+            "未提供储蓄率、资产和负债，不估算净资产或总资产。\n"
+            "## 十、过三关\n2017｜入职、转岗｜流年丁酉；大运庚午；原局酉冲卯。\n"
+            "## 十一、参考依据\n《子平真诠》·论用神。"
+        )
+        repaired_timing = (
+            "## 十、过三关\n"
+            "2017｜入职｜流年丁酉；大运庚午；原局酉冲卯。"
+        )
+        birth_payload = {
+            "action": "chart",
+            "gender": "male",
+            "birthYear": 1994,
+            "birthMonth": 2,
+            "birthDay": 14,
+            "birthHour": 8,
+            "birthMinute": 40,
+            "calendarType": "lunar",
+        }
+        llm = ScriptedLLMClient(
+            [
+                LLMReply(tool_name="bazi", tool_payload=birth_payload),
+                LLMReply(tool_name="bazi", tool_payload={**birth_payload, "action": "dayun"}),
+                LLMReply(
+                    tool_name="knowledge",
+                    tool_payload={"action": "search", "namespace": "bazi-theory", "query": "庚金卯月"},
+                ),
+                contracted_final_reply(initial),
+                contracted_final_reply(repaired_timing),
+                contracted_final_reply('{"passed":true,"violations":[]}'),
+            ]
+        )
+        history = InMemoryRunHistory()
+
+        events = RuntimeLoop(llm, tools, history).run(
+            session_id="session",
+            message="男，1994年农历2月14日早上8点40，请完整解盘",
+            agent=AgentSpec(agent_id="bazi", role="test", allowed_tools=["bazi", "knowledge"]),
+            channel_id="http",
+        )
+
+        run = history.get(events[-1].run_id)
+        self.assertEqual(run.status, "succeeded")
+        self.assertEqual(
+            [request.request_kind for request in llm.requests],
+            [
+                "interactive",
+                "bazi_dayun_repair",
+                "bazi_knowledge_search",
+                "bazi_final_generation",
+                "bazi_output_repair",
+                "bazi_output_semantic_review",
+            ],
+        )
+        self.assertEqual(run.finalization.assessment, "accepted")
+        self.assertEqual(missing_bazi_sections(events[-1].payload["text"]), [])
+        self.assertIn("2017｜入职｜", events[-1].payload["text"])
+        self.assertNotIn("转岗", events[-1].payload["text"])
 
     def test_compact_bazi_timing_years_has_bounded_provider_payload(self) -> None:
         cycles = [
@@ -775,9 +1250,68 @@ class BaziTurnToolStateTests(unittest.TestCase):
         )
         serialized = json.dumps(timing_years, ensure_ascii=False, separators=(",", ":"))
 
-        self.assertEqual(len(timing_years), 126)
-        self.assertLess(len(serialized.encode("utf-8")), 64 * 1024)
-        self.assertEqual(len(_compact_bazi_structural_summary(timing_years)), 40)
+        self.assertEqual(len(timing_years), 10)
+        self.assertLess(len(serialized.encode("utf-8")), 140 * 1024)
+        self.assertEqual(len(_compact_bazi_structural_summary(timing_years)), 0)
+
+    def test_compact_bazi_timing_years_keeps_full_selected_dayun_by_default(self) -> None:
+        current_year = datetime.now(ZoneInfo("Asia/Shanghai")).year
+        years = _compact_bazi_timing_years(
+            [
+                {
+                    "干支": "辛未",
+                    "流年列表": [
+                        {"流年": current_year + 10, "干支": "丙午"},
+                        {"流年": current_year + 11, "干支": "丁未"},
+                    ],
+                }
+            ],
+            pillars=["甲戌", "丁卯", "庚戌", "庚辰"],
+        )
+
+        self.assertEqual(
+            [item["流年"] for item in years],
+            [current_year + 10, current_year + 11],
+        )
+
+    def test_compact_bazi_timing_years_limits_to_six_dayun_and_ten_years_each(self) -> None:
+        cycles = [
+            {
+                "起运年份": 2000 + cycle_index * 10,
+                "干支": "庚午",
+                "流年列表": [
+                    {"流年": 2000 + cycle_index * 10 + offset, "干支": "戊戌"}
+                    for offset in range(12)
+                ],
+            }
+            for cycle_index in range(8)
+        ]
+
+        years = _compact_bazi_timing_years(
+            cycles,
+            pillars=["甲戌", "丁卯", "庚戌", "庚辰"],
+        )
+
+        self.assertEqual(len(years), 60)
+        self.assertEqual(years[0]["流年"], 2000)
+        self.assertEqual(years[-1]["流年"], 2059)
+
+        restored = _restore_compact_bazi_facts(
+            {
+                "ok": True,
+                "action": "dayun",
+                "result": {"大运列表": cycles},
+            },
+            {
+                "ok": True,
+                "action": "dayun",
+                "result": {"大运列表": cycles},
+            },
+            action="dayun",
+            pillars=["甲戌", "丁卯", "庚戌", "庚辰"],
+        )
+        self.assertEqual(len(restored["result"]["大运列表"]), 6)
+        self.assertEqual(len(restored["result"]["应期逐年表"]), 60)
 
     def test_structural_summary_ranks_all_adult_years_before_limiting(self) -> None:
         timing_years = [
@@ -785,9 +1319,9 @@ class BaziTurnToolStateTests(unittest.TestCase):
                 "流年": 1900 + index,
                 "年龄": 18 + index,
                 "干支": "庚辰",
-                "结构组合": ["普通结构引动"],
+                "作用关系": ["普通关系事实"],
                 **(
-                    {"候选归属": ["父母家宅（年干与年支同动）", "事业/岗位平台变动（月柱或职业十神受作用）"]}
+                    {"天干作用": ["关系一", "关系二"]}
                     if index == 0
                     else {}
                 ),
@@ -799,8 +1333,47 @@ class BaziTurnToolStateTests(unittest.TestCase):
 
         self.assertEqual(len(summary), 10)
         self.assertIn(1900, [item["流年"] for item in summary])
+        self.assertTrue(all("作用关系" not in item for item in summary))
+        self.assertTrue(all("信号计数" in item for item in summary))
 
-    def test_compact_bazi_timing_years_marks_star_palace_and_health_structures(self) -> None:
+    def test_verification_fact_index_uses_past_years_without_future_competition(self) -> None:
+        current_year = datetime.now(ZoneInfo("Asia/Shanghai")).year
+        starts = (current_year - 19, current_year - 9, current_year + 1)
+        cycles = [
+            {
+                "起运年份": start,
+                "干支": "壬申",
+                "十神": "正官",
+                "流年列表": [
+                    {
+                        "流年": start + offset,
+                        "年龄": 20 + cycle_index * 10 + offset,
+                        "干支": "戊戌",
+                        "十神": "伤官",
+                        "原局关系": [{"描述": "辰戌相冲（与时柱）"}],
+                    }
+                    for offset in range(10)
+                ],
+            }
+            for cycle_index, start in enumerate(starts)
+        ]
+
+        restored = _restore_compact_bazi_facts(
+            {"ok": True, "action": "dayun", "result": {"大运列表": cycles}},
+            {"ok": True, "action": "dayun", "result": {"大运列表": cycles}},
+            action="dayun",
+            pillars=["甲戌", "己巳", "丁巳", "甲辰"],
+        )
+        indexed_years = [
+            item["流年"]
+            for item in restored["result"]["应期逐年表"]
+            if item.get("确定性事实")
+        ]
+
+        self.assertEqual(len(indexed_years), 16)
+        self.assertTrue(all(year <= current_year for year in indexed_years))
+
+    def test_compact_bazi_timing_years_keeps_relation_facts_without_event_templates(self) -> None:
         cycles = [
             {
                 "干支": "壬申",
@@ -832,65 +1405,38 @@ class BaziTurnToolStateTests(unittest.TestCase):
             include_event_candidates=True,
         )
 
-        self.assertIn("流年七杀克日干，日支或时支同步引动", years[0]["结构组合"])
-        self.assertIn("流年偏印克月干食神，月日支伏吟", years[1]["结构组合"])
-        self.assertIn("本人健康/检查（流年克日主，日时宫同步引动）", years[0]["候选归属"])
-        self.assertIn("事业/岗位平台变动（月柱或职业十神受作用）", years[1]["候选归属"])
+        self.assertIn("卯辰相害（与时柱）", years[0]["作用关系"])
+        self.assertIn("巳伏吟月支", years[1]["同支伏吟"])
+        self.assertIn("巳伏吟日支", years[1]["同支伏吟"])
+        self.assertNotIn("结构组合", years[0])
+        self.assertNotIn("候选归属", years[0])
 
-    def test_event_candidates_attribute_parent_and_environment_by_relations(self) -> None:
-        father = _annual_event_candidates(
-            annual_ten_god="劫财",
-            dayun_ten_god="食神",
-            gender="male",
-            pillar_ten_gods=["偏财", "正官", "-", "比肩"],
-            stem_relations=["辛克甲（流年干克年干）"],
-            branch_relations=["丑刑年支戌"],
-            repeated_branches=[],
-            structure_hints=[],
-            shensha=[],
-        )
-        environment = _annual_event_candidates(
-            annual_ten_god="偏财",
-            dayun_ten_god="食神",
-            gender="male",
-            pillar_ten_gods=["偏财", "正官", "-", "比肩"],
-            stem_relations=[],
-            branch_relations=["辰戌相冲（与年柱）"],
-            repeated_branches=["辰伏吟时支"],
-            structure_hints=[],
-            shensha=[],
-        )
-        mother = _annual_event_candidates(
-            annual_ten_god="七杀",
-            dayun_ten_god="偏财",
-            gender="male",
-            pillar_ten_gods=["正印", "食神", "-", "正印"],
-            stem_relations=[],
-            branch_relations=[],
-            repeated_branches=["巳伏吟月支", "巳伏吟日支"],
-            structure_hints=["大运偏财克年干正印，流年支多处引动"],
-            shensha=[],
+    def test_compact_bazi_timing_years_keeps_all_engine_shensha(self) -> None:
+        years = _compact_bazi_timing_years(
+            [
+                {
+                    "干支": "庚午",
+                    "流年列表": [
+                        {
+                            "流年": 2026,
+                            "年龄": 33,
+                            "干支": "丙午",
+                            "神煞": [
+                                "羊刃", "华盖", "文昌", "天乙贵人", "天医", "流霞",
+                                "金舆", "灾煞", "魁罡", "丧门",
+                            ],
+                        }
+                    ],
+                }
+            ],
+            current_year=2026,
+            pillars=["甲戌", "丁卯", "庚戌", "庚辰"],
         )
 
-        self.assertIn("父亲事务/健康（父母星与年柱同动）", father)
-        self.assertIn("房屋/搬迁/工作环境变动（年支受冲且时支同步引动）", environment)
-        self.assertIn(
-            "母亲事务待核验（大运作用父母星，流年多宫引动；缺少流年干直接作用时不单独定健康）",
-            mother,
+        self.assertEqual(
+            years[0]["神煞"],
+            ["羊刃", "华盖", "文昌", "天乙贵人", "天医", "流霞", "金舆", "灾煞", "魁罡", "丧门"],
         )
-
-        weak_father = _annual_event_candidates(
-            annual_ten_god="偏财",
-            dayun_ten_god="正官",
-            gender="male",
-            pillar_ten_gods=["正印", "食神", "-", "正印"],
-            stem_relations=["辛克甲（流年干克年干）"],
-            branch_relations=["丑刑年支戌"],
-            repeated_branches=[],
-            structure_hints=[],
-            shensha=[],
-        )
-        self.assertNotIn("父亲事务/健康（父星出现并引动年柱）", weak_father)
 
     def test_ten_god_fallback_matches_yin_yang_and_five_element_relations(self) -> None:
         self.assertEqual(
@@ -975,35 +1521,33 @@ class BaziTurnToolStateTests(unittest.TestCase):
             self.assertNotIn(value, final_text)
         instruction = build_openai_chat_payload("gpt-5.4", llm.requests[-1])
         self.assertIn("排盘事实", str(instruction))
-        self.assertIn("《子平真诠》·格局方法", str(instruction))
-        self.assertIn("格局、旺衰、调候、病药", str(instruction))
+        self.assertIn("子平真诠", str(instruction))
+        self.assertIn("格局方法", str(instruction))
         self.assertIn("原局格局喜用", str(instruction))
         self.assertIn("财富等级", str(instruction))
         self.assertIn("过三关", str(instruction))
-        self.assertIn("具体公历年份", str(instruction))
-        self.assertIn("待核验事件", str(instruction))
-        self.assertIn("推算原因", str(instruction))
-        self.assertIn("流年干支", str(instruction))
-        self.assertIn("高中、大专、本科、顶级本科", str(instruction))
-        self.assertIn("没有这些证据时完全省略二婚和外缘", str(instruction))
-        self.assertIn("年支桃花只可作为一般社交信号", str(instruction))
-        self.assertIn("寅午戌见卯、申子辰见酉、巳酉丑见午、亥卯未见子", str(instruction))
-        self.assertIn("检查、治疗、住院或开刀经历", str(instruction))
-        self.assertIn("父星、母星、年柱", str(instruction))
-        self.assertIn("不为满足栏目数量而加入较弱事件", str(instruction))
-        self.assertIn("300 万元小康", str(instruction))
-        self.assertIn("低于 300 万元普通积累", str(instruction))
-        self.assertIn("食伤生财或无财而暗成财局", str(instruction))
-        self.assertIn("官杀、印、禄不得直接改称财星", str(instruction))
-        self.assertIn("财富结构分：X/9", str(instruction))
+        self.assertIn("年份｜一个可核验事实｜流年、大运、原局依据", str(instruction))
+        self.assertIn("可以直接核验真假的事实", str(instruction))
+        self.assertIn("首次解盘只提供高质量分析", str(instruction))
+        self.assertIn("参考依据后直接结束", str(instruction))
+        self.assertIn("只有用户明确要求“保存案例”", str(instruction))
+        self.assertNotIn("准确 / 部分准确 / 不准确", str(instruction))
+        self.assertIn("环境转折", str(instruction))
+        self.assertIn("人事对象、动作和明确结果", str(instruction))
+        self.assertIn("舍弃该年份", str(instruction))
+        self.assertIn("流年、大运、原局依据", str(instruction))
+        self.assertIn("固定 9 分多路径模型", str(instruction))
         self.assertIn("命理年收入能力区间", str(instruction))
-        self.assertIn("不等同现实收入", str(instruction))
-        self.assertIn("1000 万元小富", str(instruction))
-        self.assertIn("5000 万元中富", str(instruction))
-        self.assertIn("月令本气、司令与透藏会局", str(instruction))
-        self.assertIn("丁火以壬为正官、癸为七杀", str(instruction))
-        self.assertIn("不能据此直接定食神格", str(instruction))
-        self.assertIn("格局框架资料不能直接证明", str(instruction))
+        self.assertIn("不得估算净积累、净资产、总资产或现实资产等级", str(instruction))
+        self.assertIn("全文控制在 1500 至 1900 个中文字符", str(instruction))
+        self.assertIn("只有整列候选都低于阈值时才允许零条", str(instruction))
+        self.assertIn("不做跨栏目总排名", str(instruction))
+        self.assertIn("逐一比较日支夫妻宫", str(instruction))
+        self.assertIn("必须包含 natal.pillar.2", str(instruction))
+        self.assertIn("感情关系发生明显变动", str(instruction))
+        self.assertIn("不得用流年自身十神直接指定父母身份", str(instruction))
+        self.assertIn("作者经验", str(instruction))
+        self.assertIn("案例为空或相似度不足时不强行类比", str(instruction))
         self.assertIn("theory three", str(instruction))
 
     def test_bazi_finalization_replaces_incomplete_chart_pillar_rows(self) -> None:
@@ -1081,6 +1625,135 @@ class BaziTurnToolStateTests(unittest.TestCase):
 
         self.assertEqual(rendered.count("《穷通宝鉴》"), 1)
         self.assertNotIn("\n\n参考依据：", rendered)
+
+    def test_bazi_citation_footer_deduplicates_topic_suffix_for_same_chapter(self) -> None:
+        final_text = (
+            "## 十一、参考依据\n"
+            "- 《命运开启智慧之门》·**第749章 八卦象数疗法（五）**"
+        )
+        tool_history = [
+            ToolExchange(
+                tool_name="knowledge",
+                tool_payload={"action": "search", "namespace": "bazi-theory"},
+                tool_result={
+                    "ok": True,
+                    "action": "search",
+                    "results": [
+                        {
+                            "text": "reviewed theory",
+                            "source_id": "source-1",
+                            "chunk_id": "chunk-1",
+                            "source_title": "命运开启智慧之门 · 作者经验卡",
+                            "heading": "第749章 八卦象数疗法（五） · 健康",
+                        }
+                    ],
+                },
+            )
+        ]
+
+        rendered = _ensure_bazi_citation_footer(final_text, tool_history)
+
+        self.assertEqual(rendered.count("第749章"), 1)
+        self.assertNotIn("· 健康", rendered)
+
+    def test_bazi_citation_footer_adds_missing_items_to_existing_section(self) -> None:
+        final_text = "## 十一、参考依据\n- 《子平真诠》·论用神：支持格局分析。"
+        tool_history = [
+            ToolExchange(
+                tool_name="knowledge",
+                tool_payload={"action": "search", "namespace": "bazi-theory"},
+                tool_result={
+                    "ok": True,
+                    "action": "search",
+                    "results": [
+                        {
+                            "text": "reviewed theory",
+                            "source_id": "source-1",
+                            "chunk_id": "chunk-1",
+                            "source_title": "命运开启智慧之门 · 作者经验卡",
+                            "heading": "健康取象",
+                        }
+                    ],
+                },
+            )
+        ]
+
+        rendered = _ensure_bazi_citation_footer(final_text, tool_history)
+
+        self.assertEqual(rendered.count("参考依据"), 1)
+        self.assertIn("《命运开启智慧之门》 · 健康取象", rendered)
+
+    def test_bazi_citation_footer_removes_storage_labels_and_internal_method_ids(self) -> None:
+        final_text = (
+            "## 十一、参考依据\n"
+            "- 《子平真诠：结构化原文》 · 二、论用神变化\n"
+            "- 《子平真诠》·二、论用神变化\n"
+            "- 《命运开启智慧之门》 · 第749章 健康 · "
+            "author_method_3e5fb43c0ee852df15e9"
+        )
+        tool_history = [
+            ToolExchange(
+                tool_name="knowledge",
+                tool_payload={"action": "search", "namespace": "bazi-theory"},
+                tool_result={
+                    "ok": True,
+                    "action": "search",
+                    "results": [
+                        {
+                            "text": "reviewed theory",
+                            "source_id": "source-1",
+                            "chunk_id": "chunk-1",
+                            "source_title": "子平真诠：结构化原文",
+                            "heading": "二、论用神变化",
+                        }
+                    ],
+                },
+            )
+        ]
+
+        rendered = _ensure_bazi_citation_footer(final_text, tool_history)
+
+        self.assertEqual(rendered.count("《子平真诠》"), 1)
+        self.assertNotIn("结构化原文", rendered)
+        self.assertNotIn("author_method_", rendered)
+
+    def test_bazi_citation_footer_deduplicates_all_derived_source_titles(self) -> None:
+        final_text = (
+            "## 十一、参考依据\n"
+            "- 《渊海子平》 · 论日为主\n"
+            "- 《八字命理评点》 · 第11章 刑.冲.合.害"
+        )
+        tool_history = [
+            ToolExchange(
+                tool_name="knowledge",
+                tool_payload={"action": "search", "namespace": "bazi-theory"},
+                tool_result={
+                    "ok": True,
+                    "action": "search",
+                    "results": [
+                        {
+                            "source_id": "source-1",
+                            "chunk_id": "chunk-1",
+                            "source_title": "渊海子平：结构化核心原文",
+                            "heading": "论日为主",
+                        },
+                        {
+                            "source_id": "source-2",
+                            "chunk_id": "chunk-2",
+                            "source_title": "八字命理评点 · 应期与取象方法",
+                            "heading": "第11章 刑.冲.合.害",
+                        },
+                    ],
+                },
+            )
+        ]
+
+        rendered = _ensure_bazi_citation_footer(final_text, tool_history)
+
+        self.assertEqual(rendered.count("《渊海子平》"), 1)
+        self.assertEqual(rendered.count("《八字命理评点》"), 1)
+        self.assertNotIn("结构化核心原文", rendered)
+        self.assertNotIn("应期与取象方法", rendered)
 
     def test_bazi_finalization_repairs_crossed_citation_pairs(self) -> None:
         tools = ToolRegistry()
@@ -1220,7 +1893,42 @@ class BaziTurnToolStateTests(unittest.TestCase):
         self.assertIn("## 原局格局喜用", rendered)
         self.assertIn("## 参考依据", rendered)
 
-    def test_bazi_finalization_adds_bounded_parent_health_after_visible_cleanup(self) -> None:
+    def test_bazi_http_finalization_does_not_replace_complete_markdown_with_partial_card(self) -> None:
+        headings = [
+            ("命盘", "命盘正文。"),
+            ("原局格局喜用", "原局正文。"),
+            ("大运", "大运正文。"),
+            ("健康注意", "健康正文。"),
+            ("学历", "学历正文。"),
+            ("事业", "事业正文。"),
+            ("婚姻", "婚姻正文。"),
+            ("六亲", "六亲正文。"),
+            ("财富等级", "财富正文。"),
+            ("过三关", "2018｜搬家｜流年戊戌；大运壬申；原局辰戌冲。"),
+            ("参考依据", "《子平真诠》·论用神。"),
+        ]
+        visible = "\n".join(
+            f"## {index}、{title}\n{body}"
+            for index, (title, body) in enumerate(headings, start=1)
+        )
+        partial_card = json.dumps(
+            {
+                "title": "八字分析",
+                "sections": [{"title": "婚姻", "items": ["只保留了婚姻栏目。"]}],
+            },
+            ensure_ascii=False,
+        )
+        raw = f"{visible}\n```feishu_card\n{partial_card}\n```"
+
+        rendered = _ensure_bazi_citation_footer(raw, [], channel_id="http")
+
+        self.assertEqual(missing_bazi_sections(rendered), [])
+        self.assertNotIn("```feishu_card", rendered)
+        self.assertIn("## 2、原局格局喜用", rendered)
+        self.assertIn("## 10、过三关", rendered)
+        self.assertNotIn("只保留了婚姻栏目", rendered)
+
+    def test_bazi_finalization_does_not_add_parent_health_reasoning(self) -> None:
         raw = (
             "## 八、六亲\n"
             "母亲：2021年家事操心较多。\n"
@@ -1230,8 +1938,8 @@ class BaziTurnToolStateTests(unittest.TestCase):
 
         rendered = _ensure_bazi_citation_footer(raw, [], channel_id="http")
 
-        self.assertIn("父亲：本轮未形成可靠高信号健康应期", rendered)
-        self.assertIn("母亲：本轮未形成可靠高信号健康应期", rendered)
+        self.assertNotIn("父亲：本轮未形成可靠高信号健康应期", rendered)
+        self.assertIn("母亲：2021年家事操心较多", rendered)
 
     def test_bazi_finalization_recovers_full_lark_card_json_without_visible_leak(self) -> None:
         tools = ToolRegistry()
@@ -1402,7 +2110,7 @@ class BaziTurnToolStateTests(unittest.TestCase):
         self.assertEqual(len(section.items), 2)
         self.assertEqual(
             section.items[0],
-            "**2012年**｜学业结果｜流年壬辰，处辛未大运。",
+            "**2012年**｜学业结果或升学分流明显｜流年壬辰，处辛未大运。",
         )
         self.assertIn("- **2012年**｜学业结果", body_text)
         self.assertNotIn("**2012年 |", body_text)
@@ -1455,7 +2163,7 @@ class BaziTurnToolStateTests(unittest.TestCase):
 
         self.assertEqual(
             section.items,
-            ["**2017**｜工作起步｜推算原因：流年：丁酉；大运：壬申；原局：财官入局。"],
+            ["**2017**｜工作起步或社会身份进入新阶段｜推算原因：流年：丁酉；大运：壬申；原局：财官入局。"],
         )
 
     def test_bazi_verification_items_expand_bare_topic(self) -> None:
@@ -1471,7 +2179,7 @@ class BaziTurnToolStateTests(unittest.TestCase):
 
         self.assertEqual(
             section.items,
-            ["**2024**｜母亲健康出现需核验事项｜推算原因：流年：甲辰；大运：壬申；原局：父母宫被引动。"],
+            ["**2024**｜母亲或家宅事务变化｜推算原因：流年：甲辰；大运：壬申；原局：父母宫被引动。"],
         )
 
 

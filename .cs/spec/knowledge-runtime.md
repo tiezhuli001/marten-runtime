@@ -4,7 +4,7 @@
 
 Knowledge 是已经进入当前基线的通用 RAG runtime capability。任意 agent 可以通过 namespace 使用同一套文本入库、chunk、FTS / vector 检索、rerank、引用、删除、reindex、状态与统计能力。
 
-它与 memory 分工明确：memory 保存用户偏好和稳定事实，Knowledge 保存可检索文档材料。
+它与 memory 分工明确：memory 保存用户偏好和稳定事实，Knowledge 保存可检索文档材料。Bazi 案例使用独立结构化权威库，仅把去身份化的检索文本投影到 Knowledge。
 
 ## 主流程
 
@@ -43,9 +43,24 @@ Builtin `knowledge` 提供：
 
 - SQLite 主库存放 source、chunk、namespace、embedding、vector map、ingest job 与 search run。
 - 所有读写都带 namespace，namespace 是知识库逻辑隔离键。
-- FTS5 负责关键词召回，sqlite-vec 负责向量召回。
+- FTS5 负责关键词召回，sqlite-vec 负责向量召回；metadata 条件在两类候选截断前执行，避免限定证据类型被未过滤候选挤出。
 - Source 删除采用软删除，search 与 get 只返回 active 内容。
 - 相同 namespace 内的重复 `uri + version` 更新既有 source，减少重复结果。
+- 私有 Bazi 案例保存在 `data/bazi_cases/bazi_cases.sqlite3`；owner 由可信 `channel_id:user_id` 摘要得到，owner 专属 Knowledge namespace 只存可重建投影。
+- 案例投影先完成全部 embedding，再原子替换 source/chunk/vector；归档和删除会同步移除投影，失败时恢复权威记录版本。
+
+## Bazi 双层知识
+
+- `bazi-theory` 是经典理论层，默认排除 `case_record`；共享审核案例是当前案例层，未来用户主动保存的案例可按可信用户身份建立私有范围，两者都不能覆盖 builtin 排盘事实。
+- `bazi_case.save_current` 只读取同一 turn 中最近一次成功 Bazi 工具结果，模型不能提交或改写确定性快照。
+- Bazi 案例采用 `bazi.case.v3`，将确定性盘面、方法解释、主题结论、待验证预测、真实反馈和复盘分别保存，并增加书籍来源坐标、事件主体和提取质量；V1/V2 SQLite 启动时原位迁移。
+- `bazi_case.import_text` 支持批量格式化案例；命主反馈进入 reported event，未来判断进入 prediction，不将预测当作已发生事件。
+- `bazi_case.search` 检索共享审核案例，并在存在可信用户身份时组合该用户主动保存的私有案例；排序采用结构 45%、时运 20%、语义 20% 和反馈质量 15%，同盘 direct 优先，低于 `0.60` 的 near 结果不展示。
+- theory citation 与 case citation 分开。没有私有案例时返回成功空列表，Bazi Agent 继续基于经典证据回答。
+- 当前书籍和 Operator 导入案例进入共享审核层；私有生命周期仅用于未来用户明确执行“一句话保存”的案例，共享申请与匿名化仍属于后续 `S04`。
+- 书籍案例通过通用 TXT 章节适配器、`BookProfile`、候选识别、A-D 分级与去重后导入；默认只有含明确反馈的 A/B 案例进入 active shared 库。
+- 应期关系引擎确定性计算天干五合/生克/伏吟、地支三合/三会/六合/冲/刑/害/破/伏吟，以及本气、中气、余气藏干作用，并支持原局、大运、流年跨层多方组合。六合、三合和三会按目标五行是否透干引化输出「合化成立/合化未成」，冲刑害破输出受影响五行、日主十神和宫位；LLM 只解释计算结果。完整解盘从起运开始最多保留六个大运、每运十年，过三关仍只使用当前年及以前。关键神煞必须按真实年份配对且仅作辅助；经验解释以 `modern_commentary + timing_method` 进入 theory RAG。
+- 完整解盘固定执行排盘、full dayun、理论检索、案例检索和一次正式生成；正式生成使用紧凑工具材料但保留完整十一栏与应期契约。Bazi Agent 由 LLM 综合判断，宿主只提供计算事实、检索证据、格式与事实一致性校验，不生成事件归属、健康部位、学历档位、财富评分或收入金额，也不自动改写模型的命理结论。过三关在格式与事实校验通过后增加一次窄上下文 LLM 语义审查，只判断每条是否具备现实对象、动作和结果；不通过时由主模型仅重写该栏目，审查模型与宿主均不提供事件答案。
 
 ## 模型与配置
 
@@ -74,6 +89,7 @@ Text index: SQLite FTS5
 - sqlite-vec 扩展缺失：vector status 标记 disabled，FTS 检索继续工作。
 - Reranker 缺失：使用 weighted rerank，并返回 rerank status。
 - Embedding config hash 与 namespace 索引不一致：vector status 标记 config mismatch，operator 运行 `knowledge.reindex --namespace <name>` 恢复向量检索。
+- Embedding config hash 包含解析后的模型路径；运维脚本重建索引时必须使用与服务启动相同的仓库绝对路径解析，不能直接用未解析的相对路径配置。
 - Vector 索引记录不一致：返回 backend error 与 reindex 建议。
 - 进程启动会把遗留 `queued/reading/chunking/embedding` job 统一收敛为 `failed + KNOWLEDGE_JOB_INTERRUPTED + retryable=true`，并清理 job-owned staging；完成、失败与取消同样走统一终态清理，另有 orphan staging 清理保护。
 
@@ -118,10 +134,13 @@ Text index: SQLite FTS5
 - 配置、chunking、store、embedding、reranker 与 vector adapter。
 - Namespace 隔离、软删除、FTS / vector / hybrid retrieval 与 metadata filter。
 - Config mismatch、缺模型、缺 sqlite-vec 与 backend error 诊断。
+- Metadata 过滤在 FTS、sqlite-vec、JSON cosine 和文本包含回退路径中的一致性，以及高分非目标候选不能遮蔽限定证据类型。
 - Ingest job 状态、取消、tool schema、runtime capability 与 skill 行为。
 - `knowledge_retrieval` eval 的关键词召回、语义召回、rerank、namespace isolation、config mismatch、进度与 delete behavior。
 - Corpus publisher 的首次发布、重复发布、缺向量修复、namespace reindex、显式删除后重放，以及 corpus grader 的版本匹配与指标计算。
 - Knowledge Console 的登录/cookie/session、CSRF、非法 namespace、preview/草稿导入、审核发布、正式库检索、source detail、reindex 与显式删除。
+- 私有案例 V2 的文本导入、旧库迁移、真实对象式四柱特征、direct/near 排序、预测/反馈隔离和 32 案例检索评估。
+- 私有案例 V3 的书籍来源、事件主体、提取质量、预测反馈复盘关联，以及关系真值表和真实书籍检索评估。
 
 ## 后续真实性能基准
 
@@ -138,7 +157,7 @@ Text index: SQLite FTS5
 Knowledge 产品方向分两阶段管理：
 
 - `.cs/epics/002-o-knowledge-corpus-quality/spec.md`：经典书籍 release contract、Knowledge Console、v2 结构化经典、概念问答、AI 解释、模型预热与发布/恢复演练已实现；Epic 保持 open，正式性能基准按用户决策延期。
-- `.cs/epics/003-o-bazi-case-library/spec.md`：下一阶段，交付结构化私有/共享案例、对话保存、可重建检索投影和 theory-first/case-second 双层推理。
+- `.cs/epics/003-o-bazi-case-library/spec.md`：私有案例 MVP 已进入实现，交付 owner 隔离、对话保存、可重建检索投影和 theory-first/case-second 双层推理；共享审核发布保留在后续 `S04`。
 
 ## 旧迭代材料吸收结论
 
@@ -152,8 +171,11 @@ Knowledge 产品方向分两阶段管理：
 - `docs/ARCHITECTURE_CHANGELOG.md`
 - `docs/CONFIG_SURFACES.md`
 - `src/marten_runtime/knowledge/`
+- `src/marten_runtime/bazi_cases/`
 - `src/marten_runtime/tools/builtins/knowledge_tool.py`
+- `src/marten_runtime/tools/builtins/bazi_case_tool.py`
 - `skills/knowledge_management/SKILL.md`
 - `config/knowledge.example.toml`
 - `evals/suites/knowledge_retrieval.toml`
 - `tests/test_knowledge_*.py`
+- `tests/test_bazi_case_*.py`

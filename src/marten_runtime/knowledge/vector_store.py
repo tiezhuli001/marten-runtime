@@ -15,6 +15,7 @@ def query_vectors(
     top_k: int,
     enabled: bool = True,
     backend: str = "json_cosine",
+    filters: dict[str, object] | None = None,
 ) -> VectorQueryResult:
     if not enabled:
         return VectorQueryResult(status=VectorStatus.DISABLED, message="vector store disabled")
@@ -31,6 +32,7 @@ def query_vectors(
             embedding_config_hash,
             query_vector,
             top_k=top_k,
+            filters=filters,
         )
         if sqlite_vec_result.status != VectorStatus.AVAILABLE:
             return sqlite_vec_result
@@ -56,6 +58,7 @@ def query_vectors(
     items = [
         VectorResultItem(chunk_id=record.chunk_id, score=_cosine(query_vector, record.vector))
         for record in records
+        if _record_matches_filters(store, namespace, record.chunk_id, filters)
     ]
     items.sort(key=lambda item: (item.score, item.chunk_id), reverse=True)
     return VectorQueryResult(status=VectorStatus.AVAILABLE, items=items[:top_k])
@@ -74,3 +77,17 @@ def _cosine(left: list[float], right: list[float]) -> float:
 
 def _distance_to_score(distance: float) -> float:
     return 1.0 / (1.0 + max(0.0, distance))
+
+
+def _record_matches_filters(
+    store: SQLiteKnowledgeStore,
+    namespace: str,
+    chunk_id: str,
+    filters: dict[str, object] | None,
+) -> bool:
+    if not filters:
+        return True
+    chunk = store.get_chunk(namespace, chunk_id)
+    return chunk is not None and all(
+        chunk.metadata.get(key) == value for key, value in filters.items()
+    )

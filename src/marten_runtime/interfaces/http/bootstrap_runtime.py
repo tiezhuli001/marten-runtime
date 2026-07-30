@@ -33,8 +33,13 @@ from marten_runtime.config.providers_loader import (
     load_providers_config,
 )
 from marten_runtime.config.platform_loader import PlatformConfig, load_platform_config
-from marten_runtime.knowledge.config import load_knowledge_config
+from marten_runtime.knowledge.config import (
+    load_knowledge_config,
+    resolve_knowledge_runtime_paths,
+)
 from marten_runtime.knowledge.service import KnowledgeService
+from marten_runtime.bazi_cases.service import BaziCaseService
+from marten_runtime.bazi_cases.sqlite_store import SQLiteBaziCaseStore
 from marten_runtime.mcp.client import MCPClient
 from marten_runtime.mcp.discovery import discover_mcp_tools
 from marten_runtime.mcp.loader import load_mcp_servers
@@ -250,6 +255,7 @@ class HTTPRuntimeState:
     self_improve_service: SelfImproveService
     memory_service: ThinMemoryService
     knowledge_service: KnowledgeService
+    bazi_case_service: BaziCaseService
     session_store: SessionStore
     run_history: InMemoryRunHistory
     tool_registry: ToolRegistry
@@ -334,7 +340,7 @@ def build_http_runtime(
     )
     session_store.reset_running_compaction_jobs()
     memory_service = ThinMemoryService(resolved_repo_root / "data" / "memory")
-    knowledge_config = _resolve_knowledge_paths(
+    knowledge_config = resolve_knowledge_runtime_paths(
         load_knowledge_config(str(resolved_repo_root / "config" / "knowledge.toml")).knowledge,
         repo_root=resolved_repo_root,
     )
@@ -342,6 +348,10 @@ def build_http_runtime(
     if knowledge_config.prewarm_on_start:
         knowledge_service.prewarm_models()
     bazi_bridge_manager = BaziBridgeManager(repo_root=resolved_repo_root, env=resolved_env)
+    bazi_case_service = BaziCaseService(
+        SQLiteBaziCaseStore(resolved_repo_root / "data" / "bazi_cases" / "bazi_cases.sqlite3"),
+        knowledge_service,
+    )
     default_profile_name, default_profile = resolve_model_profile(
         models_config, default_agent.model_profile
     )
@@ -434,6 +444,7 @@ def build_http_runtime(
         self_improve_service=self_improve_service,
         memory_service=memory_service,
         knowledge_service=knowledge_service,
+        bazi_case_service=bazi_case_service,
         session_store=session_store,
         run_history=runtime_loop.history,
         tool_registry=tool_registry,
@@ -481,28 +492,6 @@ def build_http_runtime(
         after_runtime_delivery=lambda body: state.subagent_service.release_deferred_background_starts(),
     )
     return state
-
-
-def _resolve_knowledge_paths(config, *, repo_root: Path):  # noqa: ANN001, ANN202
-    return config.model_copy(
-        update={
-            "repo_root": str(repo_root),
-            "db_path": _repo_relative_path(repo_root, config.db_path),
-            "embedding": config.embedding.model_copy(
-                update={"local_path": _repo_relative_path(repo_root, config.embedding.local_path)}
-            ),
-            "reranker": config.reranker.model_copy(
-                update={"local_path": _repo_relative_path(repo_root, config.reranker.local_path)}
-            ),
-        }
-    )
-
-
-def _repo_relative_path(repo_root: Path, value: str) -> str:
-    path = Path(str(value or ""))
-    if path.is_absolute():
-        return str(path)
-    return str(repo_root / path)
 
 
 def _resolve_environment(

@@ -27,12 +27,19 @@ class BaziRuntimeRegistrationTests(unittest.TestCase):
 
     def test_runtime_registers_bazi_with_the_capability_schema(self) -> None:
         self.assertIn("bazi", self.runtime.tool_registry.list())
+        self.assertIn("bazi_case", self.runtime.tool_registry.list())
         descriptor = self.runtime.tool_registry._descriptors["bazi"]
         self.assertEqual(
             descriptor.parameters_schema,
             get_capability_declarations()["bazi"].parameters_schema,
         )
         self.assertEqual(descriptor.observation_policy, "sensitive_bazi")
+        case_descriptor = self.runtime.tool_registry._descriptors["bazi_case"]
+        self.assertEqual(
+            case_descriptor.parameters_schema,
+            get_capability_declarations()["bazi_case"].parameters_schema,
+        )
+        self.assertEqual(case_descriptor.observation_policy, "sensitive_bazi")
 
     def test_relative_repo_root_resolves_to_absolute_path(self) -> None:
         self.assertEqual(resolve_repo_root("."), resolve_repo_root())
@@ -45,6 +52,7 @@ class BaziRuntimeRegistrationTests(unittest.TestCase):
             agent = self.runtime.agent_registry.get(agent_id)
             snapshot = self.runtime.tool_registry.build_snapshot(agent.allowed_tools)
             self.assertNotIn("bazi", snapshot.available_tools())
+            self.assertNotIn("bazi_case", snapshot.available_tools())
             catalog = render_capability_catalog_for_request(
                 get_capability_declarations(), available_tools=agent.allowed_tools
             )

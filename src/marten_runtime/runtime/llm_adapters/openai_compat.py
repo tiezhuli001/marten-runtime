@@ -59,6 +59,8 @@ def _llm_reply(**kwargs):
 
 
 class OpenAICompatLLMClient:
+    host_orchestrated_bazi_pipeline: bool = True
+
     def __init__(
         self,
         *,
@@ -93,6 +95,7 @@ class OpenAICompatLLMClient:
         self.interactive_retry_policy = RetryPolicy(
             max_attempts=3, base_backoff_seconds=0.25, max_backoff_seconds=1.0
         )
+        self.bazi_generation_retry_policy = RetryPolicy(max_attempts=1)
         self.default_timeout_seconds = 30
         self.interactive_timeout_seconds = 20
         self.interactive_tool_followup_timeout_seconds = 20
@@ -217,7 +220,17 @@ class OpenAICompatLLMClient:
         )
 
     def _retry_policy_for(self, request) -> RetryPolicy:
-        if request.request_kind in {"interactive", "finalization_retry"}:
+        if request.request_kind in {
+            "bazi_final_generation",
+            "bazi_analysis_draft_repair",
+        }:
+            return self.bazi_generation_retry_policy
+        if request.request_kind in {
+            "interactive",
+            "finalization_retry",
+            "bazi_output_semantic_review",
+            "bazi_verification_event_repair",
+        }:
             return self.interactive_retry_policy
         return self.retry_policy
 
@@ -351,11 +364,19 @@ class OpenAICompatLLMClient:
 
     def _build_responses_payload(self, request, *, stream: bool) -> dict[str, object]:
         instructions, input_items = _build_responses_instructions_and_input(request)
+        text_format: dict[str, object] = {"type": "text"}
+        if request.response_schema is not None:
+            text_format = {
+                "type": "json_schema",
+                "name": request.response_schema_name or "structured_response",
+                "strict": True,
+                "schema": request.response_schema,
+            }
         body: dict[str, object] = {
             "model": self.model_name,
             "store": False,
             "input": input_items,
-            "text": {"format": {"type": "text"}, "verbosity": "medium"},
+            "text": {"format": text_format, "verbosity": "medium"},
         }
         if request.max_completion_tokens is not None:
             body["max_output_tokens"] = request.max_completion_tokens

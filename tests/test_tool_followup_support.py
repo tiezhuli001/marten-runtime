@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from marten_runtime.runtime.llm_client import (
@@ -8,6 +9,7 @@ from marten_runtime.runtime.llm_client import (
 )
 from marten_runtime.runtime.tool_followup_support import (
     append_tool_exchange,
+    build_bazi_verification_event_repair_request,
     build_finalization_evidence_ledger,
     build_tool_followup_request,
     normalize_tool_result_for_followup,
@@ -15,6 +17,78 @@ from marten_runtime.runtime.tool_followup_support import (
 
 
 class ToolFollowupSupportTests(unittest.TestCase):
+    def test_bazi_event_repair_uses_only_candidate_year_evidence(self) -> None:
+        history = [
+            ToolExchange(
+                tool_name="bazi",
+                tool_payload={"action": "chart", "gender": "male"},
+                tool_result={
+                    "ok": True,
+                    "action": "chart",
+                    "result": {
+                        "四柱": [
+                            {"柱": "年柱", "干支": "甲戌"},
+                            {"柱": "月柱", "干支": "丁卯"},
+                            {"柱": "日柱", "干支": "庚戌"},
+                            {"柱": "时柱", "干支": "庚辰"},
+                        ]
+                    },
+                },
+            ),
+            ToolExchange(
+                tool_name="bazi",
+                tool_payload={"action": "dayun", "gender": "male"},
+                tool_result={
+                    "ok": True,
+                    "action": "dayun",
+                    "result": {
+                        "大运列表": [
+                            {
+                                "起运年份": 2017,
+                                "起运年龄": 24,
+                                "干支": "庚午",
+                                "十神": "比肩",
+                                "流年列表": [
+                                    {"流年": 2023, "年龄": 30, "干支": "癸卯"},
+                                    {"流年": 2024, "年龄": 31, "干支": "甲辰"},
+                                ],
+                            }
+                        ]
+                    },
+                },
+            ),
+        ]
+        current = json.dumps(
+            {
+                "verification_candidates": [
+                    {
+                        "category": "relationship",
+                        "year": 2023,
+                        "event": "与对象确定恋爱关系",
+                    }
+                ],
+                "verification_events": [],
+            },
+            ensure_ascii=False,
+        )
+
+        request = build_bazi_verification_event_repair_request(
+            LLMRequest(
+                session_id="session",
+                trace_id="trace",
+                message="完整解盘",
+                agent_id="bazi",
+            ),
+            tool_history=history,
+            current_events_json=current,
+            violations=["事件依据错误"],
+        )
+
+        self.assertEqual(request.tool_history, [])
+        self.assertEqual(request.max_completion_tokens, 1600)
+        self.assertIn('"流年":2023', request.invalid_final_text or "")
+        self.assertNotIn('"流年":2024', request.invalid_final_text or "")
+
     def test_append_tool_exchange_keeps_payload_and_dict_result(self) -> None:
         history: list[ToolExchange] = []
 

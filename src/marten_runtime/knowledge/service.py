@@ -112,6 +112,70 @@ class KnowledgeService:
             "vector_store_status": "indexed" if embedding_status == EmbeddingStatus.AVAILABLE else "disabled",
         }
 
+    def replace_text_source_atomically(
+        self, *, namespace: str, source: dict[str, object]
+    ) -> dict[str, object]:
+        """Prepare all embeddings before publishing a source replacement."""
+        self.unload_idle_models()
+        namespace = _namespace(namespace, self.config.default_namespace)
+        text = str(source.get("text") or "").strip()
+        if not text:
+            return {
+                "ok": False,
+                "error_code": "KNOWLEDGE_SOURCE_TEXT_REQUIRED",
+                "message": "source.text is required for text ingest",
+            }
+        profile_id = self._source_embedding_profile_id(namespace, source)
+        source_model, chunks = self._prepare_source_chunks(
+            namespace=namespace, source=source, text=text
+        )
+        if not self.config.embedding.enabled:
+            with self._source_lock(namespace, source_model.source_id):
+                self.store.replace_source_chunks(source=source_model, chunks=chunks)
+            return {
+                "ok": True,
+                "namespace": namespace,
+                "source_id": source_model.source_id,
+                "chunk_count": len(chunks),
+                "embedding_status": "disabled",
+                "vector_store_status": "disabled",
+            }
+        profile = self.embedding_profiles[profile_id]
+        profile_hash = self.embedding_profile_hashes[profile_id]
+        vectors: list[list[float]] = []
+        with self._source_lock(namespace, source_model.source_id):
+            with self._model_runtime_lock:
+                adapter = self._embedding_adapter(profile_id)
+                for start in range(0, len(chunks), self.config.chunking.batch_size):
+                    batch = chunks[start : start + self.config.chunking.batch_size]
+                    embedded = adapter.embed_texts([chunk.text for chunk in batch])
+                    if embedded.status != EmbeddingStatus.AVAILABLE:
+                        return {
+                            "ok": False,
+                            "error_code": "KNOWLEDGE_SOURCE_EMBEDDING_UNAVAILABLE",
+                            "message": embedded.message or "source embedding is unavailable",
+                            "embedding_status": _public_embedding_status(embedded.status),
+                        }
+                    vectors.extend([list(vector) for vector in embedded.vectors])
+                self.store.replace_source_bundle(
+                    source=source_model,
+                    chunks=chunks,
+                    vectors=vectors,
+                    model_id=profile.model,
+                    dimension=profile.dimension,
+                    embedding_config_hash=profile_hash,
+                    embedding_profile_id=profile_id,
+                )
+                self.unload_idle_models()
+        return {
+            "ok": True,
+            "namespace": namespace,
+            "source_id": source_model.source_id,
+            "chunk_count": len(chunks),
+            "embedding_status": "embedded",
+            "vector_store_status": "indexed",
+        }
+
     def ingest_file(
         self,
         *,

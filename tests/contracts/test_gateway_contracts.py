@@ -228,6 +228,7 @@ class GatewayContractTests(unittest.TestCase):
         runtime = app.state.runtime
         runtime.runtime_loop.llm = FailingLLMClient()
         runtime.llm_client_factory.cache_client("openai_gpt_5_4", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("openai_gpt_5_5", runtime.runtime_loop.llm)
         runtime.llm_client_factory.cache_client("kimi_k2", runtime.runtime_loop.llm)
         runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", runtime.runtime_loop.llm)
 
@@ -254,6 +255,7 @@ class GatewayContractTests(unittest.TestCase):
         runtime = app.state.runtime
         runtime.runtime_loop.llm = OverloadedLLMClient()
         runtime.llm_client_factory.cache_client("openai_gpt_5_4", runtime.runtime_loop.llm)
+        runtime.llm_client_factory.cache_client("openai_gpt_5_5", runtime.runtime_loop.llm)
         runtime.llm_client_factory.cache_client("kimi_k2", runtime.runtime_loop.llm)
         runtime.llm_client_factory.cache_client("minimax_m2_7_highspeed", runtime.runtime_loop.llm)
 

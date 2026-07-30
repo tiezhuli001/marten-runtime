@@ -644,10 +644,20 @@ class BaziBridgeManager:
 
     @staticmethod
     def _kill_process_group(process: subprocess.Popen) -> None:
+        if process.poll() is not None:
+            process.wait()
+            return
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            # The short-lived bridge can exit between poll() and killpg(). On
+            # macOS that race may surface as EPERM instead of ESRCH.
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
         process.wait()
 
     def _redact(self, value: str, *, request: Mapping[str, object] | None = None) -> str:

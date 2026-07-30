@@ -11,7 +11,11 @@ from marten_runtime.runtime.request_flow import (
     resolve_request_responses_api,
     resolve_request_timeout_seconds,
 )
-from marten_runtime.runtime.tool_followup_support import build_finalization_retry_request
+from marten_runtime.runtime.tool_followup_support import (
+    build_bazi_final_generation_request,
+    build_bazi_output_semantic_review_request,
+    build_finalization_retry_request,
+)
 
 
 class DummyLLM:
@@ -108,6 +112,82 @@ class RuntimeProviderFlowHelperTests(unittest.TestCase):
             ),
             90,
         )
+        self.assertEqual(
+            resolve_request_timeout_seconds(
+                request.model_copy(update={"request_kind": "bazi_output_semantic_review"})
+            ),
+            90,
+        )
+
+    def test_bazi_semantic_review_request_contains_only_verification_section(self) -> None:
+        review = build_bazi_output_semantic_review_request(
+            _request().model_copy(update={"agent_id": "bazi", "available_tools": ["bazi"]}),
+            tool_history=[],
+            candidate_text=(
+                "九、财富等级\n财富正文。\n"
+                "十、过三关\n2024｜搬家｜流年、大运、原局依据。\n"
+                "十一、参考依据\n参考正文。"
+            ),
+            verification_events_json='[{"category":"career_change","event":"正式入职"}]',
+        )
+
+        self.assertEqual(review.request_kind, "bazi_output_semantic_review")
+        self.assertEqual(review.available_tools, [])
+        self.assertIn("2024｜搬家", str(review.invalid_final_text))
+        self.assertNotIn("财富正文", str(review.invalid_final_text))
+        self.assertNotIn("参考正文", str(review.invalid_final_text))
+        self.assertIn('"category":"career_change"', str(review.invalid_final_text))
+
+    def test_bazi_semantic_review_request_keeps_candidate_timing_facts(self) -> None:
+        tool_history = [
+            ToolExchange(
+                tool_name="bazi",
+                tool_payload={"action": "chart", "gender": "male"},
+                tool_result={
+                    "ok": True,
+                    "action": "chart",
+                    "result": {
+                        "四柱": [
+                            {"柱": "年柱", "干支": "甲戌"},
+                            {"柱": "月柱", "干支": "丁卯"},
+                            {"柱": "日柱", "干支": "庚戌"},
+                            {"柱": "时柱", "干支": "庚辰"},
+                        ]
+                    },
+                },
+            ),
+            ToolExchange(
+                tool_name="bazi",
+                tool_payload={"action": "dayun", "gender": "male"},
+                tool_result={
+                    "ok": True,
+                    "action": "dayun",
+                    "result": {
+                        "大运列表": [
+                            {
+                                "干支": "庚午",
+                                "流年列表": [{"流年": 2023, "干支": "癸卯"}],
+                            }
+                        ]
+                    },
+                },
+            ),
+        ]
+        review = build_bazi_output_semantic_review_request(
+            _request().model_copy(update={"agent_id": "bazi"}),
+            tool_history=tool_history,
+            candidate_text="十、过三关\n2023｜确定恋爱关系｜三层依据。",
+            verification_events_json=(
+                '{"verification_candidates":[{"category":"relationship",'
+                '"year":2023,"event":"确定恋爱关系"}],'
+                '"verification_events":[]}'
+            ),
+        )
+
+        material = str(review.invalid_final_text)
+        self.assertIn("候选年份确定性事实", material)
+        self.assertIn("合化判定", material)
+        self.assertIn("合化成立", material)
 
     def test_bazi_finalization_retry_discards_nonessential_context(self) -> None:
         request = _request().model_copy(
@@ -141,6 +221,21 @@ class RuntimeProviderFlowHelperTests(unittest.TestCase):
         self.assertIsNone(retry.repository_context_text)
         self.assertEqual(retry.activated_skill_ids, [])
         self.assertEqual(retry.activated_skill_bodies, [])
+
+    def test_bazi_final_generation_is_not_reported_as_retry(self) -> None:
+        request = _request(model_name="gpt-5.4").model_copy(
+            update={"agent_id": "bazi", "compact_summary_text": "large summary"}
+        )
+
+        final_request = build_bazi_final_generation_request(
+            request,
+            tool_history=[ToolExchange(tool_name="knowledge")],
+        )
+
+        self.assertEqual(final_request.request_kind, "bazi_final_generation")
+        self.assertEqual(final_request.max_completion_tokens, 3400)
+        self.assertIsNone(final_request.compact_summary_text)
+        self.assertEqual(resolve_request_timeout_seconds(final_request), 90)
 
     def test_bazi_generation_after_knowledge_search_has_detailed_analysis_budget(self) -> None:
         request = _request(model_name="gpt-5.4").model_copy(

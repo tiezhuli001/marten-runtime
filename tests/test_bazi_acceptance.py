@@ -209,6 +209,7 @@ class BaziVerticalSliceAcceptanceTests(unittest.TestCase):
             self.assertEqual(route_run.final_text, "[REDACTED:metadata_only]")
             self.assertEqual(_tool_call_count(run.tool_calls, "bazi"), 2)
             self.assertEqual(_tool_call_count(run.tool_calls, "knowledge"), 1)
+            self.assertEqual(_tool_call_count(run.tool_calls, "bazi_case"), 1)
             self.assertEqual(
                 len(set(_bazi_fingerprints(run.tool_calls))),
                 1,

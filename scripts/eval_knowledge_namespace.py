@@ -13,7 +13,7 @@ import numpy as np
 from sklearn.feature_extraction.text import HashingVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from marten_runtime.knowledge.config import load_knowledge_config
+from marten_runtime.knowledge.config import load_knowledge_config, resolve_knowledge_runtime_paths
 from marten_runtime.knowledge.corpus_eval import (
     corpus_retrieval_report_markdown,
     evaluate_namespace_retrieval,
@@ -217,7 +217,10 @@ def _validate_expected_sources(service, *, namespace: str, expected_ids: set[str
 
 
 def _config(config_path: str, db_path: str):  # noqa: ANN202
-    config = load_knowledge_config(str(_path(config_path))).knowledge
+    config = resolve_knowledge_runtime_paths(
+        load_knowledge_config(str(_path(config_path))).knowledge,
+        repo_root=REPO_ROOT,
+    )
     return config.model_copy(
         update={
             "repo_root": str(REPO_ROOT),

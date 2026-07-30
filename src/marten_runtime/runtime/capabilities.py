@@ -49,6 +49,155 @@ def get_capability_declarations() -> dict[str, CapabilityDeclaration]:
             ],
             parameters_schema=BAZI_PARAMETERS_SCHEMA,
         ),
+        "bazi_case": CapabilityDeclaration(
+            name="bazi_case",
+            summary="Save, manage, and search the current user's private structured Bazi cases.",
+            actions=["save_current", "import_text", "get", "list", "update_events", "archive", "delete", "search"],
+            usage_rules=[
+                "Use save_current only after a successful Bazi chart with four pillars in the same turn and only when the user explicitly asks to save the chart.",
+                "Do not ask the user to repeat deterministic chart fields; save_current reads them from trusted turn state.",
+                "Search cases after theory evidence when a concrete Bazi analysis would benefit from verified similar events.",
+                "Keep theory citations and case citations separate. Cases never override Bazi facts or prove causation.",
+                "Use user_reported for events stated by the user, model_inferred only for unconfirmed extraction, and verified types only when that evidence was explicitly provided.",
+                "Predictions are pending claims, not observed events. Link a prediction to feedback only through a review.",
+                "Use import_text for one or more case blocks containing gender, four pillars, optional Dayun, analysis sections, and reported feedback.",
+            ],
+            examples=[
+                "把刚才这个盘保存为案例",
+                "找一下我以前保存的相似事业案例",
+                "把这个案例中的结婚年份更正为 2020 年",
+            ],
+            parameters_schema={
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "$defs": {
+                    "event": {
+                        "type": "object",
+                        "properties": {
+                            "event_id": {"type": "string"},
+                            "category": {
+                                "type": "string",
+                                "enum": ["education", "career", "wealth", "marriage", "health", "family", "children", "relocation", "legal", "other"],
+                            },
+                            "description": {"type": "string", "minLength": 1, "maxLength": 1000},
+                            "outcome": {"type": "string", "maxLength": 1000},
+                            "time_start": {"type": "string"},
+                            "time_end": {"type": "string"},
+                            "time_precision": {"type": "string", "enum": ["exact_year", "range", "life_stage", "unknown"]},
+                            "evidence_type": {
+                                "type": "string",
+                                "enum": ["user_reported", "document_verified", "operator_verified", "model_inferred"],
+                            },
+                            "verification_status": {"type": "string", "enum": ["verified", "reported", "unverified"]},
+                            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                            "privacy_redacted": {"type": "boolean"},
+                            "subject": {
+                                "type": "string",
+                                "enum": [
+                                    "self", "father", "mother", "spouse", "child", "family",
+                                    "career_platform", "asset", "unknown"
+                                ],
+                            },
+                            "linked_prediction_ids": {"type": "array", "items": {"type": "string"}},
+                            "source_excerpt": {"type": "string", "maxLength": 1000},
+                        },
+                        "required": ["category", "description", "evidence_type"],
+                        "additionalProperties": False,
+                    },
+                    "interpretation": {
+                        "type": "object",
+                        "properties": {
+                            "school": {"type": "string", "maxLength": 100},
+                            "method": {"type": "string", "maxLength": 200},
+                            "strength": {"type": "string", "maxLength": 500},
+                            "pattern": {"type": "string", "maxLength": 500},
+                            "useful_elements": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
+                            "favorable_elements": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
+                            "unfavorable_elements": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
+                            "basis": {"type": "array", "items": {"type": "string"}, "maxItems": 50},
+                            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                            "source_excerpt": {"type": "string", "maxLength": 2000}
+                        },
+                        "additionalProperties": False
+                    },
+                    "conclusion": {
+                        "type": "object",
+                        "properties": {
+                            "conclusion_id": {"type": "string"},
+                            "topic": {"type": "string", "enum": ["education", "career", "wealth", "marriage", "health", "family", "children", "relocation", "legal", "other"]},
+                            "conclusion": {"type": "string", "minLength": 1, "maxLength": 2000},
+                            "basis": {"type": "array", "items": {"type": "string"}},
+                            "applicable_time": {"type": "string"},
+                            "limitations": {"type": "array", "items": {"type": "string"}},
+                            "source_excerpt": {"type": "string", "maxLength": 2000}
+                        },
+                        "required": ["topic", "conclusion"],
+                        "additionalProperties": False
+                    },
+                    "prediction": {
+                        "type": "object",
+                        "properties": {
+                            "prediction_id": {"type": "string"},
+                            "topic": {"type": "string", "enum": ["education", "career", "wealth", "marriage", "health", "family", "children", "relocation", "legal", "other"]},
+                            "time_start": {"type": "string"}, "time_end": {"type": "string"},
+                            "time_precision": {"type": "string", "enum": ["exact_year", "range", "life_stage", "unknown"]},
+                            "triggers": {"type": "array", "items": {"type": "string"}},
+                            "conclusion": {"type": "string", "minLength": 1, "maxLength": 2000},
+                            "status": {"type": "string", "enum": ["pending", "confirmed", "partial", "missed", "unknown"]},
+                            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                            "source_excerpt": {"type": "string", "maxLength": 2000}
+                        },
+                        "required": ["topic", "conclusion"],
+                        "additionalProperties": False
+                    },
+                    "review": {
+                        "type": "object",
+                        "properties": {
+                            "review_id": {"type": "string"}, "prediction_id": {"type": "string"},
+                            "event_id": {"type": "string"},
+                            "outcome": {"type": "string", "enum": ["confirmed", "partial", "missed", "unknown"]},
+                            "notes": {"type": "string", "maxLength": 2000},
+                            "corrected_conclusion": {"type": "string", "maxLength": 2000},
+                            "created_at": {"type": "string"}
+                        },
+                        "required": ["prediction_id", "outcome"],
+                        "additionalProperties": False
+                    }
+                },
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["save_current", "import_text", "get", "list", "update_events", "archive", "delete", "search"],
+                    },
+                    "case_id": {"type": "string"},
+                    "question": {"type": "string", "maxLength": 2000},
+                    "analysis_summary": {"type": "string", "maxLength": 4000},
+                    "raw_case_text": {"type": "string", "maxLength": 50000},
+                    "text": {"type": "string", "minLength": 1, "maxLength": 200000},
+                    "interpretation": {"$ref": "#/$defs/interpretation"},
+                    "topic_conclusions": {"type": "array", "items": {"$ref": "#/$defs/conclusion"}},
+                    "predictions": {"type": "array", "items": {"$ref": "#/$defs/prediction"}},
+                    "reviews": {"type": "array", "items": {"$ref": "#/$defs/review"}},
+                    "events": {"type": "array", "items": {"$ref": "#/$defs/event"}, "maxItems": 100},
+                    "include_archived": {"type": "boolean"},
+                    "query": {"type": "string", "minLength": 1, "maxLength": 2000},
+                    "top_k": {"type": "integer", "minimum": 1, "maximum": 20},
+                    "event_category": {
+                        "type": "string",
+                        "enum": ["education", "career", "wealth", "marriage", "health", "family", "children", "relocation", "legal", "other"],
+                    },
+                    "current_chart": {"type": "object"},
+                },
+                "required": ["action"],
+                "allOf": [
+                    {"if": {"required": ["action"], "properties": {"action": {"enum": ["get", "archive", "delete"]}}}, "then": {"required": ["case_id"]}},
+                    {"if": {"required": ["action"], "properties": {"action": {"const": "import_text"}}}, "then": {"required": ["text"]}},
+                    {"if": {"required": ["action"], "properties": {"action": {"const": "update_events"}}}, "then": {"required": ["case_id", "events"]}},
+                    {"if": {"required": ["action"], "properties": {"action": {"const": "search"}}}, "then": {"required": ["query"]}},
+                ],
+                "additionalProperties": False,
+            },
+        ),
         "automation": CapabilityDeclaration(
             name="automation",
             summary="Manage recurring automations and inspect scheduled jobs, timed tasks, cron jobs, and 定时任务.",

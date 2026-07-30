@@ -68,19 +68,31 @@ class KnowledgeRetriever:
         started_at = perf_counter()
         candidate_limit = self._candidate_limit(top_k)
         fts_started_at = perf_counter()
-        fts_chunks = self.store.search_fts(namespace, query, limit=candidate_limit)
+        fts_chunks = self.store.search_fts(
+            namespace,
+            query,
+            limit=candidate_limit,
+            filters=filters,
+        )
         if not fts_chunks:
-            fts_chunks = self.store.find_chunks_containing(namespace, query, limit=candidate_limit)
+            fts_chunks = self.store.find_chunks_containing(
+                namespace,
+                query,
+                limit=candidate_limit,
+                filters=filters,
+            )
         fts_ms = _elapsed_ms(fts_started_at)
         vector_started_at = perf_counter()
+        vector_candidate_limit = max(candidate_limit * 5, 100) if filters else candidate_limit
         vector_result = query_vectors(
             self.store,
             namespace=namespace,
             embedding_config_hash=embedding_config_hash,
             query_vector=query_vector,
-            top_k=candidate_limit,
+            top_k=vector_candidate_limit,
             enabled=self.vector_store_enabled,
             backend=self.vector_store_backend,
+            filters=filters,
         )
         vector_ms = _elapsed_ms(vector_started_at)
         candidates: dict[str, KnowledgeSearchResultItem] = {}

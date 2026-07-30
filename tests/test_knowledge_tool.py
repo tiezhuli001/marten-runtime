@@ -5,6 +5,10 @@ from pathlib import Path
 from marten_runtime.knowledge.config import load_knowledge_config
 from marten_runtime.knowledge.service import KnowledgeService
 from marten_runtime.tools.builtins.knowledge_tool import run_knowledge_tool
+from marten_runtime.tools.builtins.bazi_tool import (
+    CURRENT_RESULT_STATE_KEY,
+    RESULTS_BY_ACTION_STATE_KEY,
+)
 
 
 class KnowledgeToolTests(unittest.TestCase):
@@ -53,6 +57,88 @@ class KnowledgeToolTests(unittest.TestCase):
             service = KnowledgeService(load_knowledge_config.from_text(_config(tmp)).knowledge)
             with self.assertRaises(ValueError):
                 run_knowledge_tool({}, knowledge_service=service)
+
+    def test_bazi_theory_search_replaces_raw_birth_query_with_chart_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service = KnowledgeService(load_knowledge_config.from_text(_config(tmp)).knowledge)
+            service.ingest_text(
+                namespace="bazi-theory",
+                source={
+                    "title": "财格资料",
+                    "kind": "text",
+                    "uri": "local://wealth-pattern",
+                    "text": "庚金生卯月，正财当令，财官同见，应先辨身财官强弱。",
+                    "metadata": {"evidence_kind": "classical_original"},
+                },
+            )
+            service.ingest_text(
+                namespace="bazi-theory",
+                source={
+                    "title": "命运开启智慧之门",
+                    "kind": "text",
+                    "uri": "local://author-method",
+                    "text": (
+                        "过三关具体应验 原局大运流年综合细致断事 "
+                        "应期方法 大运流年 健康取象 五行生克 神煞应用 用忌条件 "
+                        "婚姻宫逢冲 配偶星 婚姻不顺 离婚 六亲应期 父母星宫。"
+                    ),
+                    "metadata": {
+                        "evidence_kind": "modern_commentary",
+                        "content_type": "author_method",
+                    },
+                },
+            )
+            chart = _bazi_chart()
+            dayun = {
+                "ok": True,
+                "action": "dayun",
+                "result": {"大运列表": [{"起运年份": 2017, "干支": "庚午"}]},
+            }
+            context = {
+                "agent_id": "bazi",
+                "message": "男，1994年农历二月十四，请按子平格局法分析。",
+                "turn_tool_state": {
+                    CURRENT_RESULT_STATE_KEY: dayun,
+                    RESULTS_BY_ACTION_STATE_KEY: {"chart": chart, "dayun": dayun},
+                },
+            }
+
+            result = run_knowledge_tool(
+                {"action": "search", "namespace": "bazi-theory", "query": "1994年农历二月十四"},
+                knowledge_service=service,
+                tool_context=context,
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertIn("庚金生卯月", result["query"])
+            self.assertIn("正财格", result["query"])
+            self.assertNotIn("1994", result["query"])
+            self.assertEqual(result["query_plan"]["strategy"], "bazi_chart_multitopic_v3")
+            self.assertGreater(len(result["query_plan"]["subqueries"]), 1)
+            self.assertEqual(result["query_plan"]["targeted_content_types"], ["author_method"])
+            self.assertTrue(
+                any(
+                    dict(item.get("metadata") or {}).get("content_type") == "author_method"
+                    for item in result["results"]
+                )
+            )
+
+
+def _bazi_chart() -> dict:
+    return {
+        "ok": True,
+        "action": "chart",
+        "result": {
+            "基本信息": {"性别": "男", "日主": "庚"},
+            "四柱": [
+                {"干支": "甲戌", "天干十神": "偏财", "藏干": [{"十神": "偏印"}]},
+                {"干支": "丁卯", "天干十神": "正官", "藏干": [{"十神": "正财"}]},
+                {"干支": "庚戌", "天干十神": "-", "藏干": [{"十神": "偏印"}]},
+                {"干支": "庚辰", "天干十神": "比肩", "藏干": [{"十神": "偏印"}]},
+            ],
+            "干支关系": ["卯戌六合", "辰戌相冲"],
+        },
+    }
 
 
 def _config(tmp: str) -> str:

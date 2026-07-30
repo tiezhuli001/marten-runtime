@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
 import re
+from dataclasses import dataclass
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 _SECTION_TITLES = (
@@ -17,18 +22,13 @@ _SECTION_TITLES = (
     "参考依据",
 )
 _YEAR_PATTERN = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
-_RELATION_PATTERN = re.compile(r"生|克|合|冲|刑|害|伏吟|引动")
-_BODY_PATTERN = re.compile(
-    r"头|胆|肝|眼|心|血|口|舌|牙|鼻|脾|胃|皮肤|肌肉|肺|胸|"
-    r"骨|肾|泌尿|妇科|生殖|腿|脚|手"
-)
 _EVENT_CATEGORIES = {
-    "education_or_work": ("学业", "升学", "考试", "工作", "事业", "入职", "转岗"),
+    "career_change": ("工作", "事业", "入职", "离职", "转岗", "升职", "降职"),
     "relationship": ("感情", "恋爱", "婚恋", "姻缘", "结婚", "婚姻", "对象"),
-    "self_health": ("本人健康", "本人身体", "检查", "治疗", "住院", "开刀", "手术"),
-    "parent_health": ("父亲", "母亲", "父母", "长辈"),
+    "self_health": ("本人健康", "本人身体", "受伤", "检查", "治疗", "住院", "开刀", "手术"),
+    "family": ("父亲", "母亲", "父母", "长辈", "六亲"),
+    "wealth_change": ("破财", "亏损", "获利", "得财", "奖金", "买房", "卖房"),
 }
-_MULTI_EVENT_MARKERS = ("或", "也可能", "以及", "且", "伴随", "同步")
 _GENERIC_EVENT_TEXTS = {
     "学业", "工作", "事业", "婚恋", "恋爱", "婚姻",
     "健康", "本人健康", "父亲", "母亲", "父母", "六亲",
@@ -37,90 +37,730 @@ _VAGUE_EVENT_PATTERN = re.compile(
     r"(?:工作平台|居住环境|工作环境|家中长辈事务|长辈|父母事务|家宅事务|"
     r"感情与事业|感情和事业|关系与工作|关系和工作)\s*$"
 )
-_VERIFIABLE_EVENT_PATTERN = re.compile(
-    r"升学|毕业|转学|求学|离家|转专业|考试|入职|入行|离职|辞职|失业|转岗|调动|"
-    r"换工作|换行业|换平台|换城市|换住处|切换|变化|调整|变动|职责|重排|创业|签约|"
-    r"晋升|降职|考核|搬迁|搬家|办公地点|买房|卖房|置业|恋爱|分手|订婚|结婚|离婚|生育|怀孕|波动|"
-    r"住院|手术|开刀|体检|检查|治疗|受伤|事故|确诊|收入|压力显著"
-)
-_DIRECT_FATHER_IDENTITY_PATTERN = re.compile(
-    r"[甲乙丙丁戊己庚辛壬癸](?:木|火|土|金|水)?(?:为|是|属)?偏财(?:到位)?[，,]?"
-    r"(?:可指|可作|即为|就是|代表|视为|作|指)父星[，,]?(?:且|并)?"
-)
-_DIRECT_MOTHER_IDENTITY_PATTERN = re.compile(
-    r"[甲乙丙丁戊己庚辛壬癸](?:木|火|土|金|水)?(?:为|是|属)?正印(?:到位)?[，,]?"
-    r"(?:可指|可作|即为|就是|代表|视为|作|指)母星[，,]?(?:且|并)?"
-)
 _UNSUPPORTED_RELATIONSHIP_RISK_PATTERN = re.compile(
     r"二婚.{0,16}(?:不高|不重|不大|不能|无法|不属|没有|不足|不支持)"
     r"|(?:不足以|不足|不能|无法|不宜|不作|未能|没有|不支持).{0,16}二婚"
     r"|外缘(?:风险)?.{0,16}(?:不高|不重|不大|不明显|不能|无法|没有|不足|不支持)"
     r"|(?:不足以|不足|不能|无法|不宜|不作|未能|没有|不支持).{0,16}外缘"
 )
+_NATAL_BRANCH_CLASHES = {
+    frozenset(pair) for pair in ("子午", "丑未", "寅申", "卯酉", "辰戌", "巳亥")
+}
+BAZI_VERIFICATION_CONFIDENCE_THRESHOLD = 70
+BaziVerificationCategory = Literal[
+    "relationship",
+    "self_health",
+    "family",
+    "career_change",
+    "wealth_change",
+]
+BaziViolationScope = Literal["verification", "section", "document"]
+BaziRepairStrategy = Literal[
+    "deterministic_normalize",
+    "verification_patch",
+    "section_patch",
+    "document_regenerate",
+]
+
+
+@dataclass(frozen=True)
+class BaziContractViolation:
+    code: str
+    scope: BaziViolationScope
+    repair_strategy: BaziRepairStrategy
+    message: str
+
+
+class BaziVerificationCandidateDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category: BaziVerificationCategory
+    year: int = Field(ge=1901, le=2100)
+    event: str = Field(
+        min_length=2,
+        max_length=80,
+        pattern=r"^[^或并、，,；;。|｜]+$",
+    )
+    confidence: int = Field(ge=0, le=100)
+    evidence_summary: str = Field(min_length=4, max_length=96)
+    discard_reason: str = Field(max_length=64)
+
+
+class BaziVerificationEventDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    year: int = Field(ge=1901, le=2100)
+    category: BaziVerificationCategory
+    event: str = Field(
+        min_length=2,
+        max_length=80,
+        pattern=r"^[^或并、，,；;。|｜]+$",
+    )
+    fact_ids: list[str] = Field(default_factory=list, max_length=12)
+    liunian_basis: str = Field(default="", max_length=600)
+    dayun_basis: str = Field(default="", max_length=600)
+    natal_basis: str = Field(default="", max_length=600)
+    shensha_basis: str = Field(default="", max_length=240)
+
+
+class BaziAnalysisDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chart: str = Field(min_length=4, max_length=2400)
+    pattern_and_use: str = Field(min_length=4, max_length=2400)
+    dayun: str = Field(min_length=4, max_length=2400)
+    health: str = Field(min_length=4, max_length=1800)
+    education: str = Field(min_length=4, max_length=1800)
+    career: str = Field(min_length=4, max_length=2000)
+    marriage: str = Field(min_length=4, max_length=2000)
+    kinship: str = Field(min_length=4, max_length=1800)
+    wealth: str = Field(min_length=4, max_length=1800)
+    verification_candidates: list[BaziVerificationCandidateDraft] = Field(
+        min_length=5,
+        max_length=10,
+    )
+    verification_events: list[BaziVerificationEventDraft] = Field(max_length=10)
+    references: list[str] = Field(min_length=1, max_length=8)
+
+
+class BaziVerificationEventsPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    verification_candidates: list[BaziVerificationCandidateDraft] = Field(
+        min_length=5,
+        max_length=10,
+    )
+    verification_events: list[BaziVerificationEventDraft] = Field(
+        max_length=10,
+    )
+
+
+def bazi_analysis_response_schema() -> dict[str, object]:
+    return _fact_referenced_response_schema(BaziAnalysisDraft.model_json_schema())
+
+
+def bazi_verification_events_response_schema() -> dict[str, object]:
+    return _fact_referenced_response_schema(BaziVerificationEventsPatch.model_json_schema())
+
+
+def _fact_referenced_response_schema(schema: dict[str, object]) -> dict[str, object]:
+    definitions = schema.get("$defs")
+    event_schema = (
+        definitions.get("BaziVerificationEventDraft")
+        if isinstance(definitions, dict)
+        else None
+    )
+    if not isinstance(event_schema, dict):
+        return schema
+    properties = event_schema.get("properties")
+    if not isinstance(properties, dict):
+        return schema
+    for field in ("liunian_basis", "dayun_basis", "natal_basis", "shensha_basis"):
+        properties.pop(field, None)
+    fact_ids_schema = properties.get("fact_ids")
+    if isinstance(fact_ids_schema, dict):
+        fact_ids_schema.pop("default", None)
+    required = [
+        str(field)
+        for field in event_schema.get("required") or []
+        if field not in {"liunian_basis", "dayun_basis", "natal_basis", "shensha_basis"}
+    ]
+    if "fact_ids" not in required:
+        required.append("fact_ids")
+    event_schema["required"] = required
+    return schema
+
+
+def bazi_verification_group_violations(
+    candidates: list[BaziVerificationCandidateDraft],
+    events: list[BaziVerificationEventDraft],
+) -> list[str]:
+    violations: list[str] = []
+    required_categories = {
+        "relationship",
+        "self_health",
+        "family",
+        "career_change",
+        "wealth_change",
+    }
+    candidate_categories = {candidate.category for candidate in candidates}
+    if missing := sorted(required_categories - candidate_categories):
+        violations.append(f"过三关候选表缺少栏目：{','.join(missing)}")
+    candidate_counts: dict[str, int] = {}
+    for candidate in candidates:
+        candidate_counts[candidate.category] = candidate_counts.get(candidate.category, 0) + 1
+    if any(count > 2 for count in candidate_counts.values()):
+        violations.append("过三关每个候选栏目最多保留两条候选记录")
+
+    candidate_keys = [
+        (candidate.category, candidate.year, candidate.event.strip())
+        for candidate in candidates
+    ]
+    if len(candidate_keys) != len(set(candidate_keys)):
+        violations.append("过三关候选表包含重复的栏目年份事件")
+
+    event_counts: dict[str, int] = {}
+    for event in events:
+        event_counts[event.category] = event_counts.get(event.category, 0) + 1
+    if any(count > 2 for count in event_counts.values()):
+        violations.append("过三关同一候选栏目最多选择两条事件")
+
+    event_key_list = [
+        (event.category, event.year, event.event.strip())
+        for event in events
+    ]
+    event_keys = set(event_key_list)
+    if len(event_key_list) != len(event_keys):
+        violations.append("过三关最终事件包含重复的栏目年份事件")
+    candidate_by_key = {
+        (candidate.category, candidate.year, candidate.event.strip()): candidate
+        for candidate in candidates
+    }
+    if not event_keys.issubset(candidate_by_key):
+        violations.append("过三关最终事件必须原样来自候选表")
+
+    for candidate in candidates:
+        key = (candidate.category, candidate.year, candidate.event.strip())
+        selected = key in event_keys
+        reason = candidate.discard_reason.strip()
+        if selected and reason:
+            violations.append("过三关已选候选不得填写舍弃理由")
+            break
+        if not selected and not reason:
+            violations.append("过三关未选候选必须填写舍弃理由")
+            break
+
+    for category in required_categories:
+        category_candidates = [
+            candidate for candidate in candidates if candidate.category == category
+        ]
+        selected = [
+            candidate
+            for candidate in category_candidates
+            if (candidate.category, candidate.year, candidate.event.strip()) in event_keys
+        ]
+        unselected = [
+            candidate
+            for candidate in category_candidates
+            if (candidate.category, candidate.year, candidate.event.strip()) not in event_keys
+        ]
+        eligible = [
+            candidate
+            for candidate in category_candidates
+            if candidate.confidence >= BAZI_VERIFICATION_CONFIDENCE_THRESHOLD
+        ]
+        if eligible and not selected:
+            violations.append(
+                f"过三关 {category} 栏目存在可信度达标候选但未选择事件"
+            )
+        if not eligible and selected:
+            violations.append(
+                f"过三关 {category} 栏目候选均低于可信度阈值，不应选择事件"
+            )
+        if any(
+            item.confidence < BAZI_VERIFICATION_CONFIDENCE_THRESHOLD
+            for item in selected
+        ):
+            violations.append(
+                f"过三关 {category} 栏目选择了低于可信度阈值的候选"
+            )
+        eligible_unselected = [item for item in unselected if item in eligible]
+        if selected and eligible_unselected and min(
+            item.confidence for item in selected
+        ) < max(item.confidence for item in eligible_unselected):
+            violations.append(f"过三关 {category} 栏目未选择可信度最高的一至两条候选")
+    return list(dict.fromkeys(violations))
+
+
+def normalize_bazi_verification_candidate_reasons(
+    candidates: list[BaziVerificationCandidateDraft],
+    events: list[BaziVerificationEventDraft],
+) -> list[BaziVerificationCandidateDraft]:
+    selected_keys = {
+        (event.category, event.year, event.event.strip())
+        for event in events
+    }
+    selected_categories = {event.category for event in events}
+    normalized: list[BaziVerificationCandidateDraft] = []
+    for candidate in candidates:
+        key = (candidate.category, candidate.year, candidate.event.strip())
+        if key in selected_keys:
+            reason = ""
+        elif candidate.confidence < BAZI_VERIFICATION_CONFIDENCE_THRESHOLD:
+            reason = "可信度低于入选阈值"
+        elif candidate.discard_reason.strip():
+            reason = candidate.discard_reason.strip()
+        elif candidate.category in selected_categories:
+            reason = "同列可信度排序较低"
+        else:
+            reason = "该列三层证据不足以形成单一事实"
+        normalized.append(
+            candidate.model_copy(
+                update={"discard_reason": reason}
+            )
+        )
+    return normalized
+
+
+def bind_bazi_verification_facts(
+    draft: BaziAnalysisDraft,
+    fact_registry: dict[str, dict[str, object]],
+) -> tuple[BaziAnalysisDraft, tuple[BaziContractViolation, ...]]:
+    if not fact_registry:
+        return draft, ()
+    bound_events: list[BaziVerificationEventDraft] = []
+    violations: list[BaziContractViolation] = []
+    for event in draft.verification_events:
+        selected: list[dict[str, object]] = []
+        valid_ids: list[str] = []
+        for fact_id in dict.fromkeys(event.fact_ids):
+            fact = fact_registry.get(str(fact_id))
+            if not isinstance(fact, dict) or not _fact_applies_to_year(fact, event.year):
+                continue
+            selected.append(fact)
+            valid_ids.append(str(fact_id))
+        by_layer = {
+            layer: [
+                str(fact.get("text") or "").strip()
+                for fact in selected
+                if fact.get("layer") == layer and str(fact.get("text") or "").strip()
+            ]
+            for layer in ("liunian", "dayun", "natal", "shensha")
+        }
+        has_supporting_natal_fact = any(
+            fact.get("layer") == "natal" and fact.get("kind") != "pillars"
+            for fact in selected
+        )
+        label = f"{event.year}年｜{event.event.strip()}"
+        missing_layers = [
+            layer
+            for layer in ("liunian", "dayun", "natal")
+            if not by_layer[layer]
+            or (layer == "natal" and not has_supporting_natal_fact)
+        ]
+        if missing_layers:
+            violations.append(
+                BaziContractViolation(
+                    code="verification_missing_fact_layer",
+                    scope="verification",
+                    repair_strategy="verification_patch",
+                    message=(
+                        f"过三关事件 {label} 缺少确定性事实层："
+                        f"{','.join(missing_layers)}"
+                    ),
+                )
+            )
+        if event.category == "relationship" and "natal.pillar.2" not in valid_ids:
+            violations.append(
+                BaziContractViolation(
+                    code="verification_relationship_spouse_palace_required",
+                    scope="verification",
+                    repair_strategy="verification_patch",
+                    message=(
+                        f"过三关事件 {label} 缺少夫妻宫确定性事实："
+                        "natal.pillar.2"
+                    ),
+                )
+            )
+        bound_events.append(
+            event.model_copy(
+                update={
+                    "fact_ids": valid_ids,
+                    "liunian_basis": _join_fact_text(by_layer["liunian"]),
+                    "dayun_basis": _join_fact_text(by_layer["dayun"]),
+                    "natal_basis": _join_fact_text(by_layer["natal"]),
+                    "shensha_basis": "、".join(by_layer["shensha"]),
+                }
+            )
+        )
+    return (
+        draft.model_copy(update={"verification_events": bound_events}),
+        tuple(violations),
+    )
+
+
+def _fact_applies_to_year(fact: dict[str, object], year: int) -> bool:
+    fact_year = fact.get("year")
+    if isinstance(fact_year, int) and not isinstance(fact_year, bool):
+        return fact_year == year
+    year_start = fact.get("year_start")
+    year_end = fact.get("year_end")
+    if isinstance(year_start, int) and isinstance(year_end, int):
+        return year_start <= year <= year_end
+    return True
+
+
+def _join_fact_text(items: list[str], *, limit: int = 4) -> str:
+    return "；".join(list(dict.fromkeys(items))[:limit])
+
+
+def classify_bazi_contract_violations(
+    messages: list[str] | tuple[str, ...],
+) -> tuple[BaziContractViolation, ...]:
+    findings: list[BaziContractViolation] = []
+    for message in messages:
+        if message == "过三关流年神煞与已计算年份不一致":
+            findings.append(
+                BaziContractViolation(
+                    code="verification_invalid_shensha",
+                    scope="verification",
+                    repair_strategy="deterministic_normalize",
+                    message=message,
+                )
+            )
+        elif message.startswith("过三关"):
+            findings.append(
+                BaziContractViolation(
+                    code="verification_contract_violation",
+                    scope="verification",
+                    repair_strategy="verification_patch",
+                    message=message,
+                )
+            )
+        elif message.startswith("正文") or "栏" in message:
+            findings.append(
+                BaziContractViolation(
+                    code="section_contract_violation",
+                    scope="section",
+                    repair_strategy="section_patch",
+                    message=message,
+                )
+            )
+        else:
+            findings.append(
+                BaziContractViolation(
+                    code="document_contract_violation",
+                    scope="document",
+                    repair_strategy="document_regenerate",
+                    message=message,
+                )
+            )
+    return tuple(findings)
+
+
+def deterministic_rejected_verification_event_labels(
+    events: list[BaziVerificationEventDraft],
+) -> tuple[str, ...]:
+    return tuple(
+        violation.split("：", maxsplit=1)[0].removeprefix("过三关事件 ")
+        for violation in deterministic_verification_event_violations(events)
+    )
+
+
+def deterministic_verification_event_violations(
+    events: list[BaziVerificationEventDraft],
+) -> tuple[str, ...]:
+    violations: list[str] = []
+    for event in events:
+        rendered = (
+            f"{event.year}年｜{event.event.strip()}｜"
+            f"流年：{event.liunian_basis}；大运：{event.dayun_basis}；"
+            f"原局：{event.natal_basis}；神煞辅助：{event.shensha_basis}"
+        )
+        label = f"{event.year}年｜{event.event.strip()}"
+        reasons: list[str] = []
+        if _has_generic_verification_event(rendered):
+            reasons.append("事件字段只是栏目名称或模糊主题")
+        if _has_multi_topic_verification_event(rendered):
+            reasons.append("事件字段混入多个主题")
+        if _has_dangling_verification_event(rendered):
+            reasons.append("事件字段没有完整结果")
+        if _uses_branch_relation_on_day_stem(rendered):
+            reasons.append("依据把地支关系误写成与日干直接作用")
+        if reasons:
+            violations.append(f"过三关事件 {label}：{'、'.join(reasons)}")
+    return tuple(violations)
+
+
+def bazi_semantic_review_response_schema() -> dict[str, object]:
+    return {
+        "type": "object",
+        "properties": {
+            "passed": {"type": "boolean"},
+            "violations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "event": {"type": "string"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["event", "reason"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["passed", "violations"],
+        "additionalProperties": False,
+    }
+
+
+def parse_bazi_analysis_draft(text: str) -> BaziAnalysisDraft | None:
+    raw = str(text or "").strip()
+    unfenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I)
+    decoder = json.JSONDecoder()
+    candidates = [raw, unfenced]
+    candidates.extend(raw[index:] for index, char in enumerate(raw) if char == "{")
+    for candidate in candidates:
+        try:
+            payload, _ = decoder.raw_decode(candidate.lstrip())
+            return _normalize_bazi_analysis_draft(
+                BaziAnalysisDraft.model_validate(payload)
+            )
+        except (TypeError, ValueError, ValidationError):
+            continue
+    return None
+
+
+def parse_bazi_verification_events_patch(
+    text: str,
+) -> BaziVerificationEventsPatch | None:
+    raw = str(text or "").strip()
+    unfenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I)
+    decoder = json.JSONDecoder()
+    candidates = [raw, unfenced]
+    candidates.extend(raw[index:] for index, char in enumerate(raw) if char == "{")
+    for candidate in candidates:
+        try:
+            payload, _ = decoder.raw_decode(candidate.lstrip())
+            return _normalize_bazi_verification_events_patch(
+                BaziVerificationEventsPatch.model_validate(payload)
+            )
+        except (TypeError, ValueError, ValidationError):
+            continue
+    return None
+
+
+def _normalize_bazi_analysis_draft(draft: BaziAnalysisDraft) -> BaziAnalysisDraft:
+    return draft.model_copy(
+        update={
+            "verification_candidates": [
+                candidate.model_copy(
+                    update={
+                        "event": _normalize_verification_event_for_year(
+                            candidate.event,
+                            candidate.year,
+                        )
+                    }
+                )
+                for candidate in draft.verification_candidates
+            ],
+            "verification_events": [
+                event.model_copy(
+                    update={
+                        "event": _normalize_verification_event_for_year(
+                            event.event,
+                            event.year,
+                        )
+                    }
+                )
+                for event in draft.verification_events
+            ],
+        }
+    )
+
+
+def _normalize_bazi_verification_events_patch(
+    patch: BaziVerificationEventsPatch,
+) -> BaziVerificationEventsPatch:
+    return patch.model_copy(
+        update={
+            "verification_candidates": [
+                candidate.model_copy(
+                    update={
+                        "event": _normalize_verification_event_for_year(
+                            candidate.event,
+                            candidate.year,
+                        )
+                    }
+                )
+                for candidate in patch.verification_candidates
+            ],
+            "verification_events": [
+                event.model_copy(
+                    update={
+                        "event": _normalize_verification_event_for_year(
+                            event.event,
+                            event.year,
+                        )
+                    }
+                )
+                for event in patch.verification_events
+            ],
+        }
+    )
+
+
+def _normalize_verification_event_for_year(text: str, year: int) -> str:
+    original = normalize_verification_event_text(text)
+    normalized = re.sub(rf"^{year}年\s*", "", original).strip()
+    normalized = re.sub(r"(?:且)?结果落定$", "", normalized).strip()
+    normalized = normalize_verification_event_text(normalized)
+    return normalized if len(normalized) >= 2 else original
+
+
+def render_bazi_analysis_draft(draft: BaziAnalysisDraft) -> str:
+    section_bodies = (
+        ("一、命盘", draft.chart),
+        ("二、原局格局喜用", draft.pattern_and_use),
+        ("三、大运", draft.dayun),
+        ("四、健康注意", draft.health),
+        ("五、学历", draft.education),
+        ("六、事业", draft.career),
+        ("七、婚姻", draft.marriage),
+        ("八、六亲", draft.kinship),
+        ("九、财富等级", draft.wealth),
+    )
+    rendered = [f"## {title}\n{str(body).strip()}" for title, body in section_bodies]
+    event_lines: list[str] = []
+    category_order = {
+        "relationship": 0,
+        "self_health": 1,
+        "family": 2,
+        "career_change": 3,
+        "wealth_change": 4,
+    }
+    ordered_events = sorted(
+        enumerate(draft.verification_events),
+        key=lambda item: (
+            item[1].year,
+            category_order[item[1].category],
+            item[0],
+        ),
+    )
+    for _, event in ordered_events:
+        evidence = (
+            f"流年：{_clean_evidence_clause(event.liunian_basis)}；"
+            f"大运：{_clean_evidence_clause(event.dayun_basis)}；"
+            f"原局：{_clean_evidence_clause(event.natal_basis)}"
+        )
+        if event.shensha_basis.strip():
+            evidence = (
+                f"{evidence}；神煞辅助："
+                f"{_clean_evidence_clause(event.shensha_basis)}"
+            )
+        event_lines.append(f"- {event.year}年｜{event.event.strip()}｜{evidence}。")
+    rendered.append("## 十、过三关\n" + "\n".join(event_lines))
+    references = "\n".join(
+        f"- {str(reference).strip()}"
+        for reference in draft.references
+        if str(reference).strip()
+    )
+    rendered.append(f"## 十一、参考依据\n{references}")
+    return "\n\n".join(rendered).strip()
+
+
+def _clean_evidence_clause(text: str) -> str:
+    return str(text or "").strip().rstrip("，,；;。 ")
+
+
+@dataclass(frozen=True)
+class BaziSemanticReview:
+    passed: bool
+    violations: tuple[str, ...] = ()
+    rejected_events: tuple[str, ...] = ()
+
+
+def parse_bazi_semantic_review(text: str) -> BaziSemanticReview:
+    raw = str(text or "").strip()
+    unfenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I)
+    decoder = json.JSONDecoder()
+    candidates = [raw, unfenced]
+    candidates.extend(raw[index:] for index, char in enumerate(raw) if char == "{")
+    for candidate in candidates:
+        try:
+            payload, _ = decoder.raw_decode(candidate.lstrip())
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict) or not isinstance(payload.get("passed"), bool):
+            continue
+        violations: list[str] = []
+        rejected_events: list[str] = []
+        for item in payload.get("violations", []):
+            if isinstance(item, dict):
+                event = str(item.get("event") or "").strip()
+                reason = str(item.get("reason") or "").strip()
+                detail = f"{event}：{reason}" if event and reason else event or reason
+                if event:
+                    rejected_events.append(event)
+            else:
+                detail = str(item).strip()
+            if detail:
+                violations.append(detail)
+        normalized_violations = tuple(violations)
+        if payload["passed"] and normalized_violations:
+            return BaziSemanticReview(
+                False,
+                normalized_violations,
+                tuple(rejected_events),
+            )
+        return BaziSemanticReview(
+            bool(payload["passed"]),
+            normalized_violations,
+            tuple(rejected_events),
+        )
+    return BaziSemanticReview(False, ("语义审查响应无法解析",))
+
+
+def prune_semantically_rejected_verification_events(
+    draft: BaziAnalysisDraft,
+    rejected_event_labels: tuple[str, ...],
+) -> BaziAnalysisDraft | None:
+    unique_labels = tuple(dict.fromkeys(rejected_event_labels))
+    if not unique_labels:
+        return None
+    rejected_keys: set[tuple[BaziVerificationCategory, int, str]] = set()
+    for label in unique_labels:
+        matches = [
+            (event.category, event.year, event.event.strip())
+            for event in draft.verification_events
+            if (
+                f"{event.year}年｜{event.event.strip()}" in label
+                or f"{event.year}｜{event.event.strip()}" in label
+            )
+        ]
+        if len(matches) != 1:
+            return None
+        rejected_keys.add(matches[0])
+    if len(rejected_keys) != len(unique_labels):
+        return None
+    retained_events = [
+        event
+        for event in draft.verification_events
+        if (event.category, event.year, event.event.strip()) not in rejected_keys
+    ]
+    normalized_candidates = normalize_bazi_verification_candidate_reasons(
+        draft.verification_candidates,
+        retained_events,
+    )
+    if bazi_verification_group_violations(normalized_candidates, retained_events):
+        return None
+    return draft.model_copy(
+        update={
+            "verification_candidates": normalized_candidates,
+            "verification_events": retained_events,
+        }
+    )
 
 
 def normalize_bazi_timing_contract_text(text: str) -> str:
     normalized_lines: list[str] = []
-    current_section: str | None = None
     for raw_line in str(text or "").splitlines():
         line = raw_line
-        heading = next(
-            (
-                section
-                for section in _SECTION_TITLES
-                if _has_bazi_section_heading(line, section)
-            ),
-            None,
-        )
-        if heading is not None:
-            current_section = heading
-        if current_section == "婚姻" and (
-            _UNSUPPORTED_RELATIONSHIP_RISK_PATTERN.search(line)
-            or "二婚" in line
-            or "外缘" in line
-        ):
-            continue
-        if current_section == "过三关" and _YEAR_PATTERN.search(line):
-            parts = re.split(r"[｜|]", line, maxsplit=2)
-            if len(parts) >= 2:
-                parts[1] = _concrete_verification_event_text(parts[1])
-                line = "｜".join(parts)
-        if re.search(r"流年.{0,40}偏财.{0,16}父星", line):
-            line = _DIRECT_FATHER_IDENTITY_PATTERN.sub("", line)
-        if re.search(r"流年.{0,40}正印.{0,16}母星", line):
-            line = _DIRECT_MOTHER_IDENTITY_PATTERN.sub("", line)
         line = line.replace("引出", "引动").replace("发动", "引动")
         line = re.sub(r"[，,]\s*(?=[；;。])", "", line)
         line = re.sub(r"([；;])\s*[，,]", r"\1", line)
         normalized_lines.append(line)
-    return _ensure_bounded_parent_health("\n".join(normalized_lines).strip())
+    return "\n".join(normalized_lines).strip()
 
 
-def _ensure_bounded_parent_health(text: str) -> str:
-    kinship = section_text(text, "六亲")
-    if not kinship:
-        return text
-    missing = [
-        relative
-        for relative in ("父亲", "母亲")
-        if not _has_relative_health_timing(kinship, relative)
-    ]
-    if not missing:
-        return text
-    span = _section_span(text, "六亲")
-    if span is None:
-        return text
-    additions = "\n".join(
-        f"- {relative}：本轮未形成可靠高信号健康应期。"
-        for relative in missing
-    )
-    replacement = f"{text[span[0]:span[1]].rstrip()}\n{additions}\n\n"
-    return f"{text[:span[0]]}{replacement}{text[span[1]:].lstrip()}".strip()
-
-
-def bazi_timing_contract_violations(text: str) -> list[str]:
+def bazi_timing_contract_violations(
+    text: str,
+    *,
+    expected_shensha: tuple[str, ...] = (),
+    expected_shensha_years: tuple[tuple[int, str], ...] = (),
+) -> list[str]:
     marriage = section_text(text, "婚姻")
-    health = section_text(text, "健康注意")
     kinship = section_text(text, "六亲")
     wealth = section_text(text, "财富等级")
     verification = section_text(text, "过三关")
@@ -141,23 +781,36 @@ def bazi_timing_contract_violations(text: str) -> list[str]:
         violations.append("婚姻栏在无明确风险结论时仍讨论外缘")
     if _uses_year_branch_combine_as_marriage_signal(marriage):
         violations.append("婚姻栏把只合年支误作夫妻宫信号")
-    if not _has_health_timing(health):
-        violations.append("健康栏缺少具体年份、身体部位、干支作用和检查治疗类事件")
-    for relative in ("父亲", "母亲"):
-        if not _has_relative_health_timing(kinship, relative):
-            violations.append(f"六亲栏缺少{relative}独立的年份、部位和岁运触发关系")
+    if _denies_natal_spouse_palace_clash(text, marriage):
+        violations.append("婚姻栏否认原局已经存在的夫妻宫相冲")
     if re.search(r"流年.{0,24}(?:偏财.{0,12}父星|正印.{0,12}母星)", kinship):
         violations.append("六亲栏按流年自身十神直接指定父母身份")
     if _has_generic_verification_event(verification):
         violations.append("过三关包含栏目名称，缺少可核验的具体事件")
+    if _has_unstructured_verification_event(verification):
+        violations.append("过三关缺少年份、单一事件与事实依据的分隔结构")
     if _has_multi_topic_verification_event(verification):
         violations.append("过三关同一行混入多个事件主题")
     if _has_dangling_verification_event(verification):
         violations.append("过三关包含未完成的事件描述")
+    if _uses_branch_relation_on_day_stem(verification):
+        violations.append("过三关将地支关系误写成与日干直接作用")
+    invalid_shensha_sections = [
+        section
+        for section in _SECTION_TITLES
+        if _has_invalid_yearly_shensha_evidence(
+            section_text(text, section),
+            expected_shensha_years,
+        )
+    ]
+    if invalid_shensha_sections == ["过三关"]:
+        violations.append("过三关流年神煞与已计算年份不一致")
+    elif invalid_shensha_sections:
+        violations.append("正文中的流年神煞与已计算年份不一致")
     wealth_has_projection = bool(
-        re.search(r"[×*]|年均可积累|累计.{0,8}\d+\s*万", wealth)
+        re.search(r"\d+(?:\.\d+)?\s*[×*]\s*\d+(?:\.\d+)?|年均可积累|累计.{0,8}\d+\s*万", wealth)
         or re.search(r"\d+(?:\.\d+)?\s*(?:[-~—至到]\s*\d+(?:\.\d+)?\s*)?万(?:元)?", wealth)
-        and re.search(r"预计|估算|推算|可达|总资产|净积累|资产等级|普通积累|小康|小富|中富", wealth)
+        and re.search(r"预计|估算|推算|可达|收入能力|总资产|净积累|资产等级|普通积累|小康|小富|中富", wealth)
     )
     wealth_has_real_baseline = _has_real_wealth_baseline(wealth)
     wealth_has_bazi_estimate = _has_bazi_wealth_estimate(wealth)
@@ -208,7 +861,10 @@ def _has_bazi_wealth_estimate(text: str) -> bool:
         0,
         min(
             9,
-            values["path"] + values["capacity"] + values["dayun"] - values["constraint"],
+            values["path"]
+            + values["capacity"]
+            + values["dayun"]
+            - values["constraint"],
         ),
     )
     if values["score"] != calculated:
@@ -225,10 +881,6 @@ def _has_bazi_wealth_estimate(text: str) -> bool:
         r"(?P<high>\d+)\s*万",
         normalized,
     )
-    has_income_range = bool(
-        range_match
-        and (int(range_match.group("low")), int(range_match.group("high"))) == expected_range
-    )
     visible_ranges = [
         (int(low), int(high))
         for low, high in re.findall(
@@ -236,11 +888,14 @@ def _has_bazi_wealth_estimate(text: str) -> bool:
             normalized,
         )
     ]
-    ranges_are_consistent = bool(visible_ranges) and all(
-        item == expected_range for item in visible_ranges
+    return bool(
+        range_match
+        and (int(range_match.group("low")), int(range_match.group("high")))
+        == expected_range
+        and visible_ranges
+        and all(item == expected_range for item in visible_ranges)
+        and re.search(r"不等同(?:于)?现实收入|不是现实收入事实", normalized)
     )
-    has_boundary = bool(re.search(r"不等同(?:于)?现实收入|不是现实收入事实", normalized))
-    return has_income_range and ranges_are_consistent and has_boundary
 
 
 def past_event_timing_categories(text: str) -> int:
@@ -257,13 +912,13 @@ def past_event_timing_categories(text: str) -> int:
         if event_text in _GENERIC_EVENT_TEXTS:
             continue
         event_text = normalize_verification_event_text(event_text)
-        if any(marker in event_text for marker in _EVENT_CATEGORIES["parent_health"]):
-            matched = ["parent_health"]
+        if any(marker in event_text for marker in _EVENT_CATEGORIES["family"]):
+            matched = ["family"]
         else:
             matched = [
                 category
                 for category, markers in _EVENT_CATEGORIES.items()
-                if category != "parent_health"
+                if category != "family"
                 and any(marker in event_text for marker in markers)
             ]
         if len(matched) == 1:
@@ -281,9 +936,15 @@ def _has_generic_verification_event(text: str) -> bool:
             if (
                 event in _GENERIC_EVENT_TEXTS
                 or _VAGUE_EVENT_PATTERN.search(event)
-                or not _VERIFIABLE_EVENT_PATTERN.search(event)
             ):
                 return True
+    return False
+
+
+def _has_unstructured_verification_event(text: str) -> bool:
+    for line in str(text or "").splitlines():
+        if _YEAR_PATTERN.search(line) and line.count("｜") < 2 and line.count("|") < 2:
+            return True
     return False
 
 
@@ -295,13 +956,21 @@ def _has_multi_topic_verification_event(text: str) -> bool:
         if len(parts) < 2:
             continue
         event = parts[1].strip()
+        if any(
+            marker in event
+            for marker in ("或", "、", "，", ",", "以及", "同时", "同步")
+        ):
+            return True
         matched_categories = {
             category
             for category, markers in _EVENT_CATEGORIES.items()
             if any(marker in event for marker in markers)
         }
-        if "parent_health" in matched_categories:
-            matched_categories.discard("self_health")
+        if "family" in matched_categories:
+            # Health, career, and wealth terms describe the named relative when
+            # the event has an explicit family subject; they are not additional
+            # events about the chart owner.
+            matched_categories = {"family"}
         if len(matched_categories) > 1:
             return True
     return False
@@ -309,77 +978,9 @@ def _has_multi_topic_verification_event(text: str) -> bool:
 
 def normalize_verification_event_text(text: str) -> str:
     normalized = str(text or "").strip()
-    positions = [
-        position
-        for marker in _MULTI_EVENT_MARKERS
-        if (position := normalized.find(marker)) >= 0
-    ]
-    if positions:
-        normalized = normalized[: min(positions)]
     normalized = normalized.rstrip("，、；;。 ")
     normalized = re.sub(r"(?:但|并|且|和|与|或|及)+$", "", normalized).rstrip("，、；;。 ")
-    replacements = {
-        "感情": "感情关系出现明显变化",
-        "关系": "关系状态出现明显变化",
-        "学业": "学业阶段出现明显变化",
-        "工作": "工作方向出现明显变化",
-        "工作平台": "工作平台发生明显变化",
-        "工作环境": "工作环境发生明显变化",
-        "职责加重": "工作职责发生明显变化",
-        "事业": "事业方向出现明显变化",
-        "婚恋": "婚恋关系出现明显变化",
-        "恋爱": "恋爱关系出现明显变化",
-        "居住环境": "居住环境发生明显变化",
-        "家宅事务": "家宅发生明显变化",
-        "家中长辈事务": "长辈健康出现需核验事项",
-        "长辈": "长辈健康出现需核验事项",
-        "父母事务": "父母健康出现需核验事项",
-        "父亲": "父亲健康出现需核验事项",
-        "母亲": "母亲健康出现需核验事项",
-        "父母": "父母健康出现需核验事项",
-        "本人健康": "本人健康出现需核验事项",
-    }
-    return replacements.get(normalized, normalized)
-
-
-def _concrete_verification_event_text(text: str) -> str:
-    normalized = normalize_verification_event_text(text)
-    matched_categories = {
-        category
-        for category, markers in _EVENT_CATEGORIES.items()
-        if any(marker in normalized for marker in markers)
-    }
-    if "parent_health" in matched_categories:
-        matched_categories.discard("self_health")
-    if len(matched_categories) > 1:
-        category_fallbacks = {
-            "education_or_work": "岗位调整",
-            "relationship": "恋爱关系变化",
-            "self_health": "体检",
-            "parent_health": "父母健康检查",
-        }
-        category_positions = {
-            category: min(
-                normalized.find(marker)
-                for marker in _EVENT_CATEGORIES[category]
-                if marker in normalized
-            )
-            for category in matched_categories
-        }
-        return category_fallbacks[min(category_positions, key=category_positions.get)]
-    if _VERIFIABLE_EVENT_PATTERN.search(normalized):
-        return normalized
-    category_fallbacks = (
-        (("学", "考", "专业", "学校"), "升学"),
-        (("工作", "事业", "岗位", "职责", "职业", "平台"), "岗位调整"),
-        (("感情", "恋爱", "婚", "关系", "对象"), "恋爱关系变化"),
-        (("健康", "身体", "医院", "病", "伤", "炎症"), "体检"),
-        (("家", "住", "房", "城市", "地点", "环境"), "搬家"),
-    )
-    for markers, fallback in category_fallbacks:
-        if any(marker in normalized for marker in markers):
-            return fallback
-    return "生活安排调整"
+    return normalized
 
 
 def _has_dangling_verification_event(text: str) -> bool:
@@ -390,6 +991,22 @@ def _has_dangling_verification_event(text: str) -> bool:
         if len(parts) >= 2 and re.search(r"(?:但|并|且|和|与|或|及)\s*$", parts[1].strip()):
             return True
     return False
+
+
+def _uses_branch_relation_on_day_stem(text: str) -> bool:
+    value = str(text or "")
+    return bool(
+        re.search(
+            r"(?:流年支|大运支|年支|月支|日支|时支|地支)"
+            r"[子丑寅卯辰巳午未申酉戌亥]?\s*(?:直接)?(?:合|冲|刑|害|破)日(?:干|主)",
+            value,
+        )
+        or re.search(
+            r"(?:六合|相冲|相刑|自刑|相害|相破)[^，,；;。｜|\n]{0,12}"
+            r"(?:直接|并)?(?:合|冲|刑|害|破)日(?:干|主)",
+            value,
+        )
+    )
 
 
 def section_text(text: str, section: str) -> str:
@@ -408,8 +1025,13 @@ def section_text(text: str, section: str) -> str:
 
 def bazi_violation_sections(violations: list[str]) -> list[str]:
     mapping = (
+        ("命盘栏", "命盘"),
+        ("原局格局喜用栏", "原局格局喜用"),
+        ("大运栏", "大运"),
         ("婚姻栏", "婚姻"),
         ("健康栏", "健康注意"),
+        ("学历栏", "学历"),
+        ("事业栏", "事业"),
         ("六亲栏", "六亲"),
         ("财富栏", "财富等级"),
         ("过三关", "过三关"),
@@ -512,6 +1134,11 @@ def _has_invalid_peach_blossom_year(text: str, marriage: str) -> bool:
 
 
 def _peach_blossom_claimed_years(clause: str) -> list[str]:
+    if clause.count("桃花") == 1 and re.search(
+        r"(?:不|非|未|不能|不作|不算|并非).{0,12}桃花(?:年|年份|应期)?",
+        clause,
+    ):
+        return []
     if re.search(r"桃花(?:年|年份|应期)", clause):
         return _YEAR_PATTERN.findall(clause)
     years: list[str] = []
@@ -531,31 +1158,42 @@ def _uses_year_branch_combine_as_marriage_signal(marriage: str) -> bool:
     return False
 
 
-def _has_health_timing(text: str) -> bool:
+def _denies_natal_spouse_palace_clash(text: str, marriage: str) -> bool:
+    branches = _natal_branches(text)
+    if len(branches) != 4:
+        return False
+    day_branch = branches[2]
+    has_clash = any(
+        frozenset((day_branch, branch)) in _NATAL_BRANCH_CLASHES
+        for index, branch in enumerate(branches)
+        if index != 2
+    )
+    if not has_clash:
+        return False
     return bool(
-        _YEAR_PATTERN.search(text)
-        and _BODY_PATTERN.search(text)
-        and _RELATION_PATTERN.search(text)
-        and re.search(r"检查|治疗|住院|开刀|手术|体检", text)
-        and re.search(r"住院|开刀|手术", text)
+        re.search(
+            r"(?:日支|夫妻宫).{0,20}(?:不是|并非|不属|没有|无|未见).{0,20}(?:冲|重冲)",
+            marriage,
+        )
     )
 
 
-def _has_relative_health_timing(text: str, relative: str) -> bool:
-    concrete = any(
-        _YEAR_PATTERN.search(line)
-        and relative in line
-        and _BODY_PATTERN.search(line)
-        and _RELATION_PATTERN.search(line)
-        for line in text.splitlines()
-    )
-    bounded = any(
-        relative in line
-        and re.search(r"未形成|缺少", line)
-        and re.search(r"高信号|可靠", line)
-        for line in text.splitlines()
-    )
-    return concrete or bounded
+def _has_invalid_yearly_shensha_evidence(
+    text: str,
+    expected: tuple[tuple[int, str], ...],
+) -> bool:
+    if not expected:
+        return False
+    expected_pairs = set(expected)
+    names = {name for _, name in expected}
+    for line in str(text or "").splitlines():
+        years = {int(year) for year in _YEAR_PATTERN.findall(line)}
+        mentioned = {name for name in names if name in line}
+        if not years or not mentioned:
+            continue
+        if not any((year, name) in expected_pairs for year in years for name in mentioned):
+            return True
+    return False
 
 
 def _natal_branches(text: str) -> list[str]:

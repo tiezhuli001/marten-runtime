@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from marten_runtime.runtime.llm_client import (
@@ -12,6 +13,7 @@ from marten_runtime.runtime.capabilities import (
     render_capability_catalog,
 )
 from marten_runtime.runtime.llm_message_support import (
+    build_bazi_timing_fact_registry,
     build_openai_chat_payload,
     build_openai_messages,
 )
@@ -20,6 +22,59 @@ from marten_runtime.runtime.loop import _build_contract_repair_request
 
 
 class LLMMessageSupportTests(unittest.TestCase):
+    def test_bazi_timing_fact_registry_uses_stable_layers_and_years(self) -> None:
+        history = [
+            ToolExchange(
+                tool_name="bazi",
+                tool_payload={"action": "chart", "gender": "male"},
+                tool_result={
+                    "ok": True,
+                    "action": "chart",
+                    "result": {
+                        "四柱": [
+                            {"干支": "甲戌"},
+                            {"干支": "己巳"},
+                            {"干支": "丁巳"},
+                            {"干支": "甲辰"},
+                        ]
+                    },
+                },
+            ),
+            ToolExchange(
+                tool_name="bazi",
+                tool_payload={"action": "dayun", "gender": "male"},
+                tool_result={
+                    "ok": True,
+                    "action": "dayun",
+                    "result": {
+                        "大运列表": [
+                            {
+                                "起运年份": 2017,
+                                "干支": "壬申",
+                                "十神": "正官",
+                                "流年列表": [
+                                    {
+                                        "流年": 2022,
+                                        "年龄": 29,
+                                        "干支": "壬寅",
+                                        "神煞": ["血刃"],
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                },
+            ),
+        ]
+
+        registry = build_bazi_timing_fact_registry(history)
+
+        self.assertIn("natal.pillars", registry)
+        self.assertIn("dayun.2017.identity", registry)
+        self.assertEqual(registry["dayun.2017.identity"]["year_start"], 2022)
+        self.assertEqual(registry["year.2022.identity"]["year"], 2022)
+        self.assertEqual(registry["year.2022.shensha.0"]["text"], "血刃")
+
     def _extract_ledger_blocks(self, messages: list[dict[str, object]]) -> list[str]:
         blocks: list[str] = []
         for item in messages:
@@ -129,7 +184,7 @@ class LLMMessageSupportTests(unittest.TestCase):
         self.assertEqual(len(tool_results), 1)
         self.assertEqual(
             tool_results[0]["content"],
-            '{"iso_time": "2026-04-25T10:00:00Z"}',
+            '{"iso_time":"2026-04-25T10:00:00Z"}',
         )
         self.assertEqual(len(self._extract_ledger_blocks(messages)), 1)
         self.assertNotIn("finalization_evidence_ledger", str(payload))
@@ -571,8 +626,9 @@ class LLMMessageSupportTests(unittest.TestCase):
         self.assertEqual(len(tool_messages), 1)
         content = str(tool_messages[0]["content"])
 
-        self.assertIn("\\u9879\\u76ee\\u6982\\u89c8", content)
-        self.assertIn("\\u5feb\\u901f\\u5f00\\u59cb", content)
+        self.assertIn("项目概览", content)
+        self.assertIn("快速开始", content)
+        self.assertNotIn("\\u9879", content)
         self.assertNotIn("truncated", content.lower())
 
     def test_mcp_list_result_preserves_visible_tool_names_for_followup_selection(self) -> None:
@@ -692,10 +748,41 @@ class LLMMessageSupportTests(unittest.TestCase):
         self.assertEqual(len(tool_messages), 1)
         tool_content = str(tool_messages[0]["content"])
         self.assertLess(len(tool_content), 5000)
-        self.assertIn('"server_id": "github"', tool_content)
-        self.assertIn('"tool_name": "search_code"', tool_content)
+        self.assertIn('"server_id":"github"', tool_content)
+        self.assertIn('"tool_name":"search_code"', tool_content)
         self.assertIn('"result_text"', tool_content)
-        self.assertIn("\\u2026", tool_content)
+        self.assertIn("…", tool_content)
+
+    def test_tool_transcript_keeps_chinese_readable_and_compact(self) -> None:
+        request = LLMRequest(
+            session_id="sess_chinese_tool_result",
+            trace_id="trace_chinese_tool_result",
+            message="分析命盘",
+            agent_id="bazi",
+            tool_history=[
+                ToolExchange(
+                    tool_name="knowledge",
+                    tool_payload={"action": "search", "query": "庚金生卯月"},
+                    tool_result={
+                        "ok": True,
+                        "results": [{"heading": "作者经验卡", "text": "婚姻应期"}],
+                    },
+                )
+            ],
+        )
+
+        messages = build_openai_messages(request)
+        assistant_message = next(item for item in messages if item.get("role") == "assistant")
+        tool_message = next(item for item in messages if item.get("role") == "tool")
+        arguments = str(assistant_message["tool_calls"][0]["function"]["arguments"])
+        content = str(tool_message["content"])
+
+        self.assertEqual(json.loads(arguments)["query"], "庚金生卯月")
+        self.assertEqual(json.loads(content)["results"][0]["heading"], "作者经验卡")
+        self.assertIn("庚金生卯月", arguments)
+        self.assertIn("作者经验卡", content)
+        self.assertNotIn("\\u", arguments)
+        self.assertNotIn("\\u", content)
 
 
 if __name__ == "__main__":

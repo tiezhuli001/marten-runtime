@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from marten_runtime.knowledge.config import load_knowledge_config
+from marten_runtime.knowledge.config import load_knowledge_config, resolve_knowledge_runtime_paths
 from marten_runtime.knowledge.corpus import (
     corpus_report_json,
     load_corpus_manifest,
@@ -44,7 +44,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _config(config_path: str, db_path: str | None):  # noqa: ANN202
-    config = load_knowledge_config(str(_path(config_path))).knowledge
+    config = resolve_knowledge_runtime_paths(
+        load_knowledge_config(str(_path(config_path))).knowledge,
+        repo_root=REPO_ROOT,
+    )
     resolved_db = _path(db_path or config.db_path)
     return config.model_copy(
         update={

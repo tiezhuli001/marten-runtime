@@ -218,29 +218,24 @@ def _has_concrete_topic_analysis(text: str) -> bool:
     education_text = _bazi_section_text(text, "学历")
     marriage_text = _bazi_section_text(text, "婚姻")
     wealth_text = _bazi_section_text(text, "财富等级")
-    education = (
-        any(level in education_text for level in ("高中", "大专", "本科", "顶级本科"))
-        and _contains_gregorian_year(education_text)
+    education = _contains_gregorian_year(education_text) and any(
+        marker in education_text for marker in ("流年", "大运", "原局", "印星", "学习", "升学")
     )
-    marriage = "结婚" in marriage_text and _contains_gregorian_year(marriage_text)
-    wealth = (
-        (
-            any(marker in wealth_text for marker in ("现实基线", "用户提供", "当前收入"))
-            and any(operator in wealth_text for operator in ("×", "*"))
-            and bool(re.search(r"\d+\s*万", wealth_text))
-        )
-        or (
-            "财富结构分" in wealth_text
-            and "命理年收入能力区间" in wealth_text
-            and "不等同现实收入" in wealth_text
-            and all(marker in wealth_text for marker in ("成局路径", "承载", "大运", "制约"))
-        )
+    marriage = _contains_gregorian_year(marriage_text) and any(
+        marker in marriage_text
+        for marker in ("流年", "大运", "夫妻宫", "配偶星", "结婚", "合", "冲")
+    )
+    wealth = any(
+        marker in wealth_text
+        for marker in ("原局", "大运", "财星", "获取方式", "承载", "积累", "现实基线")
+    ) and not any(
+        "财富栏" in violation for violation in bazi_timing_contract_violations(text)
     )
     return education and marriage and wealth
 
 
 def _has_concrete_timing_analysis(text: str) -> bool:
-    return not bazi_timing_contract_violations(text)
+    return _has_past_event_reasoning(text) and not bazi_timing_contract_violations(text)
 
 
 def _contains_gregorian_year(text: str) -> bool:

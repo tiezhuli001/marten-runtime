@@ -85,6 +85,8 @@ class LLMRequest(BaseModel):
     summary_input_text: str | None = None
     timeout_seconds_override: float | None = None
     max_completion_tokens: int | None = None
+    response_schema_name: str | None = None
+    response_schema: dict[str, object] | None = None
     cooperative_stop_event: object | None = None
     cooperative_deadline_monotonic: float | None = None
 
